@@ -269,6 +269,7 @@ Own git repo (branch `master`). NOT yet pushed to GitHub — later deliberate "m
 - BitPhoque P2PK funding addr (now spent/empty post-genesis):
   `kaspatest:qrwzyuc8lkvdsxgww53n7rsjetsqhh6p9hmy8vrvqpdun5r7ysevufmglhgl4`
 - Genesis covenant UTXO (the transfer input): `f8d6d45a...0875:0`, value 9_999_999_800_000 sompi.
+- Token P2SH address (where BitPhoque lives on-chain): `kaspatest:prrejfkltxlctd0htkma7p50l45tc7fy242vf4g475tc2y0k5rlggne36eqz6`
 - Fee floor learned: ~167,100 sompi; use 200,000.
 - rusty-kaspa clone at C:\kaspa-tn12\rusty-kaspa (tag tn10-toc3); silverscript at C:\kaspa-tn12\silverscript.
 
