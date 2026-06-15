@@ -1,6 +1,6 @@
 # BitPhoque — Status
 
-_**Read `operating_baseline.md` (in oracle-protocol) alongside this doc** — the same working
+_**Read `operating_baseline.md` alongside this doc** — the same working
 discipline applies: one command at a time, single-line terminal commands, plain-English-before-code,
 source-of-truth files committed to git, dry-run before broadcast, verify-by-reading-source for
 anything that enforces, local VM verify before TN10. BitPhoque lives in its OWN tree (`C:\bitphoque`)
