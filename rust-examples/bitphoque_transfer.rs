@@ -11,6 +11,8 @@
 //  - sign input 0 with the CURRENT owner key (schnorr, SIG_HASH_ALL, +type byte)
 //  - leader sigscript = build_sig_script_for_covenant_decl("transfer",
 //        [newStates, sigs, witnesses], is_leader=true) ++ push(redeem)
+//  - LOCAL VM VERIFY (TxScriptEngine, covenants_enabled) before broadcast — proves the
+//    covenant ACCEPTS the tx, not just that it assembles. --go is gated behind a pass.
 //  - dry-run by default; --go to broadcast
 //
 // TN10 PRACTICE ONLY. Mainnet = detached air-gapped signing (see checklist).
@@ -24,15 +26,18 @@ use kaspa_consensus_core::{
     hashing::sighash_type::SIG_HASH_ALL,
     subnets::SUBNETWORK_ID_NATIVE,
     tx::{
-        CovenantBinding, MutableTransaction, Transaction, TransactionInput, TransactionOutpoint,
-        TransactionOutput, TxInputMass, UtxoEntry,
+        CovenantBinding, MutableTransaction, PopulatedTransaction, Transaction, TransactionInput, VerifiableTransaction,
+        TransactionOutpoint, TransactionOutput, TxInputMass, UtxoEntry,
     },
 };
 use kaspa_grpc_client::GrpcClient;
 use kaspa_hashes::Hash;
 use kaspa_notify::subscription::context::SubscriptionContext;
 use kaspa_rpc_core::{api::rpc::RpcApi, notify::mode::NotificationMode};
-use kaspa_txscript::{pay_to_script_hash_script, extract_script_pub_key_address, script_builder::ScriptBuilder};
+use kaspa_txscript::caches::Cache;
+use kaspa_txscript::covenants::CovenantsContext;
+use kaspa_txscript::{pay_to_script_hash_script, extract_script_pub_key_address, script_builder::ScriptBuilder, EngineCtx, EngineFlags, TxScriptEngine};
+use kaspa_txscript_errors::TxScriptError;
 use secp256k1::{rand, Keypair};
 use silverscript_lang::ast::Expr;
 use silverscript_lang::compiler::{compile_contract, struct_object, CompileOptions, CovenantDeclCallOptions};
@@ -81,6 +86,27 @@ fn covenant_id() -> Hash {
     let mut b = [0u8; 32];
     faster_hex::hex_decode(COVENANT_ID_HEX.as_bytes(), &mut b).expect("bad cov id hex");
     Hash::from_bytes(b)
+}
+
+// LOCAL VM VERIFY: run the spending input through the in-process TxScriptEngine with
+// covenants enabled — exactly as kcc20_tests.rs's execute_input_with_covenants does.
+// Returns Ok(()) if the covenant ACCEPTS the spend, Err(...) with the script error if not.
+fn local_vm_verify(tx: &Transaction, entries: Vec<UtxoEntry>, input_idx: usize) -> Result<(), TxScriptError> {
+    let reused_values = SigHashReusedValuesUnsync::new();
+    let sig_cache = Cache::new(10_000);
+    let input = tx.inputs[input_idx].clone();
+    let populated = PopulatedTransaction::new(tx, entries);
+    let cov_ctx = CovenantsContext::from_tx(&populated).map_err(TxScriptError::from)?;
+    let utxo = populated.utxo(input_idx).expect("selected input utxo");
+    let mut vm = TxScriptEngine::from_transaction_input(
+        &populated,
+        &input,
+        input_idx,
+        utxo,
+        EngineCtx::new(&sig_cache).with_reused(&reused_values).with_covenants_ctx(&cov_ctx),
+        EngineFlags { covenants_enabled: true, sigop_script_units: 0.into() },
+    );
+    vm.execute()
 }
 
 #[tokio::main]
@@ -167,7 +193,7 @@ async fn main() {
     let mut sigscript = current_compiled
         .build_sig_script_for_covenant_decl("transfer", vec![new_states, sigs, witnesses], CovenantDeclCallOptions { is_leader: true })
         .expect("build leader sigscript");
-    let redeem_push = ScriptBuilder::new().add_data(&current_compiled.script).expect("push redeem").drain();
+    let redeem_push = ScriptBuilder::with_flags(EngineFlags { covenants_enabled: true, sigop_script_units: 0.into() }).add_data(&current_compiled.script).expect("push redeem").drain();
     sigscript.extend_from_slice(&redeem_push);
 
     // Rebuild tx with the real sigscript.
@@ -177,6 +203,17 @@ async fn main() {
 
     println!("[transfer] handoff tx id: {}", tx.id());
     println!("[transfer] moving {SUPPLY} phoques -> recipient, output value {out_value} sompi (fee {FEE})");
+
+    // LOCAL VM VERIFY — must pass before we even consider broadcasting.
+    println!("[transfer] local VM verify (TxScriptEngine, covenants_enabled)...");
+    match local_vm_verify(&tx, vec![in_utxo.clone()], 0) {
+        Ok(()) => println!("[transfer] LOCAL VM VERIFY: PASS — the covenant accepts this spend."),
+        Err(e) => {
+            println!("[transfer] LOCAL VM VERIFY: FAIL — {e:?}");
+            println!("[transfer] aborting. NOT broadcasting a tx the local VM rejects.");
+            return;
+        }
+    }
 
     if !go {
         println!();
