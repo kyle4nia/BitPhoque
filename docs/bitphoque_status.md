@@ -7,7 +7,7 @@ anything that enforces, local VM verify before TN10. BitPhoque lives in its OWN 
 and its OWN git repo — separate from oracle-protocol. The end-of-session git checkpoint ritual now
 covers TWO trees._
 
-_Last updated: **TRANSFER PROVEN LOCALLY — accept AND reject. Ready to broadcast.** Genesis is live
+_Last updated: **TRANSFER IS LIVE ON TN10. (Was: proven locally, — accept AND reject. now BROADCAST + ACCEPTED on-chain, tx 907f7383...; genesis P2SH now EMPTY per inspect tool; 42069 phoques moved to recipient P2SH. Full mint+transfer lifecycle proven.)** Genesis is live
 (tx f8d6d45a..., cov_id 69262e04...). The 520-byte wall was a builder-default, NOT a consensus rule
 (covenant scripts get a 1,000,000-byte element cap); fixed with `ScriptBuilder::with_flags`. The
 handoff now builds, PASSES local VM verify, and the rejection tests prove the gate (accepts valid,
@@ -121,11 +121,32 @@ cargo run   -p silverscript-lang --bin bitphoque_transfer       # dry-run incl. 
 
 ---
 
-## RESUME POINT — broadcast the verified handoff, then re-confirm on-chain
+## HANDOFF: LIVE ON TN10 [DONE]
 
-Everything is proven locally. The next step is the real on-chain transfer.
+- handoff tx (ACCEPTED): 907f738332268109aea5bacc0670fb59c20af76f17e55c173ca83aa9416a4da1
+- genesis cov UTXO f8d6d45a...0875:0 SPENT; genesis token P2SH now EMPTY (inspect tool confirms).
+- recipient (now owns all 42069): pubkey 6687942178295b30101e84115f8caf56dbcc0a20008c352587ce4e76da3718b0
+  privkey [REDACTED-TN10-KEY]  (TN10 practice key; throwaway).
+- THREE consensus rules learned at broadcast (all now handled in the harness):
+  1. v1/Toccata txs use ComputeBudget for input mass, NOT SigopCount (rejected: SigopCountInV1).
+     sign.rs uses ComputeBudget(10) for v1; we derive ours (see #2).
+  2. The covenant spend costs 111,261 script units. Budget is sized via the consensus helper
+     ComputeBudget::checked_covering_script_units(ScriptUnits(111261)) yields ComputeBudget(11).
+     (const COVENANT_SCRIPT_UNITS in the harness; update it if the contract changes.)
+  3. Transfer fee floor ~378,600 (we use 400,000) -- MUCH higher than genesis (~167k) because the
+     spending tx REVEALS the full 1540-byte redeem script, inflating tx mass.
+- Local VM verify PASSED before broadcast; node ACCEPTED. Local VM and consensus agree.
 
-- [ ] **Broadcast the handoff:** `cargo run -p silverscript-lang --bin bitphoque_transfer -- --go`.
+## NEXT RESUME POINT — broadcast the verified handoff, then re-confirm on-chain
+
+The handoff is DONE (above). Remaining transfer work:
+
+- [x] **Broadcast the handoff** -- DONE (tx 907f7383, ACCEPTED). [x] Re-confirmed: genesis P2SH EMPTY.
+- [ ] **Generalize the handoff to a SPECIFIED recipient** (not a random throwaway key) so transfers go
+      to a chosen owner -- the obvious next harness improvement.
+- [ ] **Add split (1->2) and merge (2->1)** variants; the 2x2 fanout already supports them.
+- [ ] **Update inspect tool** to take an address/contract so it can confirm the recipient P2SH balance.
+- [ ] (superseded) old broadcast notes: `cargo run -p silverscript-lang --bin bitphoque_transfer -- --go`.
       It re-verifies locally (gate), then submits. NOTE: each run generates a FRESH recipient key and
       prints its privkey — SAVE that privkey, it owns the phoques after the handoff. The genesis UTXO
       (`f8d6d45a...0875:0`) is spent by this; a new covenant UTXO appears at the recipient's P2SH.
