@@ -29,7 +29,86 @@ BUILD (this covenant), not a buy (some wallet feature). Owner-key storage = KasS
 
 ---
 
-## Two patterns (Pattern A is the first build)
+## THE FOR-SALE-STATE MODEL (preferred sale architecture — per-UTXO flag)
+
+_This is the cleaner evolution of the swap design and the RECOMMENDED direction. It resolves the
+"Pattern A vs B" authorization muddle by splitting the two authorizations cleanly via a per-UTXO
+sale flag. Decided: per-UTXO sale state (a UTXO/lot is for-sale), NOT per-phoque ids. Per-phoque
+ids would make BitPhoque an NFT collection (new asset, contract replaced, 42069 distinct items) —
+explicitly NOT what we want; BitPhoque stays a FUNGIBLE token. Per-UTXO state gives ~all the
+benefit (seller picks what/when is for sale) while EXTENDING the proven contract, not replacing it._
+
+### The idea
+Each BitPhoque UTXO carries sale state: a `forSale` flag and a `price`. The seller flips a UTXO
+between not-for-sale and for-sale-at-price-P. A for-sale UTXO can be CLAIMED by any buyer who pays.
+Seller controls exactly what is on the market, at what price, and when — all by flipping state on
+specific UTXOs, while the rest of their phoques sit safe in normal (sig-required) state.
+
+### Why this is SAFER than "any UTXO claimable if paid"
+It cleanly separates two authorizations:
+- **Listing / re-pricing / de-listing** (flipping the flag, setting price, pulling off market):
+  OWNER-AUTHORIZED — requires the seller's signature, exactly like a normal transfer.
+- **Claiming a for-sale UTXO**: PAYMENT-AUTHORIZED — no owner sig; release is gated by payment.
+
+So the dangerous unsigned-spend path applies ONLY to UTXOs the seller DELIBERATELY marked for sale
+at a price they set. A bug in the payment check can only ever drain UTXOs the seller already chose
+to expose — never their whole holdings. This dramatically shrinks the attack surface vs. a blanket
+"anything is claimable" model.
+
+### Two spend modes (gated by the forSale flag)
+- **Normal transfer** (forSale = false): owner sig required (existing `checkSigs` path). Unchanged.
+- **Sale claim** (forSale = true): payment-to-seller required INSTEAD of owner sig; new owner =
+  buyer (named by the claimant in the new-state array); conservation still holds; AND the resulting
+  UTXO MUST reset forSale = false (now owned by the buyer).
+
+### CRITICAL covenant condition: claim MUST reset the flag
+"When the sale happens, that phoque is no longer on the market" is a REQUIRED covenant condition,
+not a nicety. The claim tx must produce a new UTXO whose state is forSale=false, owner=buyer. If the
+covenant did not enforce this, a claimed phoque could stay flagged for-sale at the old price and be
+claimed AGAIN by someone else for a second payment to the OLD seller. Enforce: claimed output's
+forSale == false. Add a rejection test: a claim that leaves forSale=true MUST fail.
+
+### What changes in the contract (and the consequences)
+- State struct gains `forSale` (bool) + `price` (int). Currently state is owner/identifierType/
+  amount/isMinter; this adds two fields. State layout (currently {start:1, len:46}) CHANGES.
+- New compiled script -> new P2SH -> new covenant_id -> FRESH GENESIS required (same regenesis
+  consequence already accepted for any contract edit; the live token is on the current contract).
+- `checkAmounts` / `checkMintingTransfer` iterate state — confirm they still hold with the extra
+  fields (they key off amount/isMinter, so should be unaffected, but verify).
+- The sale-claim path is a NEW entrypoint (or a new mode of transfer) whose authorization is the
+  payment check, not checkSigs. This is the airtight-or-bust part (unsigned spend).
+
+### Payment binding (reuses escrow primitives — CONFIRMED expressible)
+The claim covenant checks: `tx.outputs[payoutIdx].value >= price` AND
+`tx.outputs[payoutIdx].scriptPubKey == <seller's payout lock>`. Both proven expressible by the
+example contracts (covenant_escrow.sil: `tx.outputs[0].value == amount`,
+`tx.outputs[0].scriptPubKey == byte[](sellerLock)`; ScriptPubKeyP2PK(party) builds the lock).
+The seller's payout lock = the seller's own address (the current owner being bought out).
+
+### Rejection tests for the sale-claim path (the whole safety case — unsigned spend!)
+- CONTROL (must PASS): claim a for-sale UTXO, pay >= price to seller, new owner = buyer,
+  forSale reset to false. Accepted.
+- REJECT (must FAIL): claim but pay LESS than price.
+- REJECT (must FAIL): claim but pay to the WRONG address (not the seller/old owner).
+- REJECT (must FAIL): claim with NO payment output.
+- REJECT (must FAIL): claim a NOT-for-sale UTXO via the payment path (forSale=false must force
+  the sig path — payment must not authorize spending a non-listed UTXO).
+- REJECT (must FAIL): claim leaves forSale = TRUE (would allow double-claim / second payment to old
+  seller).
+- REJECT (must FAIL): output-matching ambiguity — the "payment" output reused as change.
+- MUST HOLD: conservation across the claim (no phoques created/destroyed).
+- (Listing path) REJECT: flipping forSale / changing price WITHOUT the owner's signature.
+
+### Open questions to verify-from-source before coding this
+- [ ] Can a covenant-bound entrypoint (binding=cov) ALSO read tx.outputs[...] for the payment check,
+      and compose with the macro-generated state validation? (escrow is a PLAIN covenant; our
+      transfer is covenant-bound — confirm the two compose.)
+- [ ] Does adding forSale+price to the state struct compile cleanly and what's the new state layout?
+- [ ] How does the claimant name themselves as buyer in the new-state array on an unsigned path?
+
+---
+
+## Two patterns (older framing — superseded by the for-sale-state model above for the sale case)
 
 ### Pattern A — single-transaction co-signed swap  [BUILD THIS FIRST]
 Buyer and seller co-construct ONE transaction:
