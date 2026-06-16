@@ -7,11 +7,11 @@ anything that enforces, local VM verify before TN10. BitPhoque lives in its OWN 
 and its OWN git repo — separate from oracle-protocol. The end-of-session git checkpoint ritual now
 covers TWO trees._
 
-_Last updated: **GENESIS LIVE; TRANSFER HARNESS BUILT, BLOCKED ON A REAL LIMIT.** Genesis covenant
-UTXO is live on-chain (tx f8d6d45a..., covenant_id 69262e04...). The transfer (handoff) harness
-compiles, runs, connects, finds the live genesis UTXO, and signs — but FAILS at the final step:
-revealing the 1540-byte redeem script in the spending sigscript exceeds Kaspa's 520-byte max push
-element (`ElementExceedsMaxSize(1540, 520)`). Resume point = solve the script-size limit (see below)._
+_Last updated: **TRANSFER PROVEN LOCALLY — accept AND reject. Ready to broadcast.** Genesis is live
+(tx f8d6d45a..., cov_id 69262e04...). The 520-byte wall was a builder-default, NOT a consensus rule
+(covenant scripts get a 1,000,000-byte element cap); fixed with `ScriptBuilder::with_flags`. The
+handoff now builds, PASSES local VM verify, and the rejection tests prove the gate (accepts valid,
+rejects inflation AND wrong-sig). Resume point = broadcast the verified handoff with `--go`._
 
 ---
 
@@ -38,7 +38,7 @@ ACCEPTED by the node, and confirmed mined (the funding UTXO is now spent/gone). 
 - **genesis covenant value:** 9,999,999,800,000 sompi (100,000 TKAS funding minus 200,000 fee)
 - **genesis covenant UTXO outpoint (the TRANSFER input):** `f8d6d45a...0875:0`
 - **spent funding outpoint:** `9f00751f3030b70e79776e54ded48397257915696200b37884ffd3c8ca622823:0`
-- **real redeem script size:** **1540 bytes** (this number is now the CENTRAL PROBLEM — see below).
+- **real redeem script size:** **1540 bytes** (fine on-chain — covenant element cap is 1,000,000, see below).
 - **owner key:** TN10 PRACTICE KEY ONLY, permanently. Held in `C:\bitphoque\bitphoque_owner.key`
   (gitignored, never committed — verified clean). Was pasted in chat once during the practice run;
   that BURNS it by mainnet standards, which is fine for a throwaway testnet key. The mainnet owner
@@ -50,89 +50,102 @@ owner key. There is no wallet that shows a balance — query the P2SH on-chain t
 
 ---
 
-## THE TRANSFER HARNESS + THE 520-BYTE WALL (current frontier)
+## TRANSFER — PROVEN LOCALLY (accept AND reject). THE 520 WALL: SOLVED.
 
-`rust-examples\bitphoque_transfer.rs` (git 6cfb604) — a HANDOFF: spends the genesis covenant UTXO,
+`rust-examples\bitphoque_transfer.rs` (git 30061d5) — a HANDOFF: spends the genesis covenant UTXO,
 moves all 42_069 phoques to a fresh recipient key via the leader entrypoint `__leader_transfer`.
 
-**What WORKS (proven in dry-run):** compiles clean; generates a recipient keypair; connects to the
-node; derives the token P2SH via `extract_script_pub_key_address(&current_p2sh, Prefix::Testnet)` and
-**finds the live genesis covenant UTXO at it** (confirms our address derivation matches where the
-coins actually live); recompiles both current+recipient contracts in-process; signs input 0 with the
-current owner key (schnorr, SIG_HASH_ALL, +type byte); builds the leader sigscript args via
-`build_sig_script_for_covenant_decl("transfer", [newStates, sigs, witnesses], {is_leader:true})`.
-The ENTIRE pipeline is correct up to the last line.
+### The 520-byte wall was NOT real — it was a builder default [RESOLVED]
+The transfer first panicked `ElementExceedsMaxSize(1540, 520)` pushing the redeem script. Reading the
+txscript engine source (`crypto/txscript/src/lib.rs:80-81,143` + `data_stack.rs:331`) revealed:
+- `MAX_SCRIPT_ELEMENT_SIZE_PRE_TOCCATA = 520`; `MAX_SCRIPT_ELEMENT_SIZE_POST_TOCCATA = 1_000_000`.
+- `max_script_element_size(covenants_enabled)` returns **1,000,000 when covenants are enabled**.
+- The consensus engine therefore ACCEPTS our 1540-byte script. The 520 cap was only the conservative
+  default of `ScriptBuilder::new()` (which sets `covenants_enabled:false`).
+- **THE FIX (one line):** build the redeem push with
+  `ScriptBuilder::with_flags(EngineFlags { covenants_enabled: true, sigop_script_units: 0.into() })`.
+  `script_builder.rs:75` `with_flags` + `validate_data_push` (line 192) lifts the cap to 1M.
+- **CONSEQUENCE:** NO contract surgery, NO regenesis, NO chunked reveal. The original 1540-byte
+  contract + live genesis are fine. The 1x1/slim shrink experiments (git 961959b) are ABANDONED,
+  kept only as evidence (1x1 fanout=920B, slim pubkey-only=799B — both still >520, both moot).
+  Verify-before-gutting paid off hard: we nearly regenesis'd a leaner contract to beat a non-limit.
 
-**What FAILS:** the final step appends the redeem script to the sigscript (P2SH spend reveals the
-script being satisfied) via `ScriptBuilder::add_data(&script)`. The script is **1540 bytes**; Kaspa
-script's max single push element is **520 bytes**. Panic: `ElementExceedsMaxSize(1540, 520)`.
+### Local VM verify — INTEGRATED and PASSING
+The harness now runs the built+signed handoff through the in-process `TxScriptEngine`
+(`covenants_enabled`, `CovenantsContext`) BEFORE broadcast — the `local_vm_verify` fn, modeled on
+`kcc20_tests.rs::execute_input_with_covenants`. It runs every invocation (even dry-run) and `--go` is
+HARD-GATED behind a pass. Dry-run result: **LOCAL VM VERIFY: PASS — the covenant accepts the spend.**
 
-**Why genesis didn't hit this:** genesis PAYS TO the P2SH (commits only a 32-byte hash) — it never
-reveals the script. Spending a P2SH REQUIRES revealing the full redeem script, so the limit only
-bites on transfer. This is a fundamental P2SH-spend constraint, not a harness bug.
+### Rejection tests — GATE PROVEN (accept AND reject)
+`rust-examples\bitphoque_reject_tests.rs` (git 30061d5) — self-contained, NO networking; fabricates
+the spend locally (like the kcc20 tests, fabricated cov_id `COV_A` on both input UTXO and output
+binding) and runs three cases through the same VM:
+- **CONTROL** (1000->1000, signed by owner): **PASS** (expected). Valid handoff accepted.
+- **REJECT 1** (1000->50000 inflation, signed by owner): **FAIL** (expected). Conservation is REAL.
+- **REJECT 2** (1000->1000, signed by WRONG key): **FAIL** (expected). Signature check is REAL.
+- **RESULT: GATE PROVEN.** Enforcement is not a no-op (the `checkDataSig`-style trap is ruled out).
+KEY LESSON from building this: the output's `script_public_key` MUST be the RECIPIENT's compiled
+P2SH (encoding new owner + new amount), not the genesis P2SH — the covenant validates output state
+against the new-state array, and a mismatch yields `VerifyError`. (First control run failed on exactly
+this; fixed by compiling the recipient contract per output.)
 
-### How the harness is built (Path A — silverscript clone hosts it)
-Built INSIDE the silverscript clone as a bin (`silverscript-lang\src\bin\bitphoque_transfer.rs`,
-DISPOSABLE copy; canonical is `rust-examples\`). It needs BOTH the silverscript compiler API AND the
-kaspa networking crates — only the silverscript workspace has both. The clone is upstream-tracked
-(origin/master), so we do NOT commit into it; instead the REBUILD RECIPE is recorded here:
+### Mechanics (all read from kcc20_tests.rs + silverscript-lang public API)
+recompile contract with NEW owner -> recipient P2SH; find live genesis cov UTXO at current token P2SH
+via `extract_script_pub_key_address`; build unsigned tx (out bound `CovenantBinding{authorizing_input:0,
+covenant_id}`); sign input 0 (schnorr, SIG_HASH_ALL, +type byte) via `calc_schnorr_signature_hash`;
+leader sigscript via `build_sig_script_for_covenant_decl("transfer",[newStates,sigs,witnesses],
+{is_leader:true})` + `with_flags` redeem push. Dry-run default, `--go` broadcasts.
+
+### How the harnesses are built (Path A — silverscript clone hosts them)
+Both transfer + reject-tests are bins in the silverscript clone (`silverscript-lang\src\bin\`,
+DISPOSABLE copies; canonical in `rust-examples\`). They need BOTH the silverscript compiler API AND
+kaspa crates — only the silverscript workspace has both. The clone is upstream-tracked (origin/master),
+so we do NOT commit into it; the REBUILD RECIPE (run from `C:\kaspa-tn12\silverscript`):
 ```
-# from C:\kaspa-tn12\silverscript, add the networking crates silverscript-lang lacked:
 cargo add kaspa-grpc-client --git https://github.com/kaspanet/rusty-kaspa --branch tn12 -p silverscript-lang
 cargo add kaspa-notify      --git https://github.com/kaspanet/rusty-kaspa --branch tn12 -p silverscript-lang
 cargo add kaspa-rpc-core    --git https://github.com/kaspanet/rusty-kaspa --branch tn12 -p silverscript-lang
 cargo add kaspa-addresses   --git https://github.com/kaspanet/rusty-kaspa --branch tn12 -p silverscript-lang
 cargo add kaspa-hashes      --git https://github.com/kaspanet/rusty-kaspa --branch tn12 -p silverscript-lang
 cargo add tokio --features macros,rt-multi-thread -p silverscript-lang
-# then copy canonical harness into the clone bin dir and build:
-copy C:\bitphoque\rust-examples\bitphoque_transfer.rs C:\kaspa-tn12\silverscript\silverscript-lang\src\bin\
+# (reject-tests also uses kaspa-txscript-errors, already transitively present)
+copy C:\bitphoque\rust-examples\bitphoque_transfer.rs     C:\kaspa-tn12\silverscript\silverscript-lang\src\bin\
+copy C:\bitphoque\rust-examples\bitphoque_reject_tests.rs C:\kaspa-tn12\silverscript\silverscript-lang\src\bin\
 cargo build -p silverscript-lang --bin bitphoque_transfer
-cargo run   -p silverscript-lang --bin bitphoque_transfer        # dry-run
+cargo build -p silverscript-lang --bin bitphoque_reject_tests
+cargo run   -p silverscript-lang --bin bitphoque_reject_tests   # gate proof, no node needed
+cargo run   -p silverscript-lang --bin bitphoque_transfer       # dry-run incl. local VM verify
 ```
-(Rebuilding the kaspa networking tree from git is a multi-minute first compile. NOTE: `cargo add`
-bumped all kaspa crates from commit 42b734f1 -> ab4c51af; if anything behaves oddly, suspect that.)
-
-### Decisions baked into the harness
-- HANDOFF first (1-in, 1-out, full amount) — simplest transfer; split/merge are variations.
-- Path A chosen over porting `push_typed_sigscript_arg` into rothschild: porting means hand-forking
-  live compiler code (fragile, drifts). Adding networking crates to silverscript is mechanical+known.
-  (Reading the encoder source is what revealed porting was the WORSE path — verify-first paid off.)
+(First compile of the kaspa networking tree is multi-minute. `cargo add` bumped kaspa crates
+42b734f1 -> ab4c51af; if anything behaves oddly, suspect that.)
 
 ---
 
-## RESUME POINT — solve the 520-byte redeem-script reveal (the wall)
+## RESUME POINT — broadcast the verified handoff, then re-confirm on-chain
 
-The transfer is blocked ONLY by: a 1540-byte redeem script cannot be revealed as one 520-byte-max
-push element when spending the P2SH. Everything else in the transfer pipeline is proven working.
-Investigate, in roughly this order:
+Everything is proven locally. The next step is the real on-chain transfer.
 
-- [ ] **Read how `kcc20_tests.rs` spends successfully.** The tests run handoff/split/merge and PASS.
-      Either (a) `execute_input_with_covenants` runs the engine in-process and bypasses the standard
-      push-size check, meaning real on-chain spends face a limit the tests don't — OR (b) there is a
-      large-script reveal mechanism we haven't used. READ `common.rs` `push_redeem_script` +
-      `execute_input_with_covenants` and the txscript engine's element-size enforcement. Verify which.
-- [ ] **Check whether Kaspa P2SH allows multi-push / chunked redeem reveal** (push the script in
-      <=520B chunks + OpCat-style reassembly, or a covenant-specific reveal path). Read txscript
-      `pay_to_script_hash_script` and the P2SH spend verification in the engine.
-- [ ] **If the script genuinely must fit in 520B for on-chain spend:** the contract has to SHRINK.
-      The 1540B comes from maxCovIns/Outs=2 fanout + all THREE ownership modes (pubkey/scripthash/
-      covenantid) + minter plumbing. A minimal BitPhoque (pubkey-only ownership, 1x1 or smaller
-      fanout, minter code stripped) would compile much smaller. This trades features for spendability.
-      Would require a contract edit + re-baseline + NEW genesis (covenant_id changes) — i.e. start the
-      on-chain story over with a leaner contract. Weigh against keeping 2x2/3-mode.
-- [ ] Once spendable: finish handoff dry-run -> broadcast; then REJECTION TESTS (conservation break
-      MUST fail; wrong/missing sig MUST fail) — accept-AND-reject, the only real proof.
+- [ ] **Broadcast the handoff:** `cargo run -p silverscript-lang --bin bitphoque_transfer -- --go`.
+      It re-verifies locally (gate), then submits. NOTE: each run generates a FRESH recipient key and
+      prints its privkey — SAVE that privkey, it owns the phoques after the handoff. The genesis UTXO
+      (`f8d6d45a...0875:0`) is spent by this; a new covenant UTXO appears at the recipient's P2SH.
+- [ ] **Re-confirm with the inspect tool:** after broadcast, the genesis P2SH should be EMPTY and the
+      phoques should live at the recipient's P2SH. (Inspect tool currently hardcodes the genesis
+      compiled script; to check the recipient P2SH, point it at the recipient's compiled contract, or
+      generalize it to take an address.)
 - [ ] New `.rs` => always-save to `C:\bitphoque\rust-examples\`.
 
 ### Later / optional
-- [ ] Cosmetic: rename `contract KCC20` -> `BitPhoque` in the .sil (changes bytes; re-baseline).
+- [ ] Generalize the handoff harness: take a SPECIFIED recipient pubkey (not a random throwaway) so
+      transfers go to a chosen owner; add split (1->2) and merge (2->1) variants (the 2x2 fanout
+      already supports them).
+- [ ] Cosmetic: rename `contract KCC20` -> `BitPhoque` in the .sil (changes bytes; re-baseline + regenesis).
 - [ ] SWAP COVENANT — the trustless stranger-sale mechanism (atomic: token-release and KAS-payment
       both complete or neither). The covenant guarantees token MATH but not payment; a swap covenant
       closes that. Future project, same stack, embodies the prime directive at the trade layer.
 - [ ] Deliberate "make BitPhoque public" pass on GitHub (repo name + README). Secret-sweep first.
 - [ ] Mainnet: clear EVERY item in `bitphoque_mainnet_checklist.md` (air-gapped key, V1 compiler,
       detached signing, rejection tests, second review). The TN10 key NEVER becomes the mainnet key.
-      NOTE: the 520-byte limit is ALSO a mainnet gate — whatever solves it on TN10 must hold on mainnet.
 
 ---
 
@@ -158,14 +171,14 @@ OracleRep's portable verdicts is exactly RIGHT for a token transfer.
 - **Ownership:** OWNED via per-UTXO signature. Three modes exist in the contract
   (`IDENTIFIER_PUBKEY=0x00`, `IDENTIFIER_SCRIPT_HASH=0x01`, `IDENTIFIER_COVENANT_ID=0x02`).
   **BitPhoque uses 0x00 (pubkey-owned)** — simplest, plain checkSig, no CSFS needed. The other two
-  modes sit unused. (NOTE: those unused modes inflate the script — relevant to the 520-byte problem.)
+  modes sit unused (we kept them: with the 520 non-issue resolved, there's no size pressure to strip).
 - **Supply:** FIXED at genesis, NO minter. **42,069 phoques** (TN10 placeholder — may pick a cleverer
   number before mainnet; it's just a genesis ctor arg, fully reversible). The whole supply is minted
   once into a genesis UTXO and can only ever be split / merged / transferred, never increased.
 - **Self-erecting property:** satisfied by construction. With NO minter covenant deployed and every
   token UTXO genesis'd `isMinter=false`, conservation is ALWAYS enforced and supply is mathematically
   fixed. No privileged operator can inflate or freeze. Every holder is sovereign over their own UTXOs
-  via their own key.
+  via their own key. **NOW PROVEN, not just asserted** (rejection tests: inflation + wrong-sig FAIL).
 
 ---
 
@@ -205,7 +218,7 @@ Frozen baseline committed as `bitphoque_compiled_baseline.json` (git 7cf5c95). T
 Key facts FROM the compile (verified by reading the lowered AST, not assumed):
 - **state_layout: `{ start: 1, len: 46 }`** — each token UTXO's state is 46 bytes
   (32 owner + 1 identifierType + 8 amount + 1 isMinter + framing). BitPhoque's geometry.
-- **real redeem script: 1540 bytes** (confirmed at genesis + transfer runtime). THE 520-byte problem.
+- **real redeem script: 1540 bytes** (fine on-chain; covenant element cap is 1,000,000).
 - **ABI = TWO entrypoints (leader/delegate pattern):**
   * `__leader_transfer(newStates: State[], sigs: sig[], witnesses: byte[])`
   * `__delegate_transfer()` (no args)
@@ -245,15 +258,21 @@ C:\bitphoque\
   .gitignore                           <- ignores bitphoque_owner.key
   bitphoque_owner.key                  <- TN10 signing key (GITIGNORED, never committed)
   covenants\
-    bitphoque.sil                      <- the contract (KCC20 verbatim, canonical)
+    bitphoque.sil                      <- the contract (KCC20 verbatim, canonical, DEPLOYED)
     bitphoque_ctor.json                <- placeholder ctor (32-zero pubkey, baseline)
     bitphoque_ctor_real.json           <- REAL ctor (owner pubkey baked in)
     bitphoque_compiled_baseline.json   <- frozen known-good baseline bytecode
     bitphoque_compiled_real.json       <- REAL compiled contract (harness reads script from here)
+    bitphoque_slim.sil                 <- ABANDONED experiment (pubkey-only, 520-investigation)
+    bitphoque_ctor_1x1.json            <- ABANDONED experiment (1x1 fanout ctor)
+    bitphoque_compiled_1x1.json        <- ABANDONED experiment (1x1 compile, 920B)
+    bitphoque_slim_1x1.json            <- ABANDONED experiment (slim+1x1 compile, 799B)
   rust-examples\
     bitphoque_keygen.rs                <- owner keypair generator
     bitphoque_genesis_establish.rs     <- genesis harness (LIVE genesis sent with this)
-    bitphoque_transfer.rs              <- transfer/handoff harness (blocked on 520B reveal)
+    bitphoque_transfer.rs              <- transfer/handoff harness (builds, VM-verify PASS, ready to --go)
+    bitphoque_reject_tests.rs          <- gate proof (accept + reject, no node needed)
+    bitphoque_inspect.rs               <- read-only on-chain confirm tool
   docs\
     bitphoque_status.md                <- this file
     bitphoque_mainnet_checklist.md     <- the pre-mainnet GATE
@@ -279,10 +298,12 @@ Own git repo (branch `master`). NOT yet pushed to GitHub — later deliberate "m
 - `kcc20.sil` — the token contract (copied verbatim as bitphoque.sil).
 - `kcc20-minter.sil` — the minter contract we deliberately DO NOT use.
 - `kcc20_tests.rs` — the executable spec: split/merge/transfer/mint/burn + rejection tests. THE
-  blueprint for the TRANSFER harness. Shows leader/delegate sigscript construction, owner signing,
-  and the handoff/split flow. Lines ~156-313 = the core token-lifecycle test. **Re-read this to learn
-  how on-chain spends get past the 520-byte reveal limit (or whether tests sidestep it in-process).**
-- `common.rs` — `push_redeem_script`, `covenant_decl_sigscript`, `execute_input_with_covenants`.
-- `silverscript-lang/src/compiler/mod.rs` — public API used by the harness: `compile_contract`,
+  blueprint for the TRANSFER + reject-test harnesses. Shows leader/delegate sigscript construction,
+  owner signing, the handoff/split flow, and the fabricated-UTXO local-test pattern. Lines ~156-313.
+- `common.rs` — `push_redeem_script`, `covenant_decl_sigscript`, `execute_input_with_covenants`
+  (the model for `local_vm_verify`).
+- `crypto/txscript/src/lib.rs` + `script_builder.rs` — where the 520-vs-1,000,000 element cap and
+  `ScriptBuilder::with_flags` live (the 520-wall resolution).
+- `silverscript-lang/src/compiler/mod.rs` — public API used by the harnesses: `compile_contract`,
   `struct_object`, `CompileOptions`, `CovenantDeclCallOptions`, `build_sig_script_for_covenant_decl`.
 - OracleRep `oracle_genesis_establish.rs` — the genesis harness model (already adapted).
