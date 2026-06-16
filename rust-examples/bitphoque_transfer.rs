@@ -20,7 +20,7 @@
 use std::fs;
 
 use kaspa_addresses::{Address, Prefix, Version};
-use kaspa_consensus_core::{
+use kaspa_consensus_core::{ mass::{ComputeBudget, ScriptUnits},
     constants::TX_VERSION_TOCCATA,
     hashing::sighash::{calc_schnorr_signature_hash, SigHashReusedValuesUnsync},
     hashing::sighash_type::SIG_HASH_ALL,
@@ -48,9 +48,12 @@ const SIL_FILE: &str = r"C:\bitphoque\covenants\bitphoque.sil";
 const COVENANT_ID_HEX: &str = "69262e04b63d1ea1008fd33f8aff38c08780056b40111d0db01a306ef11a766c";
 
 const SUPPLY: i64 = 42_069;
-const FEE: u64 = 200_000;
+const FEE: u64 = 400_000;
 const MAX_COV_INS: i64 = 2;
 const MAX_COV_OUTS: i64 = 2;
+// Observed script-unit cost of the covenant spend (from node verification: used=111261).
+// If the contract changes, update this; the budget is derived from it via the consensus helper.
+const COVENANT_SCRIPT_UNITS: u64 = 111_261;
 
 // Build the 6-arg ctor as Expr values (matches genesis ctor, pubkey-owned, fixed supply).
 fn ctor_args(owner: Vec<u8>) -> Vec<Expr<'static>> {
@@ -114,6 +117,9 @@ async fn main() {
     let go = std::env::args().any(|a| a == "--go");
 
     let source = fs::read_to_string(SIL_FILE).expect("read sil");
+    let input_budget = ComputeBudget::checked_covering_script_units(ScriptUnits(COVENANT_SCRIPT_UNITS)).expect("budget fits");
+    let input_mass = TxInputMass::ComputeBudget(input_budget);
+    println!("[transfer] input compute budget: {:?} (covers {} script units)", input_budget, COVENANT_SCRIPT_UNITS);
     let current = load_current_keypair();
     let current_pk = current.x_only_public_key().0.serialize().to_vec();
 
@@ -174,7 +180,7 @@ async fn main() {
     };
 
     // Unsigned tx (empty sigscript) to sign over.
-    let in_unsigned = TransactionInput { previous_outpoint: outpoint, signature_script: vec![], sequence: 0, mass: TxInputMass::SigopCount(1.into()) };
+    let in_unsigned = TransactionInput { previous_outpoint: outpoint, signature_script: vec![], sequence: 0, mass: input_mass };
     let unsigned = Transaction::new_non_finalized(TX_VERSION_TOCCATA, vec![in_unsigned], vec![output.clone()], 0, SUBNETWORK_ID_NATIVE, 0, vec![]);
 
     // Sign input 0 with the CURRENT owner key.
@@ -197,7 +203,7 @@ async fn main() {
     sigscript.extend_from_slice(&redeem_push);
 
     // Rebuild tx with the real sigscript.
-    let in_signed = TransactionInput { previous_outpoint: outpoint, signature_script: sigscript, sequence: 0, mass: TxInputMass::SigopCount(1.into()) };
+    let in_signed = TransactionInput { previous_outpoint: outpoint, signature_script: sigscript, sequence: 0, mass: input_mass };
     let mut tx = Transaction::new_non_finalized(TX_VERSION_TOCCATA, vec![in_signed], vec![output], 0, SUBNETWORK_ID_NATIVE, 0, vec![]);
     tx.finalize();
 
