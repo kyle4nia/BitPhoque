@@ -89,8 +89,23 @@ Do NOT assume — verify-from-source next session:
       cleanest.
 - [ ] Option 2: an explicit data output (OpReturn-style) on the payment carrying the offer nonce,
       which the covenant reads and requires to match.
+- [ ] Option 3 (ChangeNow-inspired, trustless): the offer's own **derived P2SH address** serves as
+      the nonce. ANALOGY: when ChangeNow swaps BTC->KAS it generates a unique BTC deposit address
+      derived from the swap details — that address IS a built-in nonce (it matches your deposit to
+      your specific order). BUT ChangeNow's address is CUSTODIAL (they hold the keys; they take your
+      BTC then send KAS from reserves — a trusted, non-atomic intermediary). We want Job 1 (the
+      identifier) WITHOUT Job 2 (the custody). Our covenant model ALREADY derives a unique P2SH from
+      the compiled contract's constructor params (we saw this: each owner pubkey -> different P2SH).
+      So bake the SWAP TERMS (price, seller payout address, optional buyer commitment) into the offer
+      covenant's ctor -> its derived P2SH address uniquely encodes the deal. That derived address IS
+      the nonce: different terms -> different address; a payment/claim against it is bound to exactly
+      these terms by covenant logic; NO custodian. More native than Option 1 because the identifier
+      is visible BEFORE the offer is even funded. Most promising for Pattern B.
+      CAVEAT: reasoning by analogy from how the TOKEN covenant derives addresses, not from a built
+      swap. Verify-from-source: (a) can swap terms be compiled into the offer ctor/address cleanly,
+      and (b) can the spending covenant read those terms back for enforcement?
 - [ ] Either way: confirm whether Silverscript can read the carrier (covenant_id of a referenced
-      input/output, or a data-output payload) as a spend condition.
+      input/output, a data-output payload, or ctor-derived terms) as a spend condition.
 
 ### Related to BOTH patterns: output-matching ambiguity
 When the covenant checks "an output pays X to seller," a multi-output tx needs to know WHICH output
