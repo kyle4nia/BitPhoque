@@ -8,6 +8,25 @@ mainnet. Read alongside bitphoque_status.md and bitphoque_mainnet_checklist.md._
 
 ---
 
+## BUILD PROGRESS (updated this session)
+
+The FOR-SALE-STATE model is now PARTLY BUILT and PROVEN at the VM level (single-claim case):
+- Q1 RESOLVED (compile probe): covenant-bound (binding=cov) entrypoints CAN read tx.outputs[...]. Compose confirmed.
+- Q2 RESOLVED (compile probe): forSale(bool)+price(int) state fields compile. New state layout {start:1, len:57} (was 46).
+- CONTRACT v1 written + compiles: covenants/bitphoque_sale_v1.sil (git 5df836a). checkAuth branches per-input on
+  prevStates[i].forSale: not-for-sale= sig; for-sale= tx.outputs[witnesses[i]] pays  to
+  seller's P2PK lock. checkSaleReset forces every new output forSale=false (anti-double-claim).
+- SALE GATE PROVEN (rust-examples/bitphoque_sale_reject_tests.rs, git 5df836a): CONTROL passes; all 6 cheats
+  REJECTED at the VM (underpay / wrong-payee / no-payment / claim-unlisted / stays-for-sale / output-match-abuse).
+
+STILL OPEN (next session): generalize beyond SINGLE-CLAIM (multi-input/output sale fanout + harder
+  output-matching attacks: coincidental extra payment, cross-referenced witness indices); confirm sig-shape
+  games can't block/alter a for-sale claim; then ON-CHAIN (re-encounters v1-mass/ComputeBudget/fee rules from
+  the transfer; needs a broadcast harness + FRESH GENESIS on the new contract since layout/script changed);
+  the listing path (owner-signed flag flip) still needs its own harness + reject test (flip without sig MUST fail).
+
+---
+
 ## Why a swap covenant at all (the gap)
 
 The BitPhoque covenant guarantees token MATH — conservation (no inflation) and ownership
