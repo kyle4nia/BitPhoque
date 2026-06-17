@@ -289,3 +289,48 @@ The swap tx spends the BitPhoque covenant UTXO, so it inherits everything the tr
 Resolve THE OPEN QUESTION above: read the Silverscript builtins + example contracts to confirm
 output value/scriptPubKey inspection is expressible, and check for an existing vault/escrow
 example to adopt. THEN draft `bitphoque_swap.sil` (Pattern A) and its reject-test harness.
+
+---
+
+## FUTURE FEATURE: AUCTION (separate, larger build — NOT part of the fixed-price sale)
+
+_Recorded so the design thinking isn't lost. An auction is fundamentally harder than a fixed-price
+sale and almost certainly wants its OWN architecture (separate entrypoint(s) or a separate covenant),
+NOT a modification of the fixed-price listing. Build the simple provable fixed-price sale FIRST; it
+teaches the primitives an auction also needs (output inspection, payment binding, state flags). Do
+NOT let auction requirements over-engineer the fixed-price path — they coexist, they don't merge._
+
+### Why an auction is much harder (fixed-price is stateless+atomic; auction is stateful+temporal)
+- **Accumulating bid state:** the covenant must track "current highest bid" across MANY transactions
+  over time — persistent, evolving state, not a one-shot check. Likely a UTXO whose state holds the
+  current high bid + bidder.
+- **Bid escrow/commitment:** a bid is only meaningful if the bidder can't walk away — bid funds must
+  be locked while the auction runs, then paid to seller (winner) or refunded (losers). Lots of
+  custody-of-funds logic, trustlessly.
+- **Time boundary:** "auction ends" needs a notion of block-height/locktime to close bidding and
+  trigger settlement. (mecenas_locktime.sil suggests locktime IS expressible — promising but unverified.)
+- **Refunds for losing bids:** every non-winner must get their committed funds back trustlessly.
+
+### The auction RATCHET (core open question)
+Can a Silverscript covenant express "accept this bid ONLY IF it is strictly higher than the current
+stored highest bid, and update the stored highest bid"? This compare-and-update-against-stored-state
+is the heart of an auction and is UNVERIFIED. Verify-from-source before any auction design.
+
+### Likely architecture (when we get there)
+- Probably Option 2 (separate entrypoints) or a SEPARATE covenant — not extend-the-transfer.
+- State model: an auction UTXO holding {tokens, highBid, highBidder, endHeight}.
+- Entrypoints roughly: openAuction (owner-signed), placeBid (escrow funds, ratchet high bid, refund
+  prior high bidder), settle (after endHeight: tokens->winner, highBid->seller).
+- Each is its own airtight + reject-tested unit (esp. the unsigned/escrow paths).
+
+### Open questions to resolve FIRST (verify-from-source, do not design around guesses)
+- [ ] Bid ratchet: can the covenant compare a new bid to stored highBid and require strictly-greater?
+- [ ] Locktime/block-height: confirm the primitive + how covenants read it (start from mecenas_locktime.sil).
+- [ ] Bid escrow + refund: can losing-bid funds be returned trustlessly in the same/next tx? Is there
+      a vault/payment-channel example to adopt (the ecosystem roadmap mentioned these)?
+- [ ] Does the toolchain support MULTIPLE #[covenant] entrypoints cleanly? (We've only used `transfer`.)
+
+### Sequencing
+Fixed-price sale (current work) FIRST -> proven + on-chain. THEN auction as a deliberate separate
+design+build pass with its own verify-from-source. The fixed-price primitives carry over; the auction
+does not constrain the fixed-price design.
