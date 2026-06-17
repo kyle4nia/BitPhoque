@@ -248,7 +248,7 @@ Own git repo (branch `master`). NOT yet pushed to GitHub — later deliberate "m
 ## RESUME POINT — 2x2 fanout VM-proven (v3 fix); generalize wider, then mainnet checklist
 
 Fixed-price sale PROVEN end-to-end on-chain at 1x1 (single-input/output) on the v2 contract.
-2x2 FANOUT now PROVEN AT THE VM LEVEL on a NEW v3 contract — and the work FOUND A REAL BUG.
+2x2 AND 3x3 FANOUT now PROVEN AT THE VM LEVEL on a NEW v3 contract — and the work FOUND A REAL BUG.
 
 **What 2x2 testing found (and v3 fixes):** at fanout, checkAuth let two for-sale inputs from the
 SAME seller name the SAME payment output (witnesses=[2,2], one payment) — a buyer could claim TWO
@@ -267,11 +267,11 @@ against v3: 10x 1x1 (C-CONTROL..C6, L-CONTROL..L2) + 2x2 controls (claim, split-
 cheats rejected (F1 double-claim, F2 cross-wire, F3 inflate, F4 claim-leaves-listing, F5 mixed-auth).
 
 **IMPORTANT — what is NOT yet done:** v3 has NEVER been broadcast. The LIVE TN10 sale token is still
-v2 (the holed version). Fanout proven only at 2x2, not NxM (strict-increasing SHOULD scale; untested
+v2 (the holed version). Fanout proven at 2x2 AND 3x3 at the VM, not NxM (strict-increasing scales; untested
 past 2). Remaining, in order:
 - [ ] **Re-genesis the sale token on v3** (the live v2 is holed; do not build further sale features on v2).
       Then re-prove list+claim ON-CHAIN at 2x2 (genesis -> list two -> claim both, distinct payments).
-- [ ] **Wider fanout (3x3 / NxM)** — extend reject-tests past 2x2 to confirm strict-increasing scales.
+- [x] **3x3 fanout PROVEN at VM** (G-CTRL claim/split, G1 triple-share, G2 mid-collision, G3 out-of-order, G4 non-contiguous all behave). NxM inferred (accumulator is N-agnostic) but only 2 and 3 tested. NOTE: strict-increasing rejects DISTINCT-but-UNORDERED witnesses (G3) — safe but stricter than minimal; per-output-accounting mainnet version would relax it.
 - [ ] **Split/merge for the sale** (list part of a balance, not the whole supply) — the 2x2 fanout supports it.
 - [ ] **Inspect tool**: generalize to take an address/contract so it can confirm arbitrary P2SH balances on-chain.
 - [ ] **Original-token owner quirk** (observed, not blocking): the ORIGINAL genesis ctor used a 32-ZERO pubkey as

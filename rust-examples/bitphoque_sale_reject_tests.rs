@@ -1,4 +1,4 @@
-// BitPhoque — SALE + LISTING REJECTION TESTS (v2 contract).
+// BitPhoque — SALE + LISTING + FANOUT REJECTION TESTS (v3 contract).
 //
 // Proves BOTH halves of the for-sale mechanism at the VM level:
 //   CLAIM path (payment-authorized, UNSIGNED): a for-sale UTXO is spent by paying the seller.
@@ -51,6 +51,11 @@ const MAX_COV_INS: i64 = 2;
 const MAX_COV_OUTS: i64 = 2;
 
 fn ctor_args(owner: Vec<u8>, amount: i64, for_sale: bool, price: i64) -> Vec<Expr<'static>> {
+    ctor_args_b(owner, amount, for_sale, price, MAX_COV_INS, MAX_COV_OUTS)
+}
+
+// Bounded variant: explicit maxCovIns/maxCovOuts so the same builder serves 2x2 and 3x3.
+fn ctor_args_b(owner: Vec<u8>, amount: i64, for_sale: bool, price: i64, max_ins: i64, max_outs: i64) -> Vec<Expr<'static>> {
     vec![
         Expr::bytes(owner),
         Expr::int(amount),
@@ -58,8 +63,8 @@ fn ctor_args(owner: Vec<u8>, amount: i64, for_sale: bool, price: i64) -> Vec<Exp
         Expr::bool(false),
         Expr::bool(for_sale),
         Expr::int(price),
-        Expr::int(MAX_COV_INS),
-        Expr::int(MAX_COV_OUTS),
+        Expr::int(max_ins),
+        Expr::int(max_outs),
     ]
 }
 
@@ -294,7 +299,7 @@ fn build_fanout_claim(
             vec![TransactionInput::new(op0, vec![], 0, 0), TransactionInput::new(op1, vec![], 0, 0)],
             outputs.clone(), 0, Default::default(), 0, vec![],
         );
-        sign_input_idx(unsigned, entries.clone(), 1, seller1)
+        sign_input_idx(unsigned, entries.clone(), 0, seller1) // index 0: sigs verify in leader context
     } else {
         vec![0u8; 65]
     };
@@ -343,6 +348,125 @@ fn build_split_listing(source: &str, owner: &Keypair, amount: i64, list_amount: 
     let witnesses: Expr = Expr::bytes(vec![0u8]);
     let mut ss = in_c.build_sig_script_for_covenant_decl("transfer", vec![new_states, sigs, witnesses], CovenantDeclCallOptions { is_leader: true }).expect("sigscript");
     ss.extend_from_slice(&ScriptBuilder::with_flags(EngineFlags { covenants_enabled: true, sigop_script_units: 0.into() }).add_data(&in_c.script).expect("push redeem").drain());
+    let tx = Transaction::new(1, vec![TransactionInput::new(op, ss, 0, 0)], outputs, 0, Default::default(), 0, vec![]);
+    (tx, entries)
+}
+
+// ================= 3x3 FANOUT builders (bound = 3) =================
+//
+// Generalized N-input claim. Each input is described by a InSpec (its seller, for-sale flag,
+// price, witness index, and whether it's signed — for the non-contiguous-for-sale case where a
+// not-for-sale input sits between for-sale ones). Input 0 is the leader carrying full args sized
+// to N; inputs 1..N are delegates. Output layout: N buyer token outputs (covenant), then the
+// payment outputs the caller supplies. Compiled with maxCovIns=maxCovOuts=3.
+
+const BOUND3: i64 = 3;
+
+struct InSpec<'k> {
+    seller: &'k Keypair,
+    for_sale: bool,
+    price: i64,
+    witness: u8,
+    signed: bool, // for a not-for-sale input that must carry a real owner sig
+}
+
+fn build_fanout3_claim(
+    source: &str,
+    ins: &[InSpec],
+    buyer_pk: Vec<u8>,
+    in_amount: i64,
+    out_amounts: &[i64],
+    out_for_sale: &[bool],
+    payments: &[(u64, usize)], // (value, seller index in `ins` to pay)
+) -> (Transaction, Vec<UtxoEntry>) {
+    let n = ins.len();
+    // Compile each input's locking contract (its seller's pubkey, its for-sale/price), bound 3.
+    let in_cs: Vec<CompiledContract> = ins.iter().map(|s| {
+        let pk = s.seller.x_only_public_key().0.serialize().to_vec();
+        compile_contract(source, &ctor_args_b(pk, in_amount, s.for_sale, s.price, BOUND3, BOUND3), CompileOptions::default()).expect("compile in")
+    }).collect();
+
+    // Output token contracts: buyer-owned, bound 3.
+    let out_cs: Vec<CompiledContract> = (0..n).map(|i| {
+        compile_contract(source, &ctor_args_b(buyer_pk.clone(), out_amounts[i], out_for_sale[i], 0, BOUND3, BOUND3), CompileOptions::default()).expect("compile out")
+    }).collect();
+
+    let outpoints: Vec<TransactionOutpoint> = (0..n).map(|i| TransactionOutpoint { transaction_id: TransactionId::from_bytes([(i as u8) + 1; 32]), index: 0 }).collect();
+    let entries: Vec<UtxoEntry> = in_cs.iter().map(|c| UtxoEntry::new(1_500, pay_to_script_hash_script(&c.script), 0, false, Some(COV_A))).collect();
+
+    // Build outputs: N token outputs (authorizing_input i), then payment outputs.
+    let mut outputs: Vec<TransactionOutput> = (0..n).map(|i| TransactionOutput {
+        value: 1_000,
+        script_public_key: pay_to_script_hash_script(&out_cs[i].script),
+        covenant: Some(CovenantBinding { authorizing_input: i as u16, covenant_id: COV_A }),
+    }).collect();
+    for (val, sidx) in payments {
+        let pk = ins[*sidx].seller.x_only_public_key().0.serialize().to_vec();
+        outputs.push(TransactionOutput { value: *val, script_public_key: p2pk_spk(&pk), covenant: None });
+    }
+
+    // newStates[] covers all N outputs.
+    let new_states: Expr = (0..n).map(|i| new_state(buyer_pk.clone(), out_amounts[i], out_for_sale[i], 0)).collect::<Vec<_>>().into();
+
+    // sigs[]: a real sig for any input flagged signed (built over the unsigned tx), else dummy.
+    let any_signed = ins.iter().any(|s| s.signed);
+    let sig_bytes: Vec<Vec<u8>> = if any_signed {
+        let unsigned_inputs: Vec<TransactionInput> = outpoints.iter().map(|op| TransactionInput::new(*op, vec![], 0, 0)).collect();
+        let unsigned = Transaction::new(1, unsigned_inputs, outputs.clone(), 0, Default::default(), 0, vec![]);
+        ins.iter().enumerate().map(|(_i, s)| {
+            // NOTE: in this covenant model all signatures are verified in the LEADER's execution
+            // context (input 0). The kcc20 merge test signs every input's sig at index 0, not at
+            // the input's own index. Signing at index i produces the wrong sighash -> checkSig fails.
+            if s.signed { sign_input_idx(unsigned.clone(), entries.clone(), 0, s.seller) } else { vec![0u8; 65] }
+        }).collect()
+    } else {
+        ins.iter().map(|_| vec![0u8; 65]).collect()
+    };
+    let sigs: Expr = sig_bytes.into_iter().map(Expr::bytes).collect::<Vec<_>>().into();
+
+    let witnesses: Expr = Expr::bytes(ins.iter().map(|s| s.witness).collect());
+
+    // Leader = input 0, full args. Delegates = inputs 1..N, empty args.
+    let mut leader_ss = in_cs[0].build_sig_script_for_covenant_decl("transfer", vec![new_states, sigs, witnesses], CovenantDeclCallOptions { is_leader: true }).expect("leader ss");
+    leader_ss.extend_from_slice(&ScriptBuilder::with_flags(EngineFlags { covenants_enabled: true, sigop_script_units: 0.into() }).add_data(&in_cs[0].script).expect("redeem0").drain());
+
+    let mut tx_inputs = vec![TransactionInput::new(outpoints[0], leader_ss, 0, 0)];
+    for i in 1..n {
+        let mut d_ss = in_cs[i].build_sig_script_for_covenant_decl("transfer", vec![], CovenantDeclCallOptions { is_leader: false }).expect("delegate ss");
+        d_ss.extend_from_slice(&ScriptBuilder::with_flags(EngineFlags { covenants_enabled: true, sigop_script_units: 0.into() }).add_data(&in_cs[i].script).expect("redeemN").drain());
+        tx_inputs.push(TransactionInput::new(outpoints[i], d_ss, 0, 0));
+    }
+
+    let tx = Transaction::new(1, tx_inputs, outputs, 0, Default::default(), 0, vec![]);
+    (tx, entries)
+}
+
+// 3x3 split-listing: one not-for-sale input (bound 3), owner-signed, three outputs (one listed, two kept).
+fn build_split_listing3(source: &str, owner: &Keypair, amount: i64, a: i64, b: i64, c: i64, list_price: i64) -> (Transaction, Vec<UtxoEntry>) {
+    let owner_pk = owner.x_only_public_key().0.serialize().to_vec();
+    let in_c: CompiledContract = compile_contract(source, &ctor_args_b(owner_pk.clone(), amount, false, 0, BOUND3, BOUND3), CompileOptions::default()).expect("in");
+    let c0: CompiledContract = compile_contract(source, &ctor_args_b(owner_pk.clone(), a, true, list_price, BOUND3, BOUND3), CompileOptions::default()).expect("c0");
+    let c1: CompiledContract = compile_contract(source, &ctor_args_b(owner_pk.clone(), b, false, 0, BOUND3, BOUND3), CompileOptions::default()).expect("c1");
+    let c2: CompiledContract = compile_contract(source, &ctor_args_b(owner_pk.clone(), c, false, 0, BOUND3, BOUND3), CompileOptions::default()).expect("c2");
+
+    let op = TransactionOutpoint { transaction_id: TransactionId::from_bytes([1; 32]), index: 0 };
+    let entries = vec![UtxoEntry::new(1_500, pay_to_script_hash_script(&in_c.script), 0, false, Some(COV_A))];
+    let outputs = vec![
+        TransactionOutput { value: 1_000, script_public_key: pay_to_script_hash_script(&c0.script), covenant: Some(CovenantBinding { authorizing_input: 0, covenant_id: COV_A }) },
+        TransactionOutput { value: 1_000, script_public_key: pay_to_script_hash_script(&c1.script), covenant: Some(CovenantBinding { authorizing_input: 0, covenant_id: COV_A }) },
+        TransactionOutput { value: 1_000, script_public_key: pay_to_script_hash_script(&c2.script), covenant: Some(CovenantBinding { authorizing_input: 0, covenant_id: COV_A }) },
+    ];
+    let unsigned = Transaction::new(1, vec![TransactionInput::new(op, vec![], 0, 0)], outputs.clone(), 0, Default::default(), 0, vec![]);
+    let sig = sign_input(unsigned, entries.clone(), owner);
+    let new_states: Expr = vec![
+        new_state(owner_pk.clone(), a, true, list_price),
+        new_state(owner_pk.clone(), b, false, 0),
+        new_state(owner_pk, c, false, 0),
+    ].into();
+    let sigs: Expr = vec![Expr::bytes(sig)].into();
+    let witnesses: Expr = Expr::bytes(vec![0u8]);
+    let mut ss = in_c.build_sig_script_for_covenant_decl("transfer", vec![new_states, sigs, witnesses], CovenantDeclCallOptions { is_leader: true }).expect("ss");
+    ss.extend_from_slice(&ScriptBuilder::with_flags(EngineFlags { covenants_enabled: true, sigop_script_units: 0.into() }).add_data(&in_c.script).expect("redeem").drain());
     let tx = Transaction::new(1, vec![TransactionInput::new(op, ss, 0, 0)], outputs, 0, Default::default(), 0, vec![]);
     (tx, entries)
 }
@@ -471,9 +595,76 @@ fn main() {
     let (tx, e) = build_fanout_claim(&source, &seller0, &seller1, buyer_pk.clone(), amount, &p);
     run("F5 mixedauth", false, vm_verify_all(&tx, e, 2), &mut all_ok);
 
+    // ================= 3x3 FANOUT (bound = 3) =================
+    println!("== 3x3 FANOUT ==");
+    let s0 = Keypair::new(secp256k1::SECP256K1, &mut secp256k1::rand::thread_rng());
+    let s1 = Keypair::new(secp256k1::SECP256K1, &mut secp256k1::rand::thread_rng());
+    let s2 = Keypair::new(secp256k1::SECP256K1, &mut secp256k1::rand::thread_rng());
+    let bp = big_pay;
+    let amt3 = [amount, amount, amount];
+    let nofs3 = [false, false, false];
+
+    // G-CTRL-claim: 3 for-sale inputs, witnesses [3,4,5], 3 distinct payments. PASS.
+    let ins = [
+        InSpec { seller: &s0, for_sale: true, price, witness: 3, signed: false },
+        InSpec { seller: &s1, for_sale: true, price, witness: 4, signed: false },
+        InSpec { seller: &s2, for_sale: true, price, witness: 5, signed: false },
+    ];
+    let pays = [(bp, 0usize), (bp, 1usize), (bp, 2usize)];
+    let (tx, e) = build_fanout3_claim(&source, &ins, buyer_pk.clone(), amount, &amt3, &nofs3, &pays);
+    run("G-CTRL-claim", true, vm_verify_all(&tx, e, 3), &mut all_ok);
+
+    // G-CTRL-split: 1 input -> 3 outputs (one listed, two kept), owner-signed. PASS.
+    let (tx, e) = build_split_listing3(&source, &s0, amount, 300, 300, 400, price);
+    run("G-CTRL-split", true, vm_verify(&tx, e), &mut all_ok);
+
+    // G1 triple-share: witnesses [3,3,3], one payment. FAIL (2nd input: 3 not > 3).
+    let ins = [
+        InSpec { seller: &s0, for_sale: true, price, witness: 3, signed: false },
+        InSpec { seller: &s0, for_sale: true, price, witness: 3, signed: false },
+        InSpec { seller: &s0, for_sale: true, price, witness: 3, signed: false },
+    ];
+    let pays = [(bp, 0usize)];
+    let (tx, e) = build_fanout3_claim(&source, &ins, buyer_pk.clone(), amount, &amt3, &nofs3, &pays);
+    run("G1 tripleshr", false, vm_verify_all(&tx, e, 3), &mut all_ok);
+
+    // G2 middle-collision: witnesses [3,4,4]. FAIL (3rd collides with 2nd).
+    let ins = [
+        InSpec { seller: &s0, for_sale: true, price, witness: 3, signed: false },
+        InSpec { seller: &s1, for_sale: true, price, witness: 4, signed: false },
+        InSpec { seller: &s2, for_sale: true, price, witness: 4, signed: false },
+    ];
+    let pays = [(bp, 0usize), (bp, 1usize)];
+    let (tx, e) = build_fanout3_claim(&source, &ins, buyer_pk.clone(), amount, &amt3, &nofs3, &pays);
+    run("G2 midcollis", false, vm_verify_all(&tx, e, 3), &mut all_ok);
+
+    // G3 out-of-order: witnesses [5,3,4] -- all distinct but descending-then-up. FAIL (3 not > 5).
+    // Documents that strict-increasing is MORE restrictive than minimal: it forbids distinct-but-
+    // unordered witnesses (which are not actually a double-claim). Safe, but a known restriction;
+    // the per-output-accounting mainnet version would accept this.
+    let ins = [
+        InSpec { seller: &s0, for_sale: true, price, witness: 5, signed: false },
+        InSpec { seller: &s1, for_sale: true, price, witness: 3, signed: false },
+        InSpec { seller: &s2, for_sale: true, price, witness: 4, signed: false },
+    ];
+    let pays = [(bp, 0usize), (bp, 1usize), (bp, 2usize)];
+    let (tx, e) = build_fanout3_claim(&source, &ins, buyer_pk.clone(), amount, &amt3, &nofs3, &pays);
+    run("G3 outoforder", false, vm_verify_all(&tx, e, 3), &mut all_ok);
+
+    // G4 non-contiguous for-sale: input0 for-sale (w=3), input1 NOT for-sale & SIGNED, input2 for-sale (w=4).
+    // PASS: accumulator must skip the signed middle input and still accept 3 < 4.
+    let ins = [
+        InSpec { seller: &s0, for_sale: true, price, witness: 3, signed: false },
+        InSpec { seller: &s1, for_sale: false, price: 0, witness: 0, signed: true },
+        InSpec { seller: &s2, for_sale: true, price, witness: 4, signed: false },
+    ];
+    let pays = [(bp, 0usize), (bp, 2usize)];
+    let (tx, e) = build_fanout3_claim(&source, &ins, buyer_pk.clone(), amount, &amt3, &nofs3, &pays);
+    run("G4 noncontig", true, vm_verify_all(&tx, e, 3), &mut all_ok);
+
     println!();
     if all_ok {
-        println!("[RESULT] SALE+LISTING+FANOUT GATE PROVEN: 1x1 claim/listing hold; 2x2 controls pass; all fanout cheats rejected.");
+        println!("[RESULT] SALE+LISTING+FANOUT GATE PROVEN: 1x1 + 2x2 + 3x3 all behave; strict-increasing scales to 3x3.");
     } else {
         println!("[RESULT] *** GATE NOT PROVEN — see UNEXPECTED/HOLE lines. DO NOT deploy. ***");
     }
