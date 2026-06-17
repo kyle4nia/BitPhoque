@@ -245,22 +245,43 @@ Own git repo (branch `master`). NOT yet pushed to GitHub — later deliberate "m
 
 ---
 
-## RESUME POINT — generalize the sale, then mainnet checklist
+## RESUME POINT — 2x2 fanout VM-proven (v3 fix); generalize wider, then mainnet checklist
 
-Fixed-price sale is PROVEN end-to-end on-chain (single-input/output). Remaining, in order:
-- [ ] **Generalize the sale beyond SINGLE-input/output to 2x2 FANOUT.** checkSaleState's "any input for-sale"
-      logic SHOULD generalize but is untested at fanout. Plus multi-claim output-matching attacks (coincidental
-      extra payment, cross-referenced witness indices). VM-level reject-tests first, then on-chain.
-- [ ] **Split/merge for the sale** (list part of a balance, not the whole supply) — needs splitting a UTXO before
-      listing; the 2x2 fanout supports it.
+Fixed-price sale PROVEN end-to-end on-chain at 1x1 (single-input/output) on the v2 contract.
+2x2 FANOUT now PROVEN AT THE VM LEVEL on a NEW v3 contract — and the work FOUND A REAL BUG.
+
+**What 2x2 testing found (and v3 fixes):** at fanout, checkAuth let two for-sale inputs from the
+SAME seller name the SAME payment output (witnesses=[2,2], one payment) — a buyer could claim TWO
+listings for ONE payment (the "F1 double-claim" hole). v2's per-input "pay this input's seller"
+check did NOT enforce that for-sale inputs map to DISTINCT outputs. Cross-seller (F2) was already
+rejected by the wrong-payee check; same-seller was the hole.
+
+**The v3 fix (`covenants/bitphoque_sale_v3.sil`):** for-sale inputs must use STRICTLY-INCREASING
+payment-output indices (lastSaleWitness accumulator seeded at -1; each for-sale witness must exceed
+the previous). No two for-sale inputs can share an output. Smallest provable fix. MAINNET-GRADE
+generalization deferred + noted in-contract (option B: per-output price accounting, so one big
+output could cover several inputs). v2 stays on disk as the as-deployed/holed version (like v1).
+
+**Proof:** `rust-examples/bitphoque_sale_reject_tests.rs` (extended; 1x1 block intact). All green
+against v3: 10x 1x1 (C-CONTROL..C6, L-CONTROL..L2) + 2x2 controls (claim, split-on-list) + 5 fanout
+cheats rejected (F1 double-claim, F2 cross-wire, F3 inflate, F4 claim-leaves-listing, F5 mixed-auth).
+
+**IMPORTANT — what is NOT yet done:** v3 has NEVER been broadcast. The LIVE TN10 sale token is still
+v2 (the holed version). Fanout proven only at 2x2, not NxM (strict-increasing SHOULD scale; untested
+past 2). Remaining, in order:
+- [ ] **Re-genesis the sale token on v3** (the live v2 is holed; do not build further sale features on v2).
+      Then re-prove list+claim ON-CHAIN at 2x2 (genesis -> list two -> claim both, distinct payments).
+- [ ] **Wider fanout (3x3 / NxM)** — extend reject-tests past 2x2 to confirm strict-increasing scales.
+- [ ] **Split/merge for the sale** (list part of a balance, not the whole supply) — the 2x2 fanout supports it.
 - [ ] **Inspect tool**: generalize to take an address/contract so it can confirm arbitrary P2SH balances on-chain.
 - [ ] **Original-token owner quirk** (observed, not blocking): the ORIGINAL genesis ctor used a 32-ZERO pubkey as
       genesisPk; how the original transfer satisfied checkSig against a zero owner is unresolved. Does NOT affect
-      v2 (real fresh pubkey). Worth understanding later.
+      v2/v3 (real fresh pubkey). Worth understanding later.
 - [ ] **AUCTION** — separate future build (stateful/temporal: bid ratchet, escrow, locktime, refunds). Own
       architecture; see the swap design doc's auction section. Fixed-price first (done), auction separately.
 - [ ] **Mainnet**: clear EVERY item in `bitphoque_mainnet_checklist.md` (air-gapped key, V1 compiler, detached
-      signing, full reject-tests, second review). TN10 keys NEVER become mainnet keys.
+      signing, full reject-tests, second review), on v3 (or the per-output-accounting successor). TN10 keys
+      NEVER become mainnet keys.
 - [ ] **Make BitPhoque public** on GitHub (clean repo name + README explaining the phoque joke + fixed-supply/
       no-coordinator design). Secret-sweep first.
 
