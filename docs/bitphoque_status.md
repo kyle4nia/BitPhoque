@@ -328,3 +328,37 @@ Own git repo (branch `master`). NOT yet pushed to GitHub — later deliberate "m
 - `silverscript-lang/src/compiler/mod.rs` — public API used by the harnesses: `compile_contract`,
   `struct_object`, `CompileOptions`, `CovenantDeclCallOptions`, `build_sig_script_for_covenant_decl`.
 - OracleRep `oracle_genesis_establish.rs` — the genesis harness model (already adapted).
+
+---
+
+## V2 SALE TOKEN — LIVE ON TN10 (on-chain sale, step 1 of 3 DONE)
+
+A SECOND BitPhoque, sale-enabled (v2 contract with forSale/price), is now live on TN10 — a separate
+deployment from the original token, for proving the fixed-price sale end-to-end on-chain.
+
+- v2 contract: covenants/bitphoque_sale_v2.sil (checkSaleState listing/claim separation). Script 1969 bytes.
+- genesis tx (ACCEPTED): b1086a59c163c4fbd8f9c333fc419f517c695e41f8989ddb23d7e945fbcdc6e2
+- v2 covenant_id: 9a30cef719c6ac08eaf94f701dba43136f3a6837b4d24c419610507250367bf3
+- genesis covenant UTXO (the LISTING input): b1086a59...:0, value 9999999800000 sompi.
+- v2 token OWNER: fresh key 50a1553911677db039333592faf1c0757a4e18999fd9be68da0f1b1ab60cb11b
+  (privkey in gitignored bitphoque_v2_owner.key). This key signs LISTINGS.
+- supply 42069, state: NOT-for-sale, price 0. Owned by the v2 key, sitting at the v2 P2SH.
+- funding: reused kaspatest:qrwzyuc8... (bitphoque_owner.key signs the funding spend), re-faucet-funded 100k TKAS.
+- genesis harness: rust-examples/bitphoque_sale_genesis.rs (reads bitphoque_sale_compiled.json). Plain P2PK
+  funding input used SigopCount(1) mass — worked (the ComputeBudget rule is covenant-input-specific).
+
+### On-chain sale sequence — REMAINING
+- [ ] STEP 2: LISTING broadcast — owner-signed tx that flips the genesis UTXO (or a split piece) to
+      forSale=true at a price. Needs a NEW broadcast harness (modeled on the transfer harness: connect,
+      find UTXO, build for-sale output, sign with v2 key, local-VM-verify, broadcast). Spending the v2
+      covenant UTXO REVEALS the 1969B script -> re-measure script units (will exceed the transfer's
+      111,261) and fee floor (will exceed 378,600). Budget via checked_covering_script_units.
+- [ ] STEP 3: CLAIM broadcast — payment-authorized (UNSIGNED) tx: a buyer spends the for-sale UTXO,
+      pays >= price to the seller (v2 key's P2PK addr), receives the phoques. Needs its own broadcast
+      harness. This is the unsigned-spend path on-chain — the real test.
+
+### Note on the original token's owner quirk (observed, not yet resolved)
+The ORIGINAL genesis ctor (bitphoque_ctor.json) used a 32-ZERO pubkey as genesisPk. How the original
+transfer satisfied checkSig against a zero owner is unresolved — but it does NOT affect v2, which uses
+a real fresh pubkey so the listing path's signature check is properly satisfiable. Worth understanding
+later, not blocking.
