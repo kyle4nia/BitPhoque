@@ -334,3 +334,26 @@ is the heart of an auction and is UNVERIFIED. Verify-from-source before any auct
 Fixed-price sale (current work) FIRST -> proven + on-chain. THEN auction as a deliberate separate
 design+build pass with its own verify-from-source. The fixed-price primitives carry over; the auction
 does not constrain the fixed-price design.
+## BUILD PROGRESS (updated — sale v2, listing fixed)
+The FOR-SALE-STATE model is BUILT and PROVEN at the VM level for the SINGLE-input/output case,
+BOTH paths (claim + listing):
+- Q1 RESOLVED (compile probe): covenant-bound (binding=cov) entrypoints CAN read tx.outputs. Compose confirmed.
+- Q2 RESOLVED (compile probe): forSale(bool)+price(int) state fields compile. State layout {start:1, len:57} (was 46).
+- CONTRACT v2: covenants/bitphoque_sale_v2.sil + bitphoque_sale_ctor.json (git c20c2b9). checkAuth branches
+  per-input on prevStates[i].forSale: not-for-sale needs owner sig; for-sale needs tx.outputs[witnesses[i]]
+  to pay at least price to the seller's P2PK lock. checkSaleState (the v1->v2 FIX) allows for-sale OUTPUTS
+  only when NO input is for-sale (a listing, owner-signed); forbids them when ANY input is for-sale (a claim,
+  anti-double-claim). v1's checkSaleReset was over-strict: it forbade ALL for-sale outputs, making listing
+  IMPOSSIBLE. Caught by reasoning before testing; v2 fixes it.
+- SALE+LISTING GATE PROVEN (rust-examples/bitphoque_sale_reject_tests.rs, git c20c2b9):
+  CLAIM path: C-CONTROL passes; 6 cheats rejected (underpay / wrong-payee / no-payment / claim-unlisted /
+  stays-for-sale / output-match-abuse). LISTING path: L-CONTROL passes (listing WORKS, v1 could not);
+  L1 no-sig and L2 wrong-sig both rejected (listing REQUIRES the owner signature).
+- DECIDED: per-UTXO sale state, fungible token (NOT per-phoque NFT). checkSaleState = Option 3 reframed
+  (forbid for-sale outputs if any input is for-sale).
+
+STILL OPEN (next): generalize beyond SINGLE-input/output to 2x2 FANOUT (checkSaleState "any input for-sale"
+  logic should generalize but is untested at fanout; plus multi-claim output-matching: coincidental extra
+  payment, cross-referenced witness indices); then ON-CHAIN (re-encounters the v1-mass/ComputeBudget/fee
+  rules from the transfer; needs a broadcast + local-VM-verify harness like the transfer; needs a FRESH
+  GENESIS since v2's layout/script differ from the deployed token). AUCTION is a separate future build (see end).
