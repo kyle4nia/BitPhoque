@@ -10,8 +10,8 @@ _Last updated: **FIXED-PRICE SALE PROVEN END-TO-END ON-CHAIN (TN10).** Full life
 on a real node: MINT (genesis) -> TRANSFER (handoff) -> SALE (list + claim). The sale was executed on a
 SECOND, sale-enabled deployment (v2 contract with per-UTXO forSale/price): a buyer claimed a listed UTXO
 by paying the seller, receiving the phoques with NO owner signature on the covenant input (payment-
-authorized). Resume point = generalize the sale beyond single-input/output (2x2 fanout), then the
-pre-mainnet checklist._
+authorized). v3 genesis is now LIVE on-chain (the fanout-safe F1 fix supersedes the holed v2). Resume point =
+re-prove list+claim ON-CHAIN at 2x2 on the v3 token, then the pre-mainnet checklist._
 
 ---
 
@@ -76,7 +76,16 @@ A SECOND deployment (v2 contract) to prove the fixed-price sale. Separate from t
   Buyer paid 100,000,000 sompi to the seller and received the 42069 phoques — NO owner sig on the covenant
   input (payment-authorized). Phoques now in a new covenant UTXO owned by the BUYER key, not-for-sale.
   harness `rust-examples/bitphoque_sale_claim.rs` (2-input: unsigned covenant input 0 + buyer-signed plain input 1).
-
+### 4. SALE v3 (fanout-safe, the F1 fix) — LIVE genesis
+First-ever v3 broadcast. v3 fixes the F1 double-claim hole (for-sale inputs must use
+strictly-increasing payment-output indices). Supersedes the holed v2 as the live sale token.
+- v3 contract: `covenants/bitphoque_sale_v3.sil`. Compiled script 2793 bytes.
+- v3 covenant_id: `3baed5a39ed95e6aa62a0d8d46aae39a8d832d4f900e5a6a351dca4fbc326458`
+- v3 genesis tx (ACCEPTED + confirmed): `f1e53e2ff1a7c58145b4ecaca0d06b14ff7f1fba2083b95546a861cd87640ddf`
+- genesis covenant UTXO `f1e53e2f...:0`, value 3,299,999,800,000 sompi, 42069 phoques, not-for-sale, maxCovIns/Outs=3/3.
+- owner = same v2 seller pubkey `50a1...`; funding input `fc91589116b0de5a4f9f019cb3520564ec9d5d014051f41bec8ec0c8c42f2682:0` spent (confirmed empty).
+- harness `rust-examples/bitphoque_sale_genesis_v3.rs` (reads `bitphoque_sale_compiled_v3.json`).
+- NOTE: funded with 33,000 TKAS (faucet 24hr cap 100k; conserved the rest for list/claim funding).
 ---
 
 ## CONSENSUS RULES LEARNED (the broadcast lessons — all handled in the harnesses)
@@ -269,8 +278,8 @@ cheats rejected (F1 double-claim, F2 cross-wire, F3 inflate, F4 claim-leaves-lis
 **IMPORTANT — what is NOT yet done:** v3 has NEVER been broadcast. The LIVE TN10 sale token is still
 v2 (the holed version). Fanout proven at 2x2 AND 3x3 at the VM, not NxM (strict-increasing scales; untested
 past 2). Remaining, in order:
-- [ ] **Re-genesis the sale token on v3** (the live v2 is holed; do not build further sale features on v2).
-      Then re-prove list+claim ON-CHAIN at 2x2 (genesis -> list two -> claim both, distinct payments).
+- [x] **Re-genesis the sale token on v3** — DONE (tx f1e53e2f..., cid 3baed5a3...). NEXT: re-prove
+      list+claim ON-CHAIN at 2x2 (list two -> claim both, distinct payments) on the v3 genesis UTXO.
 - [x] **3x3 fanout PROVEN at VM** (G-CTRL claim/split, G1 triple-share, G2 mid-collision, G3 out-of-order, G4 non-contiguous all behave). NxM inferred (accumulator is N-agnostic) but only 2 and 3 tested. NOTE: strict-increasing rejects DISTINCT-but-UNORDERED witnesses (G3) — safe but stricter than minimal; per-output-accounting mainnet version would relax it.
 - [ ] **Split/merge for the sale** (list part of a balance, not the whole supply) — the 2x2 fanout supports it.
 - [ ] **Inspect tool**: generalize to take an address/contract so it can confirm arbitrary P2SH balances on-chain.
