@@ -86,6 +86,16 @@ strictly-increasing payment-output indices). Supersedes the holed v2 as the live
 - owner = same v2 seller pubkey `50a1...`; funding input `fc91589116b0de5a4f9f019cb3520564ec9d5d014051f41bec8ec0c8c42f2682:0` spent (confirmed empty).
 - harness `rust-examples/bitphoque_sale_genesis_v3.rs` (reads `bitphoque_sale_compiled_v3.json`).
 - NOTE: funded with 33,000 TKAS (faucet 24hr cap 100k; conserved the rest for list/claim funding).
+### 5. SPLIT v3 (1 -> 2, prerequisite for 2x2) — LIVE
+The genesis minted all 42069 into one UTXO; a 2x2 sale needs two. Owner-signed 1-input/2-output
+transfer, both outputs not-for-sale, same owner. First on-chain MULTI-OUTPUT transfer on v3
+(proves conservation across two outputs on a real node).
+- split tx (ACCEPTED): `5db053c41fe1865d89fb2c70dfb890b6c5a10bef80e053fcd302d5d47b3aa8e9`
+- out 0 `5db053c4...:0` = 21034 phoques, ~16,499.995 TKAS, owner 50a1..., not-for-sale
+- out 1 `5db053c4...:1` = 21035 phoques, ~16,499.995 TKAS, owner 50a1..., not-for-sale
+- harness `rust-examples/bitphoque_sale_split_v3.rs` (silverscript bin). Caps 3/3 (matches genesis).
+- NOTE: each output sits at a DIFFERENT P2SH (amount is a ctor arg -> bakes into script). The list
+  harness must compile with the right amount to find each UTXO.
 ---
 
 ## CONSENSUS RULES LEARNED (the broadcast lessons — all handled in the harnesses)
@@ -251,6 +261,8 @@ Own git repo (branch `master`). NOT yet pushed to GitHub — later deliberate "m
   (key in bitphoque_owner.key; re-faucet-funded 100k TKAS for the v2 genesis).
 - rusty-kaspa clone: C:\kaspa-tn12\rusty-kaspa (tag tn10-toc3); silverscript: C:\kaspa-tn12\silverscript.
 - Fee floors learned: genesis ~167k (use 200k); transfer ~378,600 (use 400k); claim ~654,600 (use 700k).
+-v3 split/2-output transfer ~659k (use 700k) — 2793B v3 script raises mass vs v2's 1969B floors.
+
 
 ---
 
@@ -278,8 +290,10 @@ cheats rejected (F1 double-claim, F2 cross-wire, F3 inflate, F4 claim-leaves-lis
 **IMPORTANT — what is NOT yet done:** v3 has NEVER been broadcast. The LIVE TN10 sale token is still
 v2 (the holed version). Fanout proven at 2x2 AND 3x3 at the VM, not NxM (strict-increasing scales; untested
 past 2). Remaining, in order:
-- [x] **Re-genesis the sale token on v3** — DONE (tx f1e53e2f..., cid 3baed5a3...). NEXT: re-prove
-      list+claim ON-CHAIN at 2x2 (list two -> claim both, distinct payments) on the v3 genesis UTXO.
+- [~] **Re-prove list+claim ON-CHAIN at 2x2** — SPLIT DONE (5db053c4...:0 = 21034, :1 = 21035, both
+      not-for-sale). NEXT: build v3 list harness (list both UTXOs), then v3 claim. PLAN: two distinct
+      buyer keys (only one funded so far) — do both (a) two separate claim txs and (b) one 2x2 claim tx
+      (2 for-sale inputs, strict-increasing payment outputs) to prove the F1 fix on-chain.
 - [x] **3x3 fanout PROVEN at VM** (G-CTRL claim/split, G1 triple-share, G2 mid-collision, G3 out-of-order, G4 non-contiguous all behave). NxM inferred (accumulator is N-agnostic) but only 2 and 3 tested. NOTE: strict-increasing rejects DISTINCT-but-UNORDERED witnesses (G3) — safe but stricter than minimal; per-output-accounting mainnet version would relax it.
 - [ ] **Split/merge for the sale** (list part of a balance, not the whole supply) — the 2x2 fanout supports it.
 - [ ] **Inspect tool**: generalize to take an address/contract so it can confirm arbitrary P2SH balances on-chain.
