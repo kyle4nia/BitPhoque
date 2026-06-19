@@ -6,14 +6,13 @@ committed to git, dry-run before broadcast, verify-by-reading-source for anythin
 local VM verify before TN10. BitPhoque lives in its OWN tree (`C:\bitphoque`) and its OWN git repo —
 separate from oracle-protocol. The end-of-session git checkpoint ritual covers TWO trees._
 
-_Last updated: **v3 SALE PROVEN ON-CHAIN — 2×2 SEPARATE CLAIMS + SECONDARY-MARKET RESALE.**
-The fanout-safe v3 token now has its full sale lifecycle proven on a real node at 2×2: split
-→ two listings → two independent claims by two distinct buyers (buyer0, buyer1). Beyond the
-primary sale, RESALE is proven: buyer0 listed phoques they had bought and buyer1 claimed them
-— a peer-to-peer secondary-market hop with Kyle (genesis owner) not a party. Both list and
-claim harnesses are now PARTY-AGNOSTIC (the seed of a future CLI/wallet). Resume point = the
-COMBINED 2×2 claim tx (the actual on-chain F1-fix proof: two for-sale inputs in ONE tx with
-strict-increasing payment outputs), then the pre-mainnet checklist._
+_Last updated: **COMBINED 2×2 CLAIM PROVEN ON-CHAIN — the F1 fix is now demonstrated on a real node.**
+The headline open item is CLOSED: two for-sale UTXOs from the SAME seller were claimed in ONE tx,
+forced onto strictly-increasing distinct payment outputs (witnesses=[2,3]), with two buyers each
+funding their own input (atomic multi-party settlement). The v2 F1 double-claim (two listings, one
+payment) is now structurally impossible AND confirmed on-chain, not just in VM reject-tests. A
+realistic 3-holder distribution (buyer1/2/3) is seeded on-chain for future wallet/marketplace work.
+Remaining: split/merge generalization, generalized inspect, the wallet/CLI build, mainnet checklist.
 
 ---
 
@@ -139,6 +138,45 @@ buyers sell to other buyers."
 - CHAIN OF CUSTODY (21034 parcel): Kyle `50a1...` → buyer0 (6c) → buyer0 lists (7a) → buyer1 (7b).
 - END STATE: buyer1 holds the whole supply (21034 from buyer0 + 21035 from Kyle = 42069). buyer0 net:
   paid 100M to acquire, received 100M reselling (TN10 practice values).
+### 8. TRANSFER-SPLIT → realistic 3-holder distribution — LIVE
+Generalized the self-split into a TWO-OWNER transfer-split (each output gets its own owner pubkey),
+then seeded a realistic uneven distribution across three holders for future wallet/marketplace work.
+NEW keys this session (generated + saved gitignored; buyer2/3 faucet-funded 1000 TKAS plain each):
+- buyer2 = `5d338aa54bcf4d955941ff8bcdd069b2f3aa1deb40234dc73ce5f4f581adf161`
+  (key `bitphoque_buyer2.key`; addr `kaspatest:qpwn8z49f085m92eg8lchnwsdxe082saadqzxnw88njlfavp4hckzcys2w2lh`)
+- buyer3 = `267496ce01f2a35653491c61b56b23e6b7dbe777a02b146286ac3635ff36ab61`
+  (key `bitphoque_buyer3.key`; addr `kaspatest:qqn8f9kwq8e2x4jnfywxrdtty0nt0kl8w7szk9rzs6krvd0lx64kzkhgpw6d5`)
+- **(8a) split A** `81caee43...` : buyer1's 21034 → 1000 (buyer2, `81caee43...:0`) + 20034 (buyer1, `...:1`)
+- **(8b) split B** `05160528...` : buyer1's 21035 → 10500 (buyer3, `05160528...:0`) + 10535 (buyer1, `...:1`)
+- **(8c) split** `4f084e26...` : buyer1's 20034 → 1 (listing parcel, `...:0`) + 20033 (buyer1, `...:1`)
+- **(8d) split** `0434801c...` : buyer1's 10535 → 5267 (listing parcel, `...:0`) + 5268 (buyer1, `...:1`)
+- harness `rust-examples/bitphoque_sale_split_v3.rs` is the self-split; the two-owner generalization is
+  `rust-examples/bitphoque_split_transfer_v3.rs` (CLI below). KEY FINDING: a split to a DIFFERENT owner
+  is just a normal transfer — the contract constrains AMOUNTS (conservation), not output ownership, so
+  the input owner can hand parcels to anyone. Verified at VM + on-chain.
+
+### 9. COMBINED 2×2 CLAIM — THE ON-CHAIN F1-FIX PROOF — LIVE
+The headline. buyer1 listed TWO of its parcels (same seller): `4943a956...:0` (1 phoque) and
+`5aab21f6...:0` (5267 phoque), both price 500000. Then ONE tx claimed BOTH:
+- **2×2 claim tx (ACCEPTED):** `40cbf8659db6e0d17465c0916da4581557483e8a5e3d204e91e12d085b79d80d`
+- input 0 = for-sale `4943a956...:0` (1 phoque, seller buyer1), UNSIGNED, **witness → output 2**
+- input 1 = for-sale `5aab21f6...:0` (5267, seller buyer1), UNSIGNED, **witness → output 3** (3 > 2)
+- input 2 = buyer2 plain funding (buyer2-signed); input 3 = buyer3 plain funding (buyer3-signed)
+- output 0 = 1 phoque → buyer2; output 1 = 5267 → buyer3
+- output 2 = 100M → seller buyer1 (buyer2 pays); output 3 = 100M → seller buyer1 (buyer3 pays)
+- outputs 4,5 = change to buyer2 / buyer3
+- **What it proves:** two for-sale inputs from the SAME seller, in ONE tx, forced onto STRICTLY-
+  INCREASING DISTINCT payment outputs. The v2 F1 hole (witnesses=[k,k] → two parcels, one payment)
+  is structurally impossible here and confirmed on a real node. Same-seller is the strongest F1 test:
+  cross-seller was always caught by the wrong-payee check (F2); same-seller was the actual hole.
+- **Also proves atomic multi-party settlement:** two distinct buyers each fund their own payment in
+  one atomic tx — the whole tx commits or none of it does; neither buyer can be rugged.
+- harness `rust-examples/bitphoque_sale_claim_2x2_v3.rs` (hardcoded consts for this one-shot proof,
+  not the general CLI). fee 1,500,000 cleared on first try (no floor correction needed).
+
+FINAL DISTRIBUTION after the 2×2 (whole supply across 3 holders, all by genuine on-chain sales/splits):
+- buyer1: 20033 + 5268 = 25,301   |   buyer2: 1000 + 1 = 1,001   |   buyer3: 10500 + 5267 = 15,767
+- total 42,069 ✓
 
 ---
 
@@ -173,6 +211,27 @@ From the v3 SALE (list, split, and the 2-input claim — all on a real node):
    Bumping the harness FEE const to 900k cleared it. (List harness stays at 700k — it's lighter.)
 10. **PAYMENT must dodge KIP-9 dust** (carried from v2 #6): pay 100M (>> the 500k/750k price) so the
     seller payment output isn't dust. Contract only requires payment >= price, so overpaying is fine.
+### MULTI-COVENANT-INPUT ABI (leader / delegate) — the combined-claim finding
+For a tx with N>1 covenant inputs, the covenant ABI is leader/delegate (confirmed against the proven
+merge pattern in `silverscript-lang/tests/kcc20_tests.rs` lines 289–304):
+- **Input 0 = LEADER:** `build_sig_script_for_covenant_decl("transfer", vec![newStates, sigs, witnesses],
+  { is_leader: true })`. It carries the COMPLETE arrays for ALL covenant inputs/outputs —
+  newStates (one per covenant OUTPUT), sigs (one per covenant INPUT), witnesses (a FLAT byte[],
+  one byte per covenant input).
+- **Every other covenant input = DELEGATE:** `build_sig_script_for_covenant_decl("transfer", vec![],
+  { is_leader: false })` — EMPTY args. The delegate still pushes its own redeem script.
+- The contract reads `witnesses[i]`, `prevStates[i]`, `newStates[i]` from the LEADER's arrays. If you
+  (wrongly) make every input a leader with its own single-element arrays, the contract slices past the
+  end of the short per-input array and fails `OutOfBoundsSubstring(1, 2, 1)` (it tried to read
+  witnesses[1] from a 1-byte blob). This was the exact bug hit + fixed building the 2×2 claim.
+- witnesses encoding: a single byte[] blob, e.g. `Expr::bytes(vec![2u8, 3u8])` — NOT a 2-element array
+  of separate byte pushes. The contract does `int(witnesses[i])` to read each index.
+
+### Fee floor (add to the list)
+- v3 COMBINED 2×2 claim (4 inputs: 2 covenant + 2 plain; 6 outputs; TWO script reveals) cleared at
+  fee 1,500,000 on the first try. Floor is somewhere below 1.5M; this is the heaviest tx in the
+  lifecycle. (Single 2-input claim floor was 857k/use 900k; the second covenant input + script reveal
+  is the jump.)
 
 ### NODE / INDEXING QUIRKS
 - **PsychoNode address-index LAGS the tx-index by a few seconds after confirmation.** A claim run
@@ -300,6 +359,12 @@ C:\bitphoque\
   bitphoque_v2_owner.key               <- v2/v3 sale token owner = SELLER 50a1... (GITIGNORED)
   bitphoque_buyer.key                  <- buyer0 261cbf44... (GITIGNORED)
   bitphoque_buyer1.key                 <- buyer1 8c02c20a... (GITIGNORED)
+  bitphoque_buyer2.key                 <- buyer2 5d338aa5... (GITIGNORED)
+  bitphoque_buyer3.key                 <- buyer3 267496ce... (GITIGNORED)
+  rust-examples\
+    bitphoque_split_transfer_v3.rs     <- TWO-OWNER transfer-split (CLI: in_amount, signer_keyfile,
+                                          out0_amount, out0_pubkey, out1_amount, out1_pubkey)
+    bitphoque_sale_claim_2x2_v3.rs     <- COMBINED 2×2 claim — the on-chain F1 proof (hardcoded consts)
   covenants\
     bitphoque.sil                      <- original token contract (KCC20 verbatim, DEPLOYED)
     bitphoque_ctor.json / _ctor_real.json / _compiled_*.json  <- original ctors + compiled
@@ -330,6 +395,7 @@ C:\bitphoque\
     bitphoque_swap_covenant_design.md  <- sale/swap design + auction future-build + open items
     bitphoque_mainnet_checklist.md     <- the pre-mainnet GATE
     operating_baseline.md              <- shared portable baseline (copy in oracle tree)
+      
 ```
 Own git repo (branch `master`). NOT yet pushed to GitHub — later deliberate "make it public" pass
 (clean repo name + README + secret-sweep first).
@@ -403,11 +469,17 @@ Remaining, in order:
       G4 non-contiguous all behave). NxM inferred (accumulator is N-agnostic) but only 2 and 3 tested.
       NOTE: strict-increasing rejects DISTINCT-but-UNORDERED witnesses (G3) — safe but stricter than
       minimal; per-output-accounting mainnet version would relax it.
-- [ ] **COMBINED 2×2 claim tx (the on-chain F1-fix proof)** — STILL OPEN, now the headline item.
-      Two for-sale inputs in ONE tx with STRICT-INCREASING payment outputs (witnesses=[0,1]). The
-      separate-claims work above does NOT exercise the lastSaleWitness accumulator (each tx had one
-      for-sale input). To do this: mint/split a fresh pair, list both, then claim both in one tx.
-      Proven at the VM at 2×2 AND 3×3; never broadcast as a single multi-input claim.
+- [x] **COMBINED 2×2 claim tx (the on-chain F1-fix proof)** — DONE. tx `40cbf865...`: two same-seller
+      for-sale inputs forced onto strictly-increasing payment outputs (witnesses=[2,3]), two buyers
+      each funding their own input. F1 double-claim is now structurally impossible AND proven on-chain.
+- [x] **Two-owner transfer-split** — DONE (`bitphoque_split_transfer_v3.rs`). Seeded a realistic
+      3-holder distribution (buyer1/2/3). Split-to-different-owner verified as a normal transfer.
+- [ ] **Split/merge generalization for the sale** (list part of a balance; MERGE N→1 still unproven
+      on-chain — the leader/delegate ABI for multi-input is now proven via the 2×2 claim, so merge is
+      a near neighbor).
+- [ ] (unchanged) generalized inspect tool; wallet/CLI build (engine now fully proven — collapse
+      harnesses → party-agnostic CLI → thin marketplace app); original-token owner quirk; AUCTION
+      future build; mainnet checklist; make public.
 - [ ] **Split/merge for the sale** (list part of a balance, not the whole supply) — the 2x2 fanout supports it.
 - [ ] **Inspect tool**: generalize to take an address/contract so it can confirm arbitrary P2SH balances on-chain.
 - [ ] **Original-token owner quirk** (observed, not blocking): the ORIGINAL genesis ctor used a 32-ZERO pubkey as
