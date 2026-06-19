@@ -43,6 +43,9 @@ self-contained: this baseline + that project's status doc, no cross-tree pointer
   multiple commands breaks the feedback loop, makes failures impossible to localize, and
   gets confusing fast. (This rule was sharpened after repeated bundling caused exactly that
   in practice.)
+- **Lead with `cd` on EVERY terminal command.** Work happens across multiple machines and
+  directories; every single-line command must start by cd-ing to the correct directory so
+  it's copy-paste safe from anywhere, with no assumption about the current working directory.
 - **Single-line terminal commands.** The VS Code integrated terminal REVERSES multi-line
   pastes line-by-line. Reliable workarounds: single-line commands, copy-file-plus-replace,
   or paste multi-line content into the EDITOR (not the terminal).
@@ -54,6 +57,23 @@ self-contained: this baseline + that project's status doc, no cross-tree pointer
   shaky step is solid.
 - **Confirmed vs guessed.** Always distinguish "verified from source / tested" from
   "assumption." Flag guesses explicitly so they don't get built on as if proven.
+- **Pause to re-state the end prize periodically.** Step back from the command-by-command
+  flow now and then to put the session's concrete work back in the context of the project's
+  end-goals. This is wanted, not a digression — honor it when asked, and offer it at natural
+  seams. (The specific end-goals live in each project's status doc.)
+
+---
+
+## File delivery & movement
+
+- **File delivery = MOVE then COPY (not copy-only).** When Claude delivers a downloadable
+  file, also provide a single-line CMD command that: `move /Y` it from Downloads → the
+  CANONICAL source-of-truth location (the project's `rust-examples\` or `docs\`) so NO stale
+  orphan is left in Downloads, THEN (for build artifacts) `copy /Y` canonical → the
+  disposable build/clone location. MOVE is the rule for the Downloads→canonical hop precisely
+  so no orphan is left to go stale; plain copy-everywhere was the old way and left orphans.
+- **CMD `move`/`copy`/`del` preferred over PowerShell** for file ops (more predictable
+  quoting/escaping, single-line friendly).
 
 ---
 
@@ -89,6 +109,9 @@ live in the project's status doc, not here.)_
   meant to gate or check something, read its compiler lowering / engine implementation before
   trusting it. A gate tested only on valid input is half-proven — always include the
   rejection test (bad input MUST fail).
+- **Push back on unnecessary rewrites of working code.** Prefer the smallest diff from a
+  proven file. When code already works, generalize/extend it rather than rebuilding it; a
+  rewrite re-introduces risk that a minimal edit avoids.
 - **The status doc is the real memory.** The project status doc is the durable record, not
   the chat. Chats compact and lose detail; the doc and the files in the project tree do not.
   Keep the doc current after every meaningful step. A fresh chat resumes from the doc, not
@@ -96,7 +119,8 @@ live in the project's status doc, not here.)_
 - **Secret sweep before any push.** Before a repo goes public, grep ALL history for
   private-key material: `git grep -i -E "privkey|private.key|secret" $(git rev-list --all)`.
   Must come back clean (matches in comments/docs ABOUT keys are fine; an actual 64-char hex
-  private key is not). Private keys never belong in a tracked file.
+  private key is not). Private keys never belong in a tracked file. Throwaway testnet keys
+  are gitignored (`*.key`); testnet keys NEVER become mainnet keys.
 
 ### Checkpoint & session rituals
 - **Commit at checkpoints, not every edit.** A checkpoint is: a tool proven working, the
@@ -106,7 +130,8 @@ live in the project's status doc, not here.)_
   rather than leaving it implicit.
 - **TWO (or more) TREES to checkpoint.** Each project is a SEPARATE git repo. The
   end-of-session ritual covers EVERY tree touched — check and commit each. Work in one tree
-  does not protect another.
+  does not protect another. NOTE: a change to this shared `operating_baseline.md` must be
+  applied to EVERY tree's copy in the same session, or the copies drift.
 - **End-of-session checkpoint (a STANDING RITUAL — Claude initiates it).** Before wrapping a
   session, Claude proactively runs / prompts the git status check and commits outstanding
   real work in EACH tree touched, so nothing valuable is left untracked between sessions.

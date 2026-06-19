@@ -6,12 +6,14 @@ committed to git, dry-run before broadcast, verify-by-reading-source for anythin
 local VM verify before TN10. BitPhoque lives in its OWN tree (`C:\bitphoque`) and its OWN git repo —
 separate from oracle-protocol. The end-of-session git checkpoint ritual covers TWO trees._
 
-_Last updated: **FIXED-PRICE SALE PROVEN END-TO-END ON-CHAIN (TN10).** Full lifecycle now demonstrated
-on a real node: MINT (genesis) -> TRANSFER (handoff) -> SALE (list + claim). The sale was executed on a
-SECOND, sale-enabled deployment (v2 contract with per-UTXO forSale/price): a buyer claimed a listed UTXO
-by paying the seller, receiving the phoques with NO owner signature on the covenant input (payment-
-authorized). v3 genesis is now LIVE on-chain (the fanout-safe F1 fix supersedes the holed v2). Resume point =
-re-prove list+claim ON-CHAIN at 2x2 on the v3 token, then the pre-mainnet checklist._
+_Last updated: **v3 SALE PROVEN ON-CHAIN — 2×2 SEPARATE CLAIMS + SECONDARY-MARKET RESALE.**
+The fanout-safe v3 token now has its full sale lifecycle proven on a real node at 2×2: split
+→ two listings → two independent claims by two distinct buyers (buyer0, buyer1). Beyond the
+primary sale, RESALE is proven: buyer0 listed phoques they had bought and buyer1 claimed them
+— a peer-to-peer secondary-market hop with Kyle (genesis owner) not a party. Both list and
+claim harnesses are now PARTY-AGNOSTIC (the seed of a future CLI/wallet). Resume point = the
+COMBINED 2×2 claim tx (the actual on-chain F1-fix proof: two for-sale inputs in ONE tx with
+strict-increasing payment outputs), then the pre-mainnet checklist._
 
 ---
 
@@ -21,11 +23,13 @@ re-prove list+claim ON-CHAIN at 2x2 on the v3 token, then the pre-mainnet checkl
   tests prove the gate (accept valid, reject inflation + wrong-sig).
 - **Sale mechanism (v2 contract, per-UTXO forSale/price):** the trustless fixed-price sale. PROVEN at the
   VM level (claim + listing, all cheats rejected) AND end-to-end ON-CHAIN (genesis -> list -> claim).
-- **Two spend modes in v2:** LISTING (owner-signed, flips a UTXO to forSale=true at a price) and CLAIM
+- **Sale mechanism (v3 contract, fanout-safe F1 fix):** LIVE. Full lifecycle proven on-chain at 2×2 —
+  split → two listings → two independent claims by two distinct buyers; plus secondary-market resale.
+- **Two spend modes:** LISTING (owner-signed, flips a UTXO to forSale=true at a price) and CLAIM
   (payment-authorized, NO owner sig — a buyer pays >= price to the seller and receives the phoques).
 - **Auction:** recorded as a separate FUTURE build (see swap design doc) — stateful/temporal, own architecture.
-- **Next:** generalize the sale beyond single-input/output (2x2 fanout + multi-claim output-matching);
-  then the pre-mainnet checklist. Design + open items live in `bitphoque_swap_covenant_design.md`.
+- **Next:** the COMBINED 2×2 claim tx (on-chain F1-fix proof), then generalize wider; then the pre-mainnet
+  checklist. Design + open items live in `bitphoque_swap_covenant_design.md`.
 
 ---
 
@@ -76,6 +80,7 @@ A SECOND deployment (v2 contract) to prove the fixed-price sale. Separate from t
   Buyer paid 100,000,000 sompi to the seller and received the 42069 phoques — NO owner sig on the covenant
   input (payment-authorized). Phoques now in a new covenant UTXO owned by the BUYER key, not-for-sale.
   harness `rust-examples/bitphoque_sale_claim.rs` (2-input: unsigned covenant input 0 + buyer-signed plain input 1).
+
 ### 4. SALE v3 (fanout-safe, the F1 fix) — LIVE genesis
 First-ever v3 broadcast. v3 fixes the F1 double-claim hole (for-sale inputs must use
 strictly-increasing payment-output indices). Supersedes the holed v2 as the live sale token.
@@ -86,6 +91,7 @@ strictly-increasing payment-output indices). Supersedes the holed v2 as the live
 - owner = same v2 seller pubkey `50a1...`; funding input `fc91589116b0de5a4f9f019cb3520564ec9d5d014051f41bec8ec0c8c42f2682:0` spent (confirmed empty).
 - harness `rust-examples/bitphoque_sale_genesis_v3.rs` (reads `bitphoque_sale_compiled_v3.json`).
 - NOTE: funded with 33,000 TKAS (faucet 24hr cap 100k; conserved the rest for list/claim funding).
+
 ### 5. SPLIT v3 (1 -> 2, prerequisite for 2x2) — LIVE
 The genesis minted all 42069 into one UTXO; a 2x2 sale needs two. Owner-signed 1-input/2-output
 transfer, both outputs not-for-sale, same owner. First on-chain MULTI-OUTPUT transfer on v3
@@ -96,6 +102,44 @@ transfer, both outputs not-for-sale, same owner. First on-chain MULTI-OUTPUT tra
 - harness `rust-examples/bitphoque_sale_split_v3.rs` (silverscript bin). Caps 3/3 (matches genesis).
 - NOTE: each output sits at a DIFFERENT P2SH (amount is a ctor arg -> bakes into script). The list
   harness must compile with the right amount to find each UTXO.
+
+### 6. SALE v3 — 2×2 PRIMARY SALE (two separate claims) — LIVE
+The two split UTXOs (21034, 21035) listed and claimed independently by two DISTINCT buyers.
+Proves the v3 claim path on a real node and the "sell over time to successive buyers" use case.
+- buyer0 = `261cbf44ce71a1501fe7fc2d6191ccd657c0fd170297b2b871533ced62c54420`
+  (key `bitphoque_buyer.key`; addr `kaspatest:qqnpe06yeec6z5qlul7z6cv3ent90s8azupf0v4cw9fnemtzc4zzqa8xadms9`)
+- buyer1 = `8c02c20a67901128dab9377bcb3d9739296e82ac2d9e7628635daf63e63d4936`
+  (key `bitphoque_buyer1.key`; addr `kaspatest:qzxq9ss2v7gpz2x6hymhhjeajuujjm5z4skeua3gvdw67clx84ynvxfwgm0j4`)
+  GENERATED + faucet-funded this session (faucet tx `3e7b89c1...`, 1000 TKAS; faucet min is 1000).
+- **(6a) LISTING 21034** tx: `cebf75b5fafbdad3c38505fdeec4b7db3542bd9b88a448cbab219e6f4caa2443`
+  (owner `50a1...` signed; price 500000; for-sale UTXO `cebf75b5...:0`). Spent split `5db053c4...:0`.
+- **(6b) LISTING 21035** tx: `55542a993f104dae1d304c95420a8c14f4805a7b6c37909d48a12bbfc361c59f`
+  (owner `50a1...` signed; price 500000; for-sale UTXO `55542a99...:0`). Spent split `5db053c4...:1`.
+- **(6c) CLAIM 21034 by buyer0** tx: `3265e0635217c37acc32247cbdd34b83072b4e071d9d644b5f4ea6ceedd1f085`
+  (buyer0 paid 100M to seller `50a1...`, received 21034; not-for-sale UTXO `3265e063...:0`).
+- **(6d) CLAIM 21035 by buyer1** tx: `9ffe84b8a6d56b691c3748b82aaccc35b2b440857ebca650b46c05bba3f6ed6a`
+  (buyer1 paid 100M to seller `50a1...`, received 21035; not-for-sale UTXO `9ffe84b8...:0`).
+- harnesses: `rust-examples/bitphoque_sale_list_v3.rs` + `rust-examples/bitphoque_sale_claim_v3.rs`.
+- NOTE: these are TWO SEPARATE claim txs (one for-sale input each). They prove single claims on v3.
+  They do NOT yet exercise the strict-increasing F1 accumulator — that needs the COMBINED 2×2 tx
+  (two for-sale inputs in ONE tx), which is the remaining headline open item.
+
+### 7. SALE v3 — SECONDARY-MARKET RESALE (buyer0 → buyer1) — LIVE
+A peer-to-peer resale with Kyle (genesis owner) NOT a party. Proves the token CIRCULATES: a holder
+who BOUGHT phoques can list and sell them with the identical tools, because the protocol treats every
+holder as an equal peer (no privileged seller / no coordinator). This is the on-chain answer to "how do
+buyers sell to other buyers."
+- **(7a) buyer0 RESALE LISTING** tx: `d24437b8bddd37942076fbb608f9f05d21b4d094d17e2cb6fd1a046322a5c088`
+  buyer0 signed (with `bitphoque_buyer.key`) to list their own 21034 at buyer0's OWN price 750000
+  (a reseller sets their own price). Spent buyer0's not-for-sale UTXO `3265e063...:0`. For-sale UTXO
+  `d24437b8...:0` at P2SH `kaspatest:prqhnhtk3vraw2fffvn3ezvmhaxqtv8nfxrfwm9v0wn9nu58kckxgyqwxq5xu`.
+- **(7b) buyer1 CLAIMS buyer0's listing** tx: `1635fd2858223314ef4f0b350c63b2627fb18a0d4836aed69a2c4125b391b720`
+  buyer1 paid 100M to **buyer0** (not Kyle), received 21034. The claim harness's party-agnostic seller
+  arg = buyer0's pubkey `261cbf44...`. No Kyle signature, no Kyle involvement anywhere in this hop.
+- CHAIN OF CUSTODY (21034 parcel): Kyle `50a1...` → buyer0 (6c) → buyer0 lists (7a) → buyer1 (7b).
+- END STATE: buyer1 holds the whole supply (21034 from buyer0 + 21035 from Kyle = 42069). buyer0 net:
+  paid 100M to acquire, received 100M reselling (TN10 practice values).
+
 ---
 
 ## CONSENSUS RULES LEARNED (the broadcast lessons — all handled in the harnesses)
@@ -115,10 +159,28 @@ From the CLAIM (2-input: covenant + plain buyer funding, 3 outputs):
    divides C by output amount, so a tiny payment output (500k sompi) spiked it to 2,000,000 (limit 500,000).
    FIX: pay a non-dust amount. The covenant checks `payment >= price`, so we paid 100M (>> 500k listed price)
    to dodge the dust penalty WITHOUT re-listing. (calc_storage_mass: consensus/core/src/mass/mod.rs:437.)
-7. Claim fee floor ~654,600 (use 700,000) for the bigger 2-input, script-revealing tx.
+7. Claim fee floor ~654,600 (use 700,000) for the bigger 2-input, script-revealing tx (v2).
 
 NOTE: genesis spends a PLAIN funding input as a rothschild bin and used SigopCount(1) successfully — the
 ComputeBudget-on-all-inputs rule (#4) bit the CLAIM (a v1 covenant tx built via silverscript-lang), not genesis.
+
+From the v3 SALE (list, split, and the 2-input claim — all on a real node):
+8. **v3 listing/split fee floor ~659k (use 700k).** The 2793-byte v3 script raises tx mass vs v2's
+   1969B floors. A single-input, single-output listing or a 1→2 split clears at 700k.
+9. **v3 2-INPUT CLAIM fee floor = 857,000 (use 900k).** The claim is the HEAVIEST tx in the lifecycle:
+   it reveals the 2793B script AND carries a second (buyer funding) input AND three outputs. The node
+   rejected 700k with the exact required figure: `required amount of 857000 for compute mass 8570`.
+   Bumping the harness FEE const to 900k cleared it. (List harness stays at 700k — it's lighter.)
+10. **PAYMENT must dodge KIP-9 dust** (carried from v2 #6): pay 100M (>> the 500k/750k price) so the
+    seller payment output isn't dust. Contract only requires payment >= price, so overpaying is fine.
+
+### NODE / INDEXING QUIRKS
+- **PsychoNode address-index LAGS the tx-index by a few seconds after confirmation.** A claim run
+  immediately after a listing confirmed returned "no for-sale covenant UTXO found" against the CORRECT
+  P2SH (verified on the explorer that the listing output WAS there). Re-running the same command a
+  moment later found it. The compiled P2SH was right the whole time — the node's by-address UTXO
+  lookup simply hadn't caught up. IMPLICATION for the future wallet/inspect tool: poll/retry on
+  by-address lookups, or query by OUTPOINT (which uses the tx-index) rather than by address.
 
 ---
 
@@ -146,10 +208,11 @@ engine source (`crypto/txscript/src/lib.rs:80-81,143` + `data_stack.rs:331`):
   supply minted once; only split/merge/transfer, never increased.
 - **Self-erecting property:** with NO minter covenant deployed and every UTXO genesis'd `isMinter=false`,
   conservation is ALWAYS enforced and supply is mathematically fixed. PROVEN, not asserted (reject-tests).
-- **Sale model (v2):** per-UTXO `forSale` (bool) + `price` (int) state. Listing is owner-signed; claiming is
+- **Sale model (v2/v3):** per-UTXO `forSale` (bool) + `price` (int) state. Listing is owner-signed; claiming is
   payment-authorized. checkSaleState allows for-sale OUTPUTS only when NO input is for-sale (a listing);
-  forbids them when ANY input is for-sale (a claim — anti-double-claim). DECIDED: per-UTXO (fungible), NOT
-  per-phoque ids (which would make it an NFT collection). Full design + open items: `bitphoque_swap_covenant_design.md`.
+  forbids them when ANY input is for-sale (a claim — anti-double-claim). v3 adds the strict-increasing
+  payment-output rule (F1 fix). DECIDED: per-UTXO (fungible), NOT per-phoque ids (which would make it an NFT
+  collection). Full design + open items: `bitphoque_swap_covenant_design.md`.
 
 ### Why covenant token, not KRC-20
 KRC-20 is inscription-based, interpreted by a trusted off-chain indexer (Kasplex) — token truth depends on a
@@ -181,6 +244,12 @@ int genesisPrice` after isMinter. state_layout {start:1, len:57}. Script 1969 by
   impossible; v2 fixed it. History: bitphoque_sale_v1.sil kept as the superseded version.)
 - Compiled for genesis with the v2 owner pubkey: `covenants/bitphoque_sale_compiled.json` + `bitphoque_sale_genesis_ctor.json`.
 
+### Sale token v3 — `covenants/bitphoque_sale_v3.sil` (DEPLOYED as the live sale token)
+Same 8-arg ctor + state shape as v2; adds the F1 fix. Script 2793 bytes. covenant_id `3baed5a3...`.
+- F1 fix: for-sale inputs must use STRICTLY-INCREASING payment-output indices (lastSaleWitness accumulator
+  seeded at -1; each for-sale witness must exceed the previous). No two for-sale inputs share an output.
+- Caps 3/3 baked at genesis (must match across split/list/claim harnesses — amount/caps bake into the P2SH).
+
 ### Compile command (from silverscript dir; source-of-truth .sil is in bitphoque)
 ```
 cargo run --bin silverc -- C:\bitphoque\covenants\<file>.sil --ctor C:\bitphoque\covenants\<ctor>.json -c
@@ -194,10 +263,9 @@ Capture clean JSON: append ` > <path>.json 2>nul`.
 - **Transfer gate** (`rust-examples/bitphoque_reject_tests.rs`): CONTROL passes; inflation FAILS; wrong-sig FAILS.
   Enforcement is real (the checkDataSig no-op trap ruled out). KEY LESSON: the output's script_public_key MUST be
   the RECIPIENT's compiled P2SH (encoding new owner + amount), not the genesis P2SH — else VerifyError.
-- **Sale + listing gate** (`rust-examples/bitphoque_sale_reject_tests.rs`, against sale_v2): CLAIM path — control
-  passes; 6 cheats rejected (underpay / wrong-payee / no-payment / claim-unlisted / stays-for-sale / output-match-abuse).
-  LISTING path — control passes (listing works); no-sig and wrong-sig rejected (listing REQUIRES owner sig).
-- These are SINGLE-input/output proofs. Fanout (2x2) generalization is the next open item.
+- **Sale + listing gate** (`rust-examples/bitphoque_sale_reject_tests.rs`, against v3): all green — 10× 1x1
+  (C-CONTROL..C6, L-CONTROL..L2) + 2x2 controls (claim, split-on-list) + 5 fanout cheats rejected (F1 double-claim,
+  F2 cross-wire, F3 inflate, F4 claim-leaves-listing, F5 mixed-auth) + 3x3 fanout (G-CTRL, G1..G4).
 
 ---
 
@@ -215,6 +283,13 @@ Rebuild recipe (from `C:\kaspa-tn12\silverscript`): `cargo add kaspa-grpc-client
 copy the .rs into `silverscript-lang\src\bin\`; `cargo build/run -p silverscript-lang --bin <name>`.
 Genesis-class: `cargo build/run --release -p rothschild --bin <name>`.
 
+### Party-agnostic v3 harnesses (the seed of the planned CLI)
+- `bitphoque_sale_list_v3.rs` — CLI: `<amount> <price> <owner_keyfile> [--go]`. Owner KEYFILE is an arg
+  (listing is owner-signed — needs the key). Each amount → a different P2SH, so amount is required.
+- `bitphoque_sale_claim_v3.rs` — CLI: `<seller_pubkey_hex> <amount> <price> <buyer_keyfile> [--go]`. Seller is
+  identified by PUBKEY only (claiming is payment-authorized — no seller key needed). This is what lets any
+  holder resell with the same tool. FEE const = 900k (claim floor 857k).
+
 ---
 
 ## File tree (`C:\bitphoque`)
@@ -222,16 +297,19 @@ Genesis-class: `cargo build/run --release -p rothschild --bin <name>`.
 C:\bitphoque\
   .gitignore                           <- ignores *.key (all key files)
   bitphoque_owner.key                  <- original token owner / v2 FUNDING signer (GITIGNORED)
-  bitphoque_v2_owner.key               <- v2 sale token owner = SELLER (GITIGNORED)
-  bitphoque_buyer.key                  <- v2 sale BUYER (GITIGNORED)
+  bitphoque_v2_owner.key               <- v2/v3 sale token owner = SELLER 50a1... (GITIGNORED)
+  bitphoque_buyer.key                  <- buyer0 261cbf44... (GITIGNORED)
+  bitphoque_buyer1.key                 <- buyer1 8c02c20a... (GITIGNORED)
   covenants\
     bitphoque.sil                      <- original token contract (KCC20 verbatim, DEPLOYED)
     bitphoque_ctor.json / _ctor_real.json / _compiled_*.json  <- original ctors + compiled
     bitphoque_sale_v1.sil              <- sale contract v1 (SUPERSEDED — listing was impossible)
     bitphoque_sale_v2.sil              <- sale contract v2 (DEPLOYED as the v2 sale token)
+    bitphoque_sale_v3.sil              <- sale contract v3 (DEPLOYED as the live sale token; F1 fix)
     bitphoque_sale_ctor.json           <- v2 sale ctor (test/8-arg shape)
     bitphoque_sale_genesis_ctor.json   <- v2 genesis ctor (real owner pubkey baked in)
     bitphoque_sale_compiled.json       <- v2 compiled (sale_genesis harness reads script from here)
+    bitphoque_sale_compiled_v3.json    <- v3 compiled (genesis_v3 harness reads script from here)
     (abandoned 520-investigation experiments: bitphoque_slim.sil, *_1x1.json — kept as evidence)
   rust-examples\
     bitphoque_keygen.rs                <- keypair generator
@@ -239,11 +317,14 @@ C:\bitphoque\
     bitphoque_transfer.rs              <- transfer/handoff harness (LIVE transfer)
     bitphoque_reject_tests.rs          <- original transfer gate proof
     bitphoque_inspect.rs               <- read-only on-chain confirm tool
-    bitphoque_sale_v2 ...              <- (contract is in covenants\)
-    bitphoque_sale_reject_tests.rs     <- sale+listing gate proof (claim + listing, all cheats)
+    bitphoque_sale_reject_tests.rs     <- sale+listing gate proof (claim + listing, all cheats; v3)
     bitphoque_sale_genesis.rs          <- v2 genesis harness (LIVE v2 genesis)
-    bitphoque_sale_list.rs             <- LISTING broadcast harness (LIVE listing)
-    bitphoque_sale_claim.rs            <- CLAIM broadcast harness (LIVE claim)
+    bitphoque_sale_genesis_v3.rs       <- v3 genesis harness (LIVE v3 genesis)
+    bitphoque_sale_split_v3.rs         <- v3 split harness (1->2; LIVE split)
+    bitphoque_sale_list.rs             <- v2 LISTING harness (LIVE v2 listing)
+    bitphoque_sale_claim.rs            <- v2 CLAIM harness (LIVE v2 claim)
+    bitphoque_sale_list_v3.rs          <- v3 LISTING harness, PARTY-AGNOSTIC (LIVE v3 listings + resale)
+    bitphoque_sale_claim_v3.rs         <- v3 CLAIM harness, PARTY-AGNOSTIC (LIVE v3 claims + resale)
   docs\
     bitphoque_status.md                <- this file
     bitphoque_swap_covenant_design.md  <- sale/swap design + auction future-build + open items
@@ -255,21 +336,47 @@ Own git repo (branch `master`). NOT yet pushed to GitHub — later deliberate "m
 
 ---
 
+## WALLET / CLI — DECISION & DIRECTION (2026-06-19)
+
+The end-goal framing Kyle set this session (keep these three goals in view for all BitPhoque work):
+1. **Fund the ongoing Oracle Protocol / related work by selling phoques over time.**
+2. **Master covenants + post-Toccata Kaspa.**
+3. **Help drive Kaspa adoption.**
+
+Wallet/CLI sequencing DECIDED (engine before chassis):
+- **Engine first** — finish proving the sale lifecycle on-chain (done for separate claims + resale;
+  combined 2×2 still open). Don't divert to UI before the claim path is proven repeatable.
+- **Then collapse harnesses → one party-agnostic CLI** (`bitphoque list/claim/balance …`). The two
+  party-agnostic harnesses are the seed; the refactor is mostly argument plumbing + a shared lib.
+- **Then a thin BitPhoque wallet APP** over that lib — start with the ONE screen that matters: a
+  marketplace view ("here are listings, click to buy"). A CLI is fine for Kyle (minting/listing his
+  supply); a real buyer reselling needs a button, not `cargo run`. The wallet is what makes
+  peer-to-peer real for non-technical holders.
+- **General covenant-token wallet** = its own (later) project; arguably THE product if covenant tokens
+  take off on Kaspa. Not now.
+- **The indexing problem is the wallet's hard part** (and overlaps the inspect-generalization item):
+  each (owner, amount, forSale, price, caps) tuple is a DIFFERENT P2SH, so a wallet can't watch one
+  address per key — it must enumerate candidate P2SHes or index covenant UTXOs by covenant_id. The
+  harnesses dodge this because they always KNOW the amount and compile the exact P2SH. Design this
+  before building the app (and mind the address-index lag quirk above).
+
+---
+
 ## TN10 ground facts
 - Node: PsychoNode at 192.168.0.206 — wRPC borsh 17210, gRPC 16210. Release tn10-toc3.
 - Funding addr (reused for both genesis runs): `kaspatest:qrwzyuc8lkvdsxgww53n7rsjetsqhh6p9hmy8vrvqpdun5r7ysevufmglhgl4`
   (key in bitphoque_owner.key; re-faucet-funded 100k TKAS for the v2 genesis).
 - rusty-kaspa clone: C:\kaspa-tn12\rusty-kaspa (tag tn10-toc3); silverscript: C:\kaspa-tn12\silverscript.
-- Fee floors learned: genesis ~167k (use 200k); transfer ~378,600 (use 400k); claim ~654,600 (use 700k).
--v3 split/2-output transfer ~659k (use 700k) — 2793B v3 script raises mass vs v2's 1969B floors.
-
+- Faucet: min 1000 TKAS per request, 24h cap 100k. Fund wallets 1000 at a time so the cap is never a constraint.
+- Fee floors learned: genesis ~167k (use 200k); transfer ~378,600 (use 400k); v2 claim ~654,600 (use 700k);
+  v3 list/split ~659k (use 700k); v3 2-input claim 857,000 (use 900k).
 
 ---
 
-## RESUME POINT — 2x2 fanout VM-proven (v3 fix); generalize wider, then mainnet checklist
+## RESUME POINT — combined 2×2 claim (on-chain F1 proof) is the headline; then generalize + mainnet
 
-Fixed-price sale PROVEN end-to-end on-chain at 1x1 (single-input/output) on the v2 contract.
-2x2 AND 3x3 FANOUT now PROVEN AT THE VM LEVEL on a NEW v3 contract — and the work FOUND A REAL BUG.
+Fixed-price sale PROVEN end-to-end on-chain: 1x1 on v2, and on v3 at 2×2 as TWO SEPARATE CLAIMS plus a
+SECONDARY-MARKET RESALE. 2x2 AND 3x3 fanout proven AT THE VM on v3 — the work that found and fixed the F1 bug.
 
 **What 2x2 testing found (and v3 fixes):** at fanout, checkAuth let two for-sale inputs from the
 SAME seller name the SAME payment output (witnesses=[2,2], one payment) — a buyer could claim TWO
@@ -283,18 +390,24 @@ the previous). No two for-sale inputs can share an output. Smallest provable fix
 generalization deferred + noted in-contract (option B: per-output price accounting, so one big
 output could cover several inputs). v2 stays on disk as the as-deployed/holed version (like v1).
 
-**Proof:** `rust-examples/bitphoque_sale_reject_tests.rs` (extended; 1x1 block intact). All green
-against v3: 10x 1x1 (C-CONTROL..C6, L-CONTROL..L2) + 2x2 controls (claim, split-on-list) + 5 fanout
-cheats rejected (F1 double-claim, F2 cross-wire, F3 inflate, F4 claim-leaves-listing, F5 mixed-auth).
-
-**IMPORTANT — what is NOT yet done:** v3 has NEVER been broadcast. The LIVE TN10 sale token is still
-v2 (the holed version). Fanout proven at 2x2 AND 3x3 at the VM, not NxM (strict-increasing scales; untested
-past 2). Remaining, in order:
-- [~] **Re-prove list+claim ON-CHAIN at 2x2** — SPLIT DONE (5db053c4...:0 = 21034, :1 = 21035, both
-      not-for-sale). NEXT: build v3 list harness (list both UTXOs), then v3 claim. PLAN: two distinct
-      buyer keys (only one funded so far) — do both (a) two separate claim txs and (b) one 2x2 claim tx
-      (2 for-sale inputs, strict-increasing payment outputs) to prove the F1 fix on-chain.
-- [x] **3x3 fanout PROVEN at VM** (G-CTRL claim/split, G1 triple-share, G2 mid-collision, G3 out-of-order, G4 non-contiguous all behave). NxM inferred (accumulator is N-agnostic) but only 2 and 3 tested. NOTE: strict-increasing rejects DISTINCT-but-UNORDERED witnesses (G3) — safe but stricter than minimal; per-output-accounting mainnet version would relax it.
+Remaining, in order:
+- [x] **Re-prove list+claim ON-CHAIN at 2×2 (two SEPARATE claims)** — DONE. Two listings
+      (cebf75b5, 55542a99), two independent claims by two distinct buyers (3265e063 buyer0/21034,
+      9ffe84b8 buyer1/21035). The "sell over time to successive buyers" use case is live.
+- [x] **Secondary-market RESALE proven** — DONE. buyer0 listed bought phoques (d24437b8) and buyer1
+      claimed them (1635fd28); Kyle not a party. Token circulation confirmed on-chain.
+- [x] **List + claim harnesses made PARTY-AGNOSTIC** — DONE. Both take party identity at the CLI
+      (list: owner KEYFILE since listing is owner-signed; claim: seller PUBKEY since claiming is
+      payment-authorized and needs no seller key). This is the seed of the planned CLI/wallet.
+- [x] **3x3 fanout PROVEN at VM** (G-CTRL claim/split, G1 triple-share, G2 mid-collision, G3 out-of-order,
+      G4 non-contiguous all behave). NxM inferred (accumulator is N-agnostic) but only 2 and 3 tested.
+      NOTE: strict-increasing rejects DISTINCT-but-UNORDERED witnesses (G3) — safe but stricter than
+      minimal; per-output-accounting mainnet version would relax it.
+- [ ] **COMBINED 2×2 claim tx (the on-chain F1-fix proof)** — STILL OPEN, now the headline item.
+      Two for-sale inputs in ONE tx with STRICT-INCREASING payment outputs (witnesses=[0,1]). The
+      separate-claims work above does NOT exercise the lastSaleWitness accumulator (each tx had one
+      for-sale input). To do this: mint/split a fresh pair, list both, then claim both in one tx.
+      Proven at the VM at 2×2 AND 3×3; never broadcast as a single multi-input claim.
 - [ ] **Split/merge for the sale** (list part of a balance, not the whole supply) — the 2x2 fanout supports it.
 - [ ] **Inspect tool**: generalize to take an address/contract so it can confirm arbitrary P2SH balances on-chain.
 - [ ] **Original-token owner quirk** (observed, not blocking): the ORIGINAL genesis ctor used a 32-ZERO pubkey as
