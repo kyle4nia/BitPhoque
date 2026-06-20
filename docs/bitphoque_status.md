@@ -27,9 +27,10 @@ checkSaleState reads. Remaining: wallet/CLI collapse, then mainnet checklist._
 - **Two spend modes:** LISTING (owner-signed, flips a UTXO to forSale=true at a price) and CLAIM
   (payment-authorized, NO owner sig — a buyer pays >= price to the seller and receives the phoques).
 - **Auction:** recorded as a separate FUTURE build (see swap design doc) — stateful/temporal, own architecture.
-- **Next:** merge N→1 is DONE on-chain (`519063be...`); generalized inspect is BUILT. Next up the list:
-  split/merge a PARTIAL balance (sale-specific), then the wallet/CLI collapse, then the pre-mainnet
-  checklist. Design + open items live in `bitphoque_swap_covenant_design.md`.
+- **Next:** partial-balance listing is DONE on-chain (`4b0c8187...`); the wallet/CLI THIN SLICE is BUILT
+  (`bitphoque_cli.rs`: import / balance / partial-list, on the Option-C track-forward model). Next up the
+  list: port list/claim/split/merge into the CLI, extract a shared lib, then the thin marketplace app,
+  then the pre-mainnet checklist. Design + open items live in `bitphoque_swap_covenant_design.md`.
 
 ---
 
@@ -293,6 +294,16 @@ merge pattern in `silverscript-lang/tests/kcc20_tests.rs` lines 289–304):
   working this session — after the merge, inspect_v3 took 2 retries before the address index showed the
   old parcels as spent. The future wallet/inspect generalization must poll/retry, not assume a
   by-outpoint shortcut.
+- **LOADED-NODE LAG SCARE (2026-06-20) + the diagnostic that settled it.** During the CLI thin-slice
+  proof, a freshly-created partial-list's outputs (`8dff6df4...:0/:1`) read as NOT FOUND from both
+  `balance` and `inspect_v3`, even after retries — looked like the tx had misbuilt or the outputs landed
+  at the wrong P2SH. It had NOT. `bitphoque_node_diag.rs` (read-only health + old-vs-new probe, same
+  connection) showed: node synced=true, utxo_indexed=true, BUT mempool ~62,757 (very heavy load) — and
+  on a settled query ALL parcels (old 5000, new 3000, new 17301) were FOUND, the spent input (20301)
+  correctly absent. Conclusion: the misses were pure address-index lag under mempool load, not a bug. The
+  P2SH compute was correct the whole time (diag computed the SAME addresses inspect/CLI did — proven by
+  the 20301 address matching byte-for-byte). LESSON: when a fresh parcel "vanishes," probe node health +
+  a known-OLD parcel before suspecting the tx. `bitphoque_node_diag.rs` is the keep-around tool for this.
 
 ---
 
@@ -407,7 +418,7 @@ Genesis-class: `cargo build/run --release -p rothschild --bin <name>`.
 ## File tree (`C:\bitphoque`)
 ```
 C:\bitphoque\
-  .gitignore                           <- ignores *.key (all key files)
+  .gitignore                           <- ignores *.key (all key files) + wallet.json (local CLI state)
   bitphoque_owner.key                  <- original token owner / v2 FUNDING signer (GITIGNORED)
   bitphoque_v2_owner.key               <- v2/v3 sale token owner = SELLER 50a1... (GITIGNORED)
   bitphoque_buyer.key                  <- buyer0 261cbf44... (GITIGNORED)
@@ -446,6 +457,11 @@ C:\bitphoque\
     bitphoque_inspect_v3.rs            <- GENERALIZED inspect (compiles any v3 P2SH from params; retry
                                           loop for index lag; read-only, pubkey-only). committed 46e4568
     bitphoque_sale_merge_v3.rs         <- MERGE 2→1 harness (LIVE merge 519063be...). committed 46e4568
+    bitphoque_partial_list_v3.rs       <- PARTIAL-LIST harness (LIVE 4b0c8187...): lists PART of a
+                                          balance in one owner-signed tx (out0 for-sale + out1 change)
+    bitphoque_cli.rs                   <- WALLET CLI thin slice: import / balance / partial-list, on the
+                                          Option-C track-forward model (reads/writes wallet.json)
+    bitphoque_node_diag.rs             <- read-only node health + index-lag probe (old-vs-new parcel)
   docs\
     bitphoque_status.md                <- this file
     bitphoque_swap_covenant_design.md  <- sale/swap design + auction future-build + open items
@@ -482,6 +498,50 @@ Wallet/CLI sequencing DECIDED (engine before chassis):
   harnesses dodge this because they always KNOW the amount and compile the exact P2SH. Design this
   before building the app (and mind the address-index lag quirk above).
 
+### WALLET CLI — THIN SLICE BUILT (2026-06-20), Option-C model
+The indexing problem above is SOLVED for the near-term wallet via **Option C: track-forward**. The
+wallet does NOT scan the DAG — it maintains its OWN parcel set in a local `wallet.json` (project root,
+GITIGNORED, NEVER holds private keys — owner is a pubkey; signing reads a `*.key` by PATH; safe on
+stream). Each record carries exactly the ctor args that determine the P2SH (owner, amount, forSale,
+price, caps) + outpoint + value + status, so the wallet can always RECOMPUTE the P2SH and confirm the
+parcel live — it never has to GUESS an amount. A parcel enters the wallet three ways: you created it
+(CLI records the outputs as it broadcasts), you received it (the tx names the amount), or you `import`
+it (the bootstrap + rescan-by-hint recovery path). Honest limit: a parcel arriving via a tx the wallet
+DIDN'T build won't be known until `import`. Full Option-C upgrade path = a real DAG indexer (deferred,
+"its own project").
+
+`bitphoque_cli.rs` — single-file thin slice, three subcommands, same safety spine as every harness
+(dry-run default, `--go`, LOCAL VM VERIFY gates broadcast; tx-build code lifted verbatim from the
+proven partial-list harness):
+- `import  <owner_pk_hex> <amount> <forSale 0|1> <price>` — confirm a parcel on-chain (retry through
+  index lag) and record it. Overwrites an existing record (so it doubles as the repair path).
+- `balance <owner_pk_hex>` — read wallet.json, recompute each live parcel's P2SH, confirm against the
+  node, print holdings (total + per-parcel, for-sale flagged). PURE READ — NEVER writes status on a
+  lookup miss (a miss is ambiguous: index lag vs spend), just flags "not confirmed". Filters status=spent.
+- `partial-list <owner_keyfile> <in_amount> <list_amount> <price> [--go]` — the proven partial-list, and
+  on ACCEPTED it records FORWARD: input marked spent, out0 (for-sale) + out1 (change) recorded live.
+
+PROVEN on-chain via the CLI: partial-list tx `8dff6df4fa58e6efa72998d4914a7b387c8b0bacddccb1a1e61ebfc4c96f7a48`
+— 3000 of buyer1's 20301 listed @ 500000 (out0) + 17301 change (out1). balance then showed all three of
+buyer1's live parcels (5000 + 3000 for-sale + 17301 held = 25301).
+
+BUGS FOUND + FIXED this slice (both real, both in `bitphoque_cli.rs` now):
+1. **wallet.json parser separator.** `save_wallet` joins records with `},\n {` (comma + whitespace), but
+   the reader split on bare `},{` and missed the comma — saw the file as ONE record, dropped the rest.
+   Fix: the reader skips comma AND whitespace at the `}`→`{` boundary. (Lesson: debug from the ACTUAL
+   on-disk bytes — `type wallet.json` — not an assumed format. First fix attempt missed the comma.)
+2. **balance auto-marked-spent on a lookup miss.** Under heavy mempool load the address index lagged, a
+   fresh parcel read as NOT FOUND, and balance WRONGLY wrote status=spent — corrupting wallet.json. Fix:
+   balance is now non-destructive; a miss is reported, never written. (See the LOADED-NODE LAG SCARE in
+   NODE/INDEXING QUIRKS — `bitphoque_node_diag.rs` proved the parcels were fine, just lagging.)
+
+DELIBERATE SHORTCUT (noted so it doesn't become the design): the wallet.json parser is hand-rolled (reads
+only its own flat output), to avoid a serde dep in the thin slice. When the shared lib is extracted for the
+full CLI, swap in serde_json.
+
+STILL TO PORT into the CLI: list, claim, split, merge (same spine); then extract the shared lib; then the
+thin marketplace app.
+
 ---
 
 ## TN10 ground facts
@@ -491,7 +551,8 @@ Wallet/CLI sequencing DECIDED (engine before chassis):
 - rusty-kaspa clone: C:\kaspa-tn12\rusty-kaspa (tag tn10-toc3); silverscript: C:\kaspa-tn12\silverscript.
 - Faucet: min 1000 TKAS per request, 24h cap 100k. Fund wallets 1000 at a time so the cap is never a constraint.
 - Fee floors learned: genesis ~167k (use 200k); transfer ~378,600 (use 400k); v2 claim ~654,600 (use 700k);
-  v3 list/split ~659k (use 700k); v3 2-input claim 857,000 (use 900k).
+  v3 list/split ~659k (use 700k); v3 2-input claim 857,000 (use 900k). v3 PARTIAL-LIST (1-in/2-out
+  owner-signed) clears at 700k like the split (one script reveal, two outputs).
 
 ---
 
@@ -533,8 +594,8 @@ Remaining, in order:
 - [x] **Split/merge generalization for the sale** (MERGE N→1) — DONE on-chain (`519063be...`). Two
       not-for-sale same-owner parcels (20033+5268) → one 25301 parcel, owner-signed, leader/delegate
       ABI, conservation enforced, both inputs confirmed spent. The two-signed-covenant-input finding
-      (both sigs at leader index 0) is recorded above. STILL OPEN: list/merge a PARTIAL balance (the
-      sale-specific split/merge, below).
+      (both sigs at leader index 0) is recorded above. (Partial-balance listing — the sale-specific
+      split/merge — now also DONE on-chain, `4b0c8187...`, see below.)
 - [x] **Generalized inspect tool** — DONE (`bitphoque_inspect_v3.rs`). Compiles any v3 parcel P2SH from
       CLI params, queries with retry for the index lag, optional outpoint filter. Read-only, pubkey-only
       (stream-safe). Supersedes the hardcoded rothschild inspect for v3.
