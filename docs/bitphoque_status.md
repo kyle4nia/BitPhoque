@@ -6,18 +6,13 @@ committed to git, dry-run before broadcast, verify-by-reading-source for anythin
 local VM verify before TN10. BitPhoque lives in its OWN tree (`C:\bitphoque`) and its OWN git repo —
 separate from oracle-protocol. The end-of-session git checkpoint ritual covers TWO trees._
 
-_Last updated: **MERGE N→1 PROVEN ON-CHAIN + GENERALIZED INSPECT TOOL BUILT.** Two list items closed
-this session. (1) N→1 MERGE: two not-for-sale same-owner parcels (20033 + 5268) consolidated into ONE
-25301 parcel in a single owner-signed tx (`519063be...`), conservation enforced, both old parcels
-confirmed spent — the first on-chain covenant merge for BitPhoque. (2) GENERALIZED INSPECT
-(`bitphoque_inspect_v3.rs`): compiles any v3 parcel's P2SH from CLI params (owner/amount/forSale/price)
-and confirms it on-chain with a retry loop for the address-index lag — replaces the hardcoded-address
-rothschild inspect for v3 work. KEY FINDING: when covenant inputs are owner-SIGNED (not payment-
-authorized), ALL sigs are computed against the LEADER input's sighash (index 0), NOT each input's own
-index — surfaced as VerifyError, resolved from the proven kcc20_tests.rs merge pattern. PRIOR HEADLINE
-(still true): the COMBINED 2×2 CLAIM (`40cbf865...`) proved the F1 fix on-chain (witnesses=[2,3],
-atomic multi-party settlement). Remaining: split/merge for partial balances, the wallet/CLI build,
-mainnet checklist.
+_Last updated: **PARTIAL-BALANCE LISTING PROVEN ON-CHAIN.** One owner-signed tx now lists an arbitrary
+PART of a holding (`4b0c8187...`): 5000 of buyer1's 25301 merge parcel put up for sale @ 500000 sompi,
+20301 kept as not-for-sale change, same owner — collapsing the old two-step split-then-list into one tx.
+Harness `bitphoque_partial_list_v3.rs` (minimal diff off the proven self-split: out0 for-sale at a CLI
+price, both outputs same owner, proportional value split). LOCAL VM VERIFY confirmed the listing branch
+accepts a mixed-state 2-output fanout (one for-sale + one not-for-sale) on an owner-signed tx, exactly as
+checkSaleState reads. Remaining: wallet/CLI collapse, then mainnet checklist._
 
 ---
 
@@ -546,7 +541,13 @@ Remaining, in order:
 - [ ] (unchanged) wallet/CLI build (engine now fully proven — collapse
       harnesses → party-agnostic CLI → thin marketplace app); original-token owner quirk; AUCTION
       future build; mainnet checklist; make public.
-- [ ] **Split/merge for the sale** (list part of a balance, not the whole supply) — the 2x2 fanout supports it.
+- [x] **Split/merge for the sale (list a PARTIAL balance)** — DONE on-chain (`4b0c8187...`). One owner-
+      signed tx lists 5000 of buyer1's 25301 merge parcel @ 500000 sompi (out0, for-sale) + keeps 20301
+      (out1, not-for-sale change), same owner — collapses the old two-step split-then-list into one tx.
+      Harness `rust-examples/bitphoque_partial_list_v3.rs`. Confirmed: input 519063be...:0 spent;
+      for-sale parcel live at 4b0c8187...:0 (163036283150 sompi). checkSaleState allows it (no input
+      for-sale -> for-sale OUTPUT permitted); proportional value split, out1 absorbs remainder, dust-
+      floor guard.
 - [ ] **Inspect tool**: generalize to take an address/contract so it can confirm arbitrary P2SH balances on-chain.
 - [ ] **Original-token owner quirk** (observed, not blocking): the ORIGINAL genesis ctor used a 32-ZERO pubkey as
       genesisPk; how the original transfer satisfied checkSig against a zero owner is unresolved. Does NOT affect
