@@ -6,13 +6,18 @@ committed to git, dry-run before broadcast, verify-by-reading-source for anythin
 local VM verify before TN10. BitPhoque lives in its OWN tree (`C:\bitphoque`) and its OWN git repo —
 separate from oracle-protocol. The end-of-session git checkpoint ritual covers TWO trees._
 
-_Last updated: **COMBINED 2×2 CLAIM PROVEN ON-CHAIN — the F1 fix is now demonstrated on a real node.**
-The headline open item is CLOSED: two for-sale UTXOs from the SAME seller were claimed in ONE tx,
-forced onto strictly-increasing distinct payment outputs (witnesses=[2,3]), with two buyers each
-funding their own input (atomic multi-party settlement). The v2 F1 double-claim (two listings, one
-payment) is now structurally impossible AND confirmed on-chain, not just in VM reject-tests. A
-realistic 3-holder distribution (buyer1/2/3) is seeded on-chain for future wallet/marketplace work.
-Remaining: split/merge generalization, generalized inspect, the wallet/CLI build, mainnet checklist.
+_Last updated: **MERGE N→1 PROVEN ON-CHAIN + GENERALIZED INSPECT TOOL BUILT.** Two list items closed
+this session. (1) N→1 MERGE: two not-for-sale same-owner parcels (20033 + 5268) consolidated into ONE
+25301 parcel in a single owner-signed tx (`519063be...`), conservation enforced, both old parcels
+confirmed spent — the first on-chain covenant merge for BitPhoque. (2) GENERALIZED INSPECT
+(`bitphoque_inspect_v3.rs`): compiles any v3 parcel's P2SH from CLI params (owner/amount/forSale/price)
+and confirms it on-chain with a retry loop for the address-index lag — replaces the hardcoded-address
+rothschild inspect for v3 work. KEY FINDING: when covenant inputs are owner-SIGNED (not payment-
+authorized), ALL sigs are computed against the LEADER input's sighash (index 0), NOT each input's own
+index — surfaced as VerifyError, resolved from the proven kcc20_tests.rs merge pattern. PRIOR HEADLINE
+(still true): the COMBINED 2×2 CLAIM (`40cbf865...`) proved the F1 fix on-chain (witnesses=[2,3],
+atomic multi-party settlement). Remaining: split/merge for partial balances, the wallet/CLI build,
+mainnet checklist.
 
 ---
 
@@ -27,7 +32,8 @@ Remaining: split/merge generalization, generalized inspect, the wallet/CLI build
 - **Two spend modes:** LISTING (owner-signed, flips a UTXO to forSale=true at a price) and CLAIM
   (payment-authorized, NO owner sig — a buyer pays >= price to the seller and receives the phoques).
 - **Auction:** recorded as a separate FUTURE build (see swap design doc) — stateful/temporal, own architecture.
-- **Next:** the COMBINED 2×2 claim tx (on-chain F1-fix proof), then generalize wider; then the pre-mainnet
+- **Next:** merge N→1 is DONE on-chain (`519063be...`); generalized inspect is BUILT. Next up the list:
+  split/merge a PARTIAL balance (sale-specific), then the wallet/CLI collapse, then the pre-mainnet
   checklist. Design + open items live in `bitphoque_swap_covenant_design.md`.
 
 ---
@@ -178,6 +184,37 @@ FINAL DISTRIBUTION after the 2×2 (whole supply across 3 holders, all by genuine
 - buyer1: 20033 + 5268 = 25,301   |   buyer2: 1000 + 1 = 1,001   |   buyer3: 10500 + 5267 = 15,767
 - total 42,069 ✓
 
+### 10. MERGE 2→1 (consolidate parcels) — LIVE
+The inverse of the split: TWO not-for-sale, SAME-owner covenant UTXOs collapsed into ONE. First
+on-chain covenant MERGE for BitPhoque. buyer1 held two parcels (20033 + 5268) at two different
+P2SHes; merged into one 25301 parcel. Owner-SIGNED on BOTH inputs (both not-for-sale → checkAuth's
+checkSig branch). Conservation enforced (totalIn == totalOut). 2-covenant-input tx → leader/delegate
+ABI (same machinery as the 2×2 claim, but signed not payment-authorized).
+- **merge tx (ACCEPTED):** `519063be8d37e7768ba93e54c517ced3fb32eba89b7194b3c15bf0e72fe0f15c`
+- input 0 = `4f084e26...:1` (20033, buyer1), owner-SIGNED, LEADER
+- input 1 = `0434801c...:1` (5268, buyer1), owner-SIGNED, DELEGATE
+- output 0 = `519063be...:0` = 25301 phoques, value 824,996,900,000 sompi (= both inputs − 1.3M fee),
+  buyer1, not-for-sale
+- BOTH old parcels confirmed SPENT on-chain (inspect_v3 returned empty for 20033 and 5268 after merge).
+- harness `rust-examples/bitphoque_sale_merge_v3.rs` (CLI: `<amount0> <amount1> <owner_keyfile> [--go]`).
+- **THE TWO-SIGNED-COVENANT-INPUT FINDING** (the bug that cost one VerifyError + the fix): both owner
+  sigs are computed against the LEADER input's sighash (INDEX 0), NOT against each input's own index.
+  The covenant verifies ALL input sigs from the leader's position. Signing sig1 against input 1 gave a
+  different sighash → VerifyError. Fixed by signing both against input 0, per the proven kcc20_tests.rs
+  merge pattern (which signs both at index 0 and uses witness_array [0,1]). This is the FIRST tx that
+  signs two covenant inputs — the 2×2 claim's covenant inputs were UNSIGNED (payment-authorized), so it
+  never surfaced there. Carry this forward to the CLI/wallet: any owner-signed multi-covenant-input tx
+  (merge, multi-parcel transfer) signs every covenant input at the leader index.
+
+### Generalized inspect tool — `rust-examples/bitphoque_inspect_v3.rs` (BUILT this session)
+Read-only. Compiles ANY v3 parcel's P2SH in-process from CLI params (owner pubkey + amount + forSale +
+price; same ctor shape as the list harness) and queries the node. Takes a PUBKEY (never a keyfile) —
+stream-safe, no key material. CLI: `<owner_pubkey_hex> <amount> <forsale:0|1> <price> [--outpoint
+txid:index] [--retries N]`. Supersedes the hardcoded-address rothschild `bitphoque_inspect.rs` for v3
+parcels (that one still works for the original v1 token). Used 3× this session to confirm the merge
+(parcels live pre-merge, 25301 result present, both inputs spent). Silverscript-clone bin (needs the
+compiler API to build the P2SH).
+
 ---
 
 ## CONSENSUS RULES LEARNED (the broadcast lessons — all handled in the harnesses)
@@ -226,20 +263,41 @@ merge pattern in `silverscript-lang/tests/kcc20_tests.rs` lines 289–304):
   witnesses[1] from a 1-byte blob). This was the exact bug hit + fixed building the 2×2 claim.
 - witnesses encoding: a single byte[] blob, e.g. `Expr::bytes(vec![2u8, 3u8])` — NOT a 2-element array
   of separate byte pushes. The contract does `int(witnesses[i])` to read each index.
+- **SIGNED multi-covenant-input (the merge finding):** when the covenant inputs are owner-SIGNED (not
+  payment-authorized — i.e. not-for-sale inputs taking checkAuth's checkSig branch), EVERY input's
+  signature is computed against the LEADER input's sighash (INDEX 0), NOT against each input's own
+  index. The covenant verifies all sigs from the leader's position. Signing input 1's sig against
+  input 1's sighash → VerifyError. Confirmed against the proven kcc20_tests.rs merge pattern, which
+  signs BOTH inputs at index 0 and passes witness_array [0,1]. The 2×2 claim did not expose this — its
+  covenant inputs were UNSIGNED (dummy sigs; auth came from payment outputs). Merge is the first
+  two-signed-covenant-input tx. RULE for the CLI/wallet: any owner-signed multi-covenant-input tx signs
+  every covenant input at the leader index (0).
 
 ### Fee floor (add to the list)
 - v3 COMBINED 2×2 claim (4 inputs: 2 covenant + 2 plain; 6 outputs; TWO script reveals) cleared at
   fee 1,500,000 on the first try. Floor is somewhere below 1.5M; this is the heaviest tx in the
   lifecycle. (Single 2-input claim floor was 857k/use 900k; the second covenant input + script reveal
   is the jump.)
+- v3 MERGE 2→1 (2 covenant inputs, TWO 2793B script reveals, 1 output): node-confirmed floor
+  **1,244,500** (compute mass 12445); use **1.3M**. HEAVIER than the single 2-input claim (857k)
+  because the 2nd input is a FULL script reveal, not a cheap plain input — two 2793B reveals dominate
+  the mass. Lighter than the 2×2 claim (1.5M) because no plain funding inputs / extra outputs.
 
 ### NODE / INDEXING QUIRKS
 - **PsychoNode address-index LAGS the tx-index by a few seconds after confirmation.** A claim run
   immediately after a listing confirmed returned "no for-sale covenant UTXO found" against the CORRECT
   P2SH (verified on the explorer that the listing output WAS there). Re-running the same command a
   moment later found it. The compiled P2SH was right the whole time — the node's by-address UTXO
-  lookup simply hadn't caught up. IMPLICATION for the future wallet/inspect tool: poll/retry on
-  by-address lookups, or query by OUTPOINT (which uses the tx-index) rather than by address.
+  lookup simply hadn't caught up.
+- **CORRECTION (verified against rusty-kaspa RpcApi source this session):** there is NO by-outpoint
+  UTXO query on the RpcApi trait — `get_utxos_by_addresses` is the ONLY UTXO lookup. An earlier note
+  here suggested "query by outpoint (tx-index, no lag)"; that RPC does not exist for this client. The
+  ONLY available mitigation for the lag is RETRY on the by-address lookup (optionally filtering the
+  returned set to a specific outpoint CLIENT-SIDE). `bitphoque_inspect_v3.rs` implements this: a retry
+  loop (`--retries N`, 3s between attempts) plus an optional `--outpoint` client-side filter. Confirmed
+  working this session — after the merge, inspect_v3 took 2 retries before the address index showed the
+  old parcels as spent. The future wallet/inspect generalization must poll/retry, not assume a
+  by-outpoint shortcut.
 
 ---
 
@@ -390,6 +448,9 @@ C:\bitphoque\
     bitphoque_sale_claim.rs            <- v2 CLAIM harness (LIVE v2 claim)
     bitphoque_sale_list_v3.rs          <- v3 LISTING harness, PARTY-AGNOSTIC (LIVE v3 listings + resale)
     bitphoque_sale_claim_v3.rs         <- v3 CLAIM harness, PARTY-AGNOSTIC (LIVE v3 claims + resale)
+    bitphoque_inspect_v3.rs            <- GENERALIZED inspect (compiles any v3 P2SH from params; retry
+                                          loop for index lag; read-only, pubkey-only). committed 46e4568
+    bitphoque_sale_merge_v3.rs         <- MERGE 2→1 harness (LIVE merge 519063be...). committed 46e4568
   docs\
     bitphoque_status.md                <- this file
     bitphoque_swap_covenant_design.md  <- sale/swap design + auction future-build + open items
@@ -474,10 +535,15 @@ Remaining, in order:
       each funding their own input. F1 double-claim is now structurally impossible AND proven on-chain.
 - [x] **Two-owner transfer-split** — DONE (`bitphoque_split_transfer_v3.rs`). Seeded a realistic
       3-holder distribution (buyer1/2/3). Split-to-different-owner verified as a normal transfer.
-- [ ] **Split/merge generalization for the sale** (list part of a balance; MERGE N→1 still unproven
-      on-chain — the leader/delegate ABI for multi-input is now proven via the 2×2 claim, so merge is
-      a near neighbor).
-- [ ] (unchanged) generalized inspect tool; wallet/CLI build (engine now fully proven — collapse
+- [x] **Split/merge generalization for the sale** (MERGE N→1) — DONE on-chain (`519063be...`). Two
+      not-for-sale same-owner parcels (20033+5268) → one 25301 parcel, owner-signed, leader/delegate
+      ABI, conservation enforced, both inputs confirmed spent. The two-signed-covenant-input finding
+      (both sigs at leader index 0) is recorded above. STILL OPEN: list/merge a PARTIAL balance (the
+      sale-specific split/merge, below).
+- [x] **Generalized inspect tool** — DONE (`bitphoque_inspect_v3.rs`). Compiles any v3 parcel P2SH from
+      CLI params, queries with retry for the index lag, optional outpoint filter. Read-only, pubkey-only
+      (stream-safe). Supersedes the hardcoded rothschild inspect for v3.
+- [ ] (unchanged) wallet/CLI build (engine now fully proven — collapse
       harnesses → party-agnostic CLI → thin marketplace app); original-token owner quirk; AUCTION
       future build; mainnet checklist; make public.
 - [ ] **Split/merge for the sale** (list part of a balance, not the whole supply) — the 2x2 fanout supports it.
