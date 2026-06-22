@@ -51,13 +51,13 @@ use kaspa_notify::subscription::context::SubscriptionContext;
 use kaspa_rpc_core::{api::rpc::RpcApi, notify::mode::NotificationMode};
 use kaspa_txscript::caches::Cache;
 use kaspa_txscript::covenants::CovenantsContext;
-use kaspa_txscript::{pay_to_script_hash_script, extract_script_pub_key_address, script_builder::ScriptBuilder, EngineCtx, EngineFlags, TxScriptEngine};
+use kaspa_txscript::{pay_to_script_hash_script, pay_to_address_script, extract_script_pub_key_address, script_builder::ScriptBuilder, EngineCtx, EngineFlags, TxScriptEngine};
 use kaspa_txscript_errors::TxScriptError;
 use secp256k1::Keypair;
 use silverscript_lang::ast::Expr;
 use silverscript_lang::compiler::{compile_contract, struct_object, CompileOptions, CovenantDeclCallOptions};
 
-const NODE: &str = "192.168.0.206:16210";
+const NODE: &str = "192.168.0.104:16211";  // TestnetNode (box swap): gRPC all-ifaces. 16210 now localhost-only; 17210 is wRPC.
 const SIL_FILE: &str = r"C:\bitphoque\covenants\bitphoque_sale_v3.sil";
 const COVENANT_ID_HEX: &str = "3baed5a39ed95e6aa62a0d8d46aae39a8d832d4f900e5a6a351dca4fbc326458";
 const WALLET_FILE: &str = r"C:\bitphoque\wallet.json";
@@ -837,6 +837,160 @@ async fn cmd_merge(args: &[&String], go: bool) {
         Err(e) => println!("[merge] REJECTED: {e}"),
     }
 }
+async fn cmd_claim(args: &[&String], go: bool) {
+    // CLAIM a for-sale listing: pay the seller >= price, receive the phoques. NO seller key needed
+    // (payment-authorized) — that is the whole point of the sale design. The covenant input is
+    // UNSIGNED; a second plain input (the buyer's funds) pays the seller. Ported verbatim from the
+    // proven bitphoque_sale_claim_v3 harness (on-chain 3265e063 / 9ffe84b8). Single covenant input,
+    // so NO leader/delegate complexity and NO leader-index-0 sig quirk: the lone covenant input is
+    // leader, and the buyer's PLAIN input signs against ITS OWN index (1), the normal sighash.
+    //   input 0: for-sale covenant UTXO. UNSIGNED. dummy 65B sig. witness -> payment output index 1.
+    //   input 1: buyer plain funding. buyer-SIGNED over input index 1.
+    //   output 0: token -> buyer (covenant, forSale reset to false, same amount).
+    //   output 1: payment -> seller P2PK (PAYMENT >= price; PAYMENT dodges KIP-9 dust, status doc #6).
+    //   output 2: change -> buyer (plain).
+    const CLAIM_FEE: u64 = 900_000;          // v3 2-input claim: node floor 857k (mass 8570) -> 900k margin.
+    const CLAIM_SCRIPT_UNITS: u64 = 300_000; // one covenant script reveal + one plain input.
+    const PAYMENT: u64 = 100_000_000;        // 1 TKAS, >> typical price AND above the dust threshold.
+
+    if args.len() < 4 {
+        eprintln!("usage: bitphoque claim <buyer_keyfile> <seller_pubkey_hex> <amount> <price> [--go]");
+        std::process::exit(2);
+    }
+    let buyer_key_file = args[0].as_str();
+    let seller_pk = decode_pubkey(args[1]);
+    let amount: i64 = args[2].parse().expect("amount must be an integer (e.g. 21034)");
+    let price: i64 = args[3].parse().expect("price must be an integer (e.g. 500000)");
+    if PAYMENT < price as u64 {
+        eprintln!("[claim] PAYMENT {PAYMENT} < price {price}; contract requires payment >= price. aborting.");
+        std::process::exit(2);
+    }
+
+    let source = fs::read_to_string(SIL_FILE).expect("read sil");
+    let cov_budget = ComputeBudget::checked_covering_script_units(ScriptUnits(CLAIM_SCRIPT_UNITS)).expect("budget fits");
+    let cov_mass = TxInputMass::ComputeBudget(cov_budget);
+    let plain_mass = TxInputMass::ComputeBudget(11.into());
+
+    let buyer = load_keypair(buyer_key_file);
+    let buyer_pk = buyer.x_only_public_key().0.serialize().to_vec();
+    let buyer_hex = faster_hex::hex_string(&buyer_pk);
+    let seller_addr = Address::new(Prefix::Testnet, Version::PubKey, &seller_pk);
+    let buyer_addr = Address::new(Prefix::Testnet, Version::PubKey, &buyer_pk);
+    println!("[claim] seller (payout) pubkey: {}", faster_hex::hex_string(&seller_pk));
+    println!("[claim] buyer: {buyer_hex}");
+    println!("[claim] amount {amount}  price {price}  PAYMENT {PAYMENT}  fee {CLAIM_FEE}");
+    println!("[claim] seller payout addr: {seller_addr}");
+    println!("[claim] buyer addr: {buyer_addr}");
+
+    // For-sale INPUT contract = seller-owned, forSale=true, price=price, at amount.
+    let forsale_compiled = compile_contract(&source, &ctor_args(seller_pk.clone(), amount, true, price), CompileOptions::default()).expect("compile for-sale");
+    let forsale_p2sh = pay_to_script_hash_script(&forsale_compiled.script);
+    // OUTPUT token contract = BUYER-owned, forSale=false (claim resets the flag), same amount.
+    let buyer_token_compiled = compile_contract(&source, &ctor_args(buyer_pk.clone(), amount, false, 0), CompileOptions::default()).expect("compile buyer token");
+    let buyer_token_p2sh = pay_to_script_hash_script(&buyer_token_compiled.script);
+
+    let rpc = connect().await;
+
+    // Find the for-sale covenant UTXO (by-address lookup; the only available UTXO query on this client).
+    let forsale_addr = extract_script_pub_key_address(&forsale_p2sh, Prefix::Testnet).expect("fs p2sh address");
+    println!("[claim] looking for for-sale cov UTXO at {forsale_addr}");
+    let fs_resp = rpc.get_utxos_by_addresses(vec![forsale_addr]).await.expect("get_utxos fs");
+    if fs_resp.is_empty() {
+        println!("[claim] no for-sale covenant UTXO found (seller/amount/price/caps must match the listing). aborting.");
+        return;
+    }
+    let fs_entry = &fs_resp[0];
+    let fs_outpoint = TransactionOutpoint::from(fs_entry.outpoint.clone());
+    let fs_value = fs_entry.utxo_entry.amount;
+    println!("[claim] for-sale cov utxo {}:{}  value {}", fs_outpoint.transaction_id, fs_outpoint.index, fs_value);
+
+    // Find a buyer funding UTXO (plain P2PK).
+    let buyer_spk = pay_to_address_script(&buyer_addr);
+    let b_resp = rpc.get_utxos_by_addresses(vec![buyer_addr.clone()]).await.expect("get_utxos buyer");
+    if b_resp.is_empty() { println!("[claim] no buyer funding UTXO found. fund {buyer_addr} first. aborting."); return; }
+    let b_entry = &b_resp[0];
+    let b_outpoint = TransactionOutpoint::from(b_entry.outpoint.clone());
+    let b_value = b_entry.utxo_entry.amount;
+    println!("[claim] buyer funding utxo {}:{}  value {}", b_outpoint.transaction_id, b_outpoint.index, b_value);
+    if b_value <= PAYMENT + CLAIM_FEE { println!("[claim] buyer funds {b_value} <= payment+fee {}. aborting.", PAYMENT + CLAIM_FEE); return; }
+
+    let cov_id = covenant_id();
+    let fs_utxo = UtxoEntry::new(fs_value, forsale_p2sh.clone(), 0, false, Some(cov_id));
+    let b_utxo = UtxoEntry::new(b_value, buyer_spk.clone(), 0, false, None);
+
+    // Outputs: token->buyer (covenant carries full value), payment->seller (plain), change->buyer (plain).
+    let token_out = TransactionOutput {
+        value: fs_value,
+        script_public_key: buyer_token_p2sh,
+        covenant: Some(CovenantBinding { authorizing_input: 0, covenant_id: cov_id }),
+    };
+    let payment_out = TransactionOutput { value: PAYMENT, script_public_key: pay_to_address_script(&seller_addr), covenant: None };
+    let change_value = b_value - PAYMENT - CLAIM_FEE;
+    if change_value < MIN_OUT_VALUE { println!("[claim] change below the {MIN_OUT_VALUE} sompi floor ({change_value}). aborting."); return; }
+    let change_out = TransactionOutput { value: change_value, script_public_key: buyer_spk.clone(), covenant: None };
+    let outputs = vec![token_out, payment_out, change_out];
+
+    // Unsigned skeleton (both inputs empty) to compute the buyer's sighash on input 1.
+    let in0_unsigned = TransactionInput { previous_outpoint: fs_outpoint, signature_script: vec![], sequence: 0, mass: cov_mass };
+    let in1_unsigned = TransactionInput { previous_outpoint: b_outpoint, signature_script: vec![], sequence: 0, mass: plain_mass };
+    let unsigned = Transaction::new_non_finalized(TX_VERSION_TOCCATA, vec![in0_unsigned, in1_unsigned], outputs.clone(), 0, SUBNETWORK_ID_NATIVE, 0, vec![]);
+
+    // Sign INPUT 1 (buyer's plain funding) over its OWN index (1) — single covenant input, so no leader quirk.
+    let mtx = MutableTransaction::with_entries(unsigned, vec![fs_utxo.clone(), b_utxo.clone()]);
+    let reused = SigHashReusedValuesUnsync::new();
+    let b_sig_hash = calc_schnorr_signature_hash(&mtx.as_verifiable(), 1, SIG_HASH_ALL, &reused);
+    let b_msg = secp256k1::Message::from_digest_slice(b_sig_hash.as_bytes().as_slice()).expect("buyer sighash");
+    let b_sig = buyer.sign_schnorr(b_msg);
+    let mut b_signature = b_sig.as_ref().to_vec();
+    b_signature.push(SIG_HASH_ALL.to_u8());
+    let in1_sigscript = ScriptBuilder::new().add_data(&b_signature).expect("push buyer sig").drain();
+
+    // INPUT 0 covenant leader sigscript: new-state (buyer-owned, forSale=false), dummy sig, witness->output 1.
+    let new_states: Expr = vec![new_state(buyer_pk.clone(), amount, false, 0)].into();
+    let sigs: Expr = vec![Expr::bytes(vec![0u8; 65])].into(); // dummy; for-sale branch is payment-authorized
+    let witnesses: Expr = Expr::bytes(vec![1u8]);             // payment output index (output 1)
+    let mut in0_sigscript = forsale_compiled
+        .build_sig_script_for_covenant_decl("transfer", vec![new_states, sigs, witnesses], CovenantDeclCallOptions { is_leader: true })
+        .expect("build leader sigscript");
+    let redeem_push = ScriptBuilder::with_flags(EngineFlags { covenants_enabled: true, sigop_script_units: 0.into() }).add_data(&forsale_compiled.script).expect("push redeem").drain();
+    in0_sigscript.extend_from_slice(&redeem_push);
+
+    let in0 = TransactionInput { previous_outpoint: fs_outpoint, signature_script: in0_sigscript, sequence: 0, mass: cov_mass };
+    let in1 = TransactionInput { previous_outpoint: b_outpoint, signature_script: in1_sigscript, sequence: 0, mass: plain_mass };
+    let mut tx = Transaction::new_non_finalized(TX_VERSION_TOCCATA, vec![in0, in1], outputs, 0, SUBNETWORK_ID_NATIVE, 0, vec![]);
+    tx.finalize();
+    let txid = tx.id().to_string();
+    println!("[claim] claim tx id: {txid}");
+    println!("[claim] buyer pays {PAYMENT} to seller, receives {amount} phoques; change {change_value}; fee {CLAIM_FEE}");
+
+    // LOCAL VM VERIFY the COVENANT input (input 0) — the payment-authorized spend.
+    println!("[claim] local VM verify (covenant input 0)...");
+    match local_vm_verify(&tx, vec![fs_utxo.clone(), b_utxo.clone()], 0) {
+        Ok(()) => println!("[claim] LOCAL VM VERIFY: PASS — the covenant accepts this claim."),
+        Err(e) => { println!("[claim] LOCAL VM VERIFY: FAIL — {e:?}. aborting."); return; }
+    }
+
+    if !go {
+        println!("\n[claim] DRY RUN — not submitted. Re-run with --go to broadcast.");
+        return;
+    }
+
+    println!("[claim] SUBMITTING...");
+    match rpc.submit_transaction((&tx).into(), false).await {
+        Ok(resp) => {
+            println!("[claim] ACCEPTED. node response: {resp:?}");
+            // Record forward: for-sale input spent; new buyer-owned not-for-sale parcel live (idx 0).
+            let mut wallet = load_wallet();
+            let in_key = format!("{}:{}", tx.inputs[0].previous_outpoint.transaction_id, tx.inputs[0].previous_outpoint.index);
+            if let Some(rec) = wallet.get_mut(&in_key) { rec.status = "spent".to_string(); }
+            let p0 = Parcel { outpoint_txid: txid.clone(), outpoint_index: 0, owner_pk: buyer_hex.clone(), amount, for_sale: false, price: 0, value: fs_value, max_ins: MAX_COV_INS, max_outs: MAX_COV_OUTS, status: "live".to_string() };
+            wallet.insert(p0.key(), p0);
+            save_wallet(&wallet);
+            println!("[claim] wallet.json updated: for-sale input spent; claimed out0 ({amount}, buyer-owned) recorded.");
+        }
+        Err(e) => println!("[claim] REJECTED: {e}"),
+    }
+}
 
 #[tokio::main]
 async fn main() {
@@ -851,6 +1005,7 @@ async fn main() {
         eprintln!("  split        <owner_keyfile> <in_amount> <out0_amount> [--go]");
         eprintln!("  merge        <owner_keyfile> <amount0> <amount1> [--go]");
         eprintln!("  partial-list <owner_keyfile> <in_amount> <list_amount> <price> [--go]");
+        eprintln!("  claim        <buyer_keyfile> <seller_pubkey_hex> <amount> <price> [--go]");
         std::process::exit(2);
     }
     let cmd = pos[0].as_str();
@@ -862,6 +1017,7 @@ async fn main() {
         "split"        => cmd_split(rest, go).await,
         "merge"        => cmd_merge(rest, go).await,
         "partial-list" => cmd_partial_list(rest, go).await,
+        "claim"        => cmd_claim(rest, go).await,
         other => { eprintln!("unknown subcommand: {other}"); std::process::exit(2); }
     }
 }
