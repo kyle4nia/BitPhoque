@@ -6,7 +6,28 @@ committed to git, dry-run before broadcast, verify-by-reading-source for anythin
 local VM verify before TN10. BitPhoque lives in its OWN tree (`C:\bitphoque`) and its OWN git repo —
 separate from oracle-protocol. The end-of-session git checkpoint ritual covers TWO trees._
 
-_Last updated: **CLI FEATURE-COMPLETE (claim committed) + TN10 NODE TOCCATA UPGRADE.** (1) CLI: **`claim` committed**
+_Last updated: **WALLET ARCHITECTURE DESIGN SESSION (2026-06-22, no code/commit yet — design only).** A working
+session spent on the USER-FACING wallet (the "thin marketplace app" successor), entirely while the TN10 node was
+mid-IBD so nothing on-chain could be tested. Decisions settled (full detail in the new "USER WALLET — ARCHITECTURE
+(2026-06-22)" section below): (a) FORM = a web app at BitPhoque.org — one codebase, all four platforms via browser
+now, Tauri (desktop) / Capacitor (mobile) wraps later; do NOT start with four native apps. (b) CUSTODY =
+non-custodial, standard BIP-39 12-word seed, key generated + held in-browser, never on a server; Guardian/Circle
+social recovery PARKED as a planned opt-in upgrade (preferentially covenant-layer key-rotation, NOT seed-Shamir).
+(c) The RECEIVE PROBLEM (a parcel's P2SH is amount-derived, so a fresh wallet can't discover holdings blind) is
+solved by a HYBRID: an off-chain signed PARCEL DESCRIPTOR (the trustless protocol truth) + an OPTIONAL indexer
+(convenience cache, anyone can run one), chain always the authority. Descriptor format specced (base58check
+transport). (d) The wallet MUST handle native KAS to pay fees — "gas-tank, not vault" posture (size for fees +
+headroom, steer savings to a main wallet) to keep the browser-key risk surface small. (e) ONE token mechanism:
+BitPhoque's own KCC-20-style COVENANT token (confirm the "KCC-20" name against `kcc20.sil` in-tree) — NOT KRC-20
+(different, indexer-based mechanism; PARKED as a separate later question, verify tooling before committing). (f)
+Build the narrow BitPhoque wallet but keep the KAS layer SEPARABLE ("send a funded Kaspa tx" as a clean primitive
+with parcel logic on top) so a general Kaspa wallet stays reachable without being built now. NB: this session
+produced NO files and NO commits — it is design captured into this doc only; nothing is git-protected beyond this
+doc edit. Engine status UNCHANGED from below: claim's live dry-run still gated on the node finishing IBD (node had
+just finished receiving the UTXO set and begun "Importing the UTXO set of the pruning point" at session end — past
+the chunk-download phase, not yet synced)._
+
+_Prior milestone — **CLI FEATURE-COMPLETE (claim committed) + TN10 NODE TOCCATA UPGRADE.** (1) CLI: **`claim` committed**
 (`78c14d9`) — CLI now has import / balance / list / split / merge / partial-list / **claim**; ALL subcommands built,
 compiling, committed. The harness-collapse phase is DONE in code. Remaining gate on claim: a LIVE dry-run VM-verify,
 blocked only on the TN10 node finishing IBD. (2) **TN10 node root-caused + rebuilt.** The TestnetNode kept wedging at
@@ -575,6 +596,124 @@ plain input signs its own index 1); local CLAIM_FEE=900k / CLAIM_SCRIPT_UNITS=30
 the fn (like merge) so they don't disturb the shared 700k/240k calibration; forward-records the claimed parcel to
 wallet.json. REMAINING on claim: a LIVE dry-run VM-verify on-chain (every other subcommand got one; claim's was
 blocked on the node). Then extract the shared lib; then the thin marketplace app.
+
+---
+
+## USER WALLET — ARCHITECTURE (2026-06-22, DESIGN ONLY — no code, no commit)
+
+This is the design for the END-USER wallet — the successor to the "thin marketplace app" in the sequencing
+section above, aimed at NON-TECHNICAL holders (a buyer reselling phoques needs a button, not `cargo run`). The
+whole session ran while the TN10 node was mid-IBD, so this is pure design — NOTHING here is built or tested
+on-chain yet. The `bitphoque_cli.rs` thin slice (above) is the proven ENGINE this wallet wraps; this section is
+the CHASSIS design that sits on top of it.
+
+### Form factor — DECIDED: web app at BitPhoque.org
+- A single web app, served from BitPhoque.org, IS the wallet (no install, no app-store gate, no `cargo build` for
+  the user). Runs on Windows / Mac / Android / iOS today via the browser — ONE codebase.
+- Native wraps come LATER off the same codebase: Tauri (or Electron) for desktop binaries, Capacitor for the
+  Android/iOS store apps. Explicitly DO NOT start by building four native apps — that's the top of the difficulty
+  ladder (iOS especially: paid dev account, app review, crypto-app scrutiny), not the start of it.
+- HONEST ORDER-OF-MAGNITUDE (difficulty ladder, cheapest→dearest): CLI (done) → local web app talking to the node
+  → hosted web app with client-side (WASM) tx-building → desktop wrap → mobile wrap → iOS store. Each rung is a
+  real jump, not packaging.
+- The site is a DELIVERY mechanism for the app, NOT a trust root. The running wallet verifies against the CHAIN;
+  the site serving it must never become the thing that TELLS the wallet what it owns (that would rebuild the
+  coordinator the whole project avoids).
+
+### Custody — DECIDED: non-custodial, BIP-39 12-word, key in-browser
+- Standard BIP-39 12-word seed. Universal, proven, mature Rust tooling, built-in checksum, WASM-friendly. Chosen
+  deliberately over a novel scheme (don't reinvent crypto; smallest diff from proven). Key generated and held
+  CLIENT-SIDE (browser), never on a server. Anthropic/BitPhoque.org never holds keys.
+- v1 STANCE (chosen, not drifted-into): the user owns their backup exactly as in any standard wallet — back it up
+  or be out of phoques. Acceptable for a TN10 novelty token; the seed-reveal screen makes the backup step
+  deliberately un-skippable (write-down + confirm) because that's where non-technical users get hurt (silent,
+  delayed failure).
+- GUARDIAN / CIRCLE social recovery = a PLANNED OPT-IN UPGRADE, not v1. Explored this session: Shamir/SLIP-39
+  splitting of the seed works but (i) dedicated SLIP-39 Rust crates are weak/WIP/deprecated, (ii) SLIP-39 is
+  SatoshiLabs-controlled + not BIP-39 round-trip compatible, (iii) plain Shamir loses the checksum/typo-detection
+  you'd then have to rebuild. CONCLUSION: the on-brand ("Everyone is an Oracle") recovery lives at the COVENANT
+  layer — guardians authorize an on-chain key-rotation under a quorum, so the key is NEVER reassembled in plaintext
+  (avoids Shamir's reconstruction-exposure window) — but that is UNPROVEN on this stack (depends what the
+  silverscript covenant can verify; CSFS is in the Oracle work). Park as the ambitious-but-unverified upgrade;
+  do NOT block v1 on it. HARD RULE confirmed: never derive a key from anything the user MEMORIZES (brain wallets
+  are catastrophic — humans don't generate 256 bits).
+
+### The receive problem + the descriptor (the keystone)
+The defining constraint (already known, see "indexing problem is the wallet's hard part" above): a parcel's P2SH
+is derived from its CONTENTS (owner pubkey, amount, forSale, price). To find a UTXO you must already know the
+amount. So "someone sent me phoques" is NOT self-evident to a fresh wallet the way an incoming KAS payment is.
+DECIDED solution = HYBRID (the only one that serves non-technical users AND the self-erecting lens):
+- **Parcel descriptor (the trustless protocol truth).** An off-chain "receipt" the sender hands the receiver,
+  carrying exactly what's needed to FIND and VERIFY the parcel. It is essentially the `inspect_v3` input args made
+  portable. Fields (v1, draft layout — all load-bearing): format-version byte ‖ covenant_id (32B) ‖ owner_pubkey
+  (x-only 32B) ‖ amount ‖ forSale (1B) ‖ price ‖ txid (32B) ‖ output_index.
+- **Transport = base58check** (the Bitcoin-address alphabet — no confusable 0/O/I/l — WITH a checksum baked into
+  the standard, so a hand-transcribed receipt fails LOUDLY instead of computing a wrong P2SH silently). This
+  SUPERSEDES the earlier "add a separate checksum field" idea — base58check IS the checksum, one fewer thing to own.
+  QR and a `bitphoque:` URI are trivial wrappers over the same base58 string, deferrable.
+- **Optional indexer (convenience cache, NOT authority).** Watches the chain, decodes BitPhoque parcels, answers
+  "parcels for pubkey X." The marketplace app's job. A wallet works FULLY on descriptors alone (trustless,
+  coordinator-free); pointed at ANY indexer it works PLEASANTLY (balances just appear). Because the chain is always
+  the final verifier, a malicious indexer can lie about what EXISTS but can never forge a parcel you don't control
+  (Electrum-server trust model). This is what keeps the convenience layer from becoming a control point.
+- A descriptor is a SNAPSHOT, not a permanent address: the instant a parcel is spent (list/claim/split/merge) its
+  outpoint dies and its P2SH may move. Wallet rule: re-derive live state against the chain on open; treat the
+  descriptor as a hint to VERIFY, never a cached account number.
+- OPEN (small, closeable): pin the integer encoding for amount/price/output_index in the descriptor. LEANING
+  8-byte little-endian to match the existing ctor-arg serialization (and Oracle's verdict_bytes LE convention) —
+  but VERIFY against the actual ctor serialization in the proven harness before committing (read-the-source rule).
+
+### Native KAS handling — REQUIRED, "gas-tank not vault"
+- The wallet MUST hold + spend native KAS: every phoque action is a Kaspa tx that costs KAS (fee floors: ~700k
+  list/split, ~900k claim, ~1.3M merge), and a buyer's claim PAYS KAS to the seller. Phoques don't move without
+  KAS moving. This is forced, not optional.
+- POSTURE (not a protocol-enforceable limit — Kaspa has no per-address cap): treat the wallet's KAS as a GAS TANK,
+  sized for fees + headroom, presented as "top up for fees," with savings steered to the user's MAIN Kaspa wallet.
+  RATIONALE is risk-surface: a browser key WILL sometimes be lost; a lost gas tank is annoying, a lost vault is
+  ruinous. Same hold-your-own-keys logic applied to sizing.
+
+### One token mechanism, KAS layer kept separable — DECIDED
+- The wallet speaks exactly ONE token type: BitPhoque's own COVENANT token (the KCC-20-style native-L1 pattern —
+  built from `kcc20.sil`, copied verbatim as `bitphoque.sil`; CONFIRM the "KCC-20" name against that file in-tree,
+  this was recalled mid-session, not re-verified). It is NOT KRC-20 (a different, indexer/inscription-based
+  mechanism the project deliberately avoids). Supporting KRC-20 too = a SECOND token stack = PARKED as a separate
+  later question; verify current KRC-20 wallet tooling before ever committing (don't decide by assumption).
+- BUILD the narrow BitPhoque wallet (route to a FUNCTIONAL system), but architect the KAS layer as a clean,
+  SEPARABLE primitive ("send a funded Kaspa tx") with parcel logic sitting ON TOP rather than tangled in. The
+  gas-tank BitPhoque wallet and a full general Kaspa wallet share ~80% of their plumbing — keeping them separable
+  means a general wallet stays REACHABLE later without being built now (and without foreclosing it). A general
+  covenant-token wallet remains "its own later project, arguably THE product" per the sequencing section above.
+
+### Screen flow (wireframed this session)
+Seven screens: (1) Landing — seal/joke + two buttons (Create / Restore) + the honest "you hold your own keys"
+line. (2) Create → seed reveal → confirm (un-skippable). (3) RESTORE — the cliff: the seed restores the KEY but
+NOT knowledge of which parcels exist, so it must immediately pivot to "reconnect your parcels," offering BOTH "find
+my parcels (indexer)" and "import receipts manually" (Option-D made literal). (4) Home/balance — total + per-parcel
+(held / for-sale), re-verified on-chain each open (why the relay matters). (5) RECEIVE — inverted from a normal
+wallet: top half = "my identity (share to receive)," bottom half = "import a receipt (paste/scan)"; the parcel only
+becomes real on import. (6) SEND — not done at tx-confirm but at receipt-handoff: surfaces the descriptor as "now
+deliver this to the recipient." (7) Sell/list — set price → owner-signed listing (claim/buy likely lives in the
+marketplace app, a seam between the two apps).
+- KEY INSIGHT the wireframe made obvious: the three HARD screens (Restore, Receive, Send) are hard for the SAME
+  structural reason — the amount-derived P2SH leaks through — not from bad design. The INDEXER is exactly what turns
+  those three back into normal-feeling screens. Descriptor path = correct + self-erecting; indexer = usable by
+  non-technical people. Both needed for the stated target.
+
+### Two real unlocks underneath all the UI (both eventually NEED a synced node to test)
+1. **A thin read/broadcast RELAY** so a browser can reach the chain over HTTPS (a browser can't run kaspad / speak
+   the CLI's gRPC). Allowed without breaking the lens IFF it only RELAYS (reads public chain state, rebroadcasts
+   signed txs) and never holds keys or decides truth — a postal service, not a bank. On the critical path for ANY
+   browser wallet.
+2. **Tx-building ported CLIENT-SIDE (Rust→WASM)** so signing happens in the browser, never on a server. The engine
+   is proven Rust BUT proven as CLI harnesses calling a gRPC client, not as browser-side signing — porting it
+   byte-identical is real work and the place an ABI/stale-file bug would hurt most. "Prove the smallest piece
+   first": get ONE tx type building + signing in WASM and verifying against the chain before porting the rest.
+
+### Build order implied (all the design above is node-INDEPENDENT and is now captured; the rest is gated on the node)
+Descriptor format (keystone) → CLI gains `send`/`receive` (emit/import + verify a descriptor) on top of the proven
+engine → marketplace as the optional indexer → web app UI pointed at node/indexer → native wraps. The relay +
+client-side signing are the true unlock that everything visual sits on. NEXT NODE-GATED STEP is still the claim
+live dry-run (see resume point) — none of this wallet design changes that gate.
 
 ---
 
