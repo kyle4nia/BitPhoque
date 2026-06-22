@@ -690,17 +690,166 @@ async fn cmd_split(args: &[&String], go: bool) {
     }
 }
 
+// Merge TWO parcels into ONE, both NOT-for-sale, same owner. 2-in / 1-out, owner-signed on BOTH
+// inputs. The inverse of split. This is the ONLY subcommand with multiple covenant inputs, so it
+// carries the leader/delegate ABI and the two-sigs-against-index-0 detail — ported verbatim from
+// the proven bitphoque_sale_merge_v3 harness (on-chain 519063be...). DO NOT reason these from
+// scratch; they are match-proven:
+//   - input 0 = LEADER (full arrays: new_states=[merged], sigs=[sig0,sig1], witnesses=[0,1]).
+//   - input 1 = DELEGATE (empty args, is_leader:false), reveals its own redeem script.
+//   - BOTH sigs computed against input INDEX 0 (leader position) — signing sig1 against input 1
+//     yields a different sighash and the covenant rejects.
+//   - witnesses=[0,1] is DORMANT FILLER (no for-sale input -> checkAuth never indexes it); matched
+//     to the proven kcc20 pattern rather than reasoned about.
+// Merge needs HEAVIER fee + script units than the single-input ops (two full 2793B script reveals),
+// so it uses LOCAL constants here — bumping the shared FEE/COVENANT_SCRIPT_UNITS would break
+// list/split/partial-list (calibrated to 700k / 240k).
+async fn cmd_merge(args: &[&String], go: bool) {
+    const MERGE_FEE: u64 = 1_300_000;            // node-confirmed floor ~1,244,500; 1.3M for margin.
+    const MERGE_SCRIPT_UNITS: u64 = 300_000;     // two covenant inputs, each a full script reveal.
+
+    if args.len() < 3 {
+        eprintln!("usage: bitphoque merge <owner_keyfile> <amount0> <amount1> [--go]");
+        std::process::exit(2);
+    }
+    let owner_key_file = args[0].as_str();
+    let amount0: i64 = args[1].parse().expect("amount0 must be an integer");
+    let amount1: i64 = args[2].parse().expect("amount1 must be an integer");
+
+    assert!(amount0 > 0 && amount1 > 0, "both amounts must be > 0");
+    let out_amount = amount0 + amount1;
+    println!("[merge] merging {amount0} + {amount1} = {out_amount} phoques (both not-for-sale, same owner)");
+
+    let source = fs::read_to_string(SIL_FILE).expect("read sil");
+    let cov_budget = ComputeBudget::checked_covering_script_units(ScriptUnits(MERGE_SCRIPT_UNITS)).expect("budget fits");
+    let cov_mass = TxInputMass::ComputeBudget(cov_budget);
+
+    let signer = load_keypair(owner_key_file);
+    let owner_pk = signer.x_only_public_key().0.serialize().to_vec();
+    let owner_hex = faster_hex::hex_string(&owner_pk);
+    println!("[merge] owner (signs BOTH inputs): {owner_hex}");
+
+    // Two input contracts (same owner, not-for-sale, each amount -> different P2SH) + one output.
+    let in0_compiled = compile_contract(&source, &ctor_args(owner_pk.clone(), amount0, false, 0), CompileOptions::default()).expect("compile in0");
+    let in0_p2sh = pay_to_script_hash_script(&in0_compiled.script);
+    let in1_compiled = compile_contract(&source, &ctor_args(owner_pk.clone(), amount1, false, 0), CompileOptions::default()).expect("compile in1");
+    let in1_p2sh = pay_to_script_hash_script(&in1_compiled.script);
+    let out_compiled = compile_contract(&source, &ctor_args(owner_pk.clone(), out_amount, false, 0), CompileOptions::default()).expect("compile out");
+    let out_p2sh = pay_to_script_hash_script(&out_compiled.script);
+
+    let rpc = connect().await;
+
+    let in0_addr = extract_script_pub_key_address(&in0_p2sh, Prefix::Testnet).expect("in0 addr");
+    println!("[merge] looking for parcel 0 ({amount0} phoques, not-for-sale) at {in0_addr}");
+    let in0_resp = rpc.get_utxos_by_addresses(vec![in0_addr]).await.expect("get_utxos in0");
+    if in0_resp.is_empty() { println!("[merge] no not-for-sale UTXO for parcel 0 ({amount0}). aborting."); return; }
+    let in0_entry = &in0_resp[0];
+    let in0_outpoint = TransactionOutpoint::from(in0_entry.outpoint.clone());
+    let in0_value = in0_entry.utxo_entry.amount;
+    println!("[merge] parcel 0 utxo {}:{}  value {}", in0_outpoint.transaction_id, in0_outpoint.index, in0_value);
+
+    let in1_addr = extract_script_pub_key_address(&in1_p2sh, Prefix::Testnet).expect("in1 addr");
+    println!("[merge] looking for parcel 1 ({amount1} phoques, not-for-sale) at {in1_addr}");
+    let in1_resp = rpc.get_utxos_by_addresses(vec![in1_addr]).await.expect("get_utxos in1");
+    if in1_resp.is_empty() { println!("[merge] no not-for-sale UTXO for parcel 1 ({amount1}). aborting."); return; }
+    let in1_entry = &in1_resp[0];
+    let in1_outpoint = TransactionOutpoint::from(in1_entry.outpoint.clone());
+    let in1_value = in1_entry.utxo_entry.amount;
+    println!("[merge] parcel 1 utxo {}:{}  value {}", in1_outpoint.transaction_id, in1_outpoint.index, in1_value);
+
+    let cov_id = covenant_id();
+    let in0_utxo = UtxoEntry::new(in0_value, in0_p2sh.clone(), 0, false, Some(cov_id));
+    let in1_utxo = UtxoEntry::new(in1_value, in1_p2sh.clone(), 0, false, Some(cov_id));
+
+    if in0_value + in1_value <= MERGE_FEE { println!("[merge] combined value <= fee {MERGE_FEE}. aborting."); return; }
+    let out_value = in0_value + in1_value - MERGE_FEE;
+    if out_value < MIN_OUT_VALUE { println!("[merge] output below the {MIN_OUT_VALUE} sompi floor ({out_value}). aborting."); return; }
+    let output = TransactionOutput { value: out_value, script_public_key: out_p2sh, covenant: Some(CovenantBinding { authorizing_input: 0, covenant_id: cov_id }) };
+    println!("[merge] output: {out_amount} phoques, value {out_value} (= {in0_value} + {in1_value} - fee {MERGE_FEE})");
+
+    // Unsigned skeleton (both inputs empty) for the covenant sighash. BOTH sigs sign INDEX 0.
+    let in0u = TransactionInput { previous_outpoint: in0_outpoint, signature_script: vec![], sequence: 0, mass: cov_mass };
+    let in1u = TransactionInput { previous_outpoint: in1_outpoint, signature_script: vec![], sequence: 0, mass: cov_mass };
+    let unsigned = Transaction::new_non_finalized(TX_VERSION_TOCCATA, vec![in0u, in1u], vec![output.clone()], 0, SUBNETWORK_ID_NATIVE, 0, vec![]);
+    let entries = vec![in0_utxo.clone(), in1_utxo.clone()];
+    let mtx = MutableTransaction::with_entries(unsigned, entries.clone());
+    let reused = SigHashReusedValuesUnsync::new();
+
+    // CRITICAL (proven): both signatures are computed against the LEADER input (index 0).
+    let sh0 = calc_schnorr_signature_hash(&mtx.as_verifiable(), 0, SIG_HASH_ALL, &reused);
+    let msg0 = secp256k1::Message::from_digest_slice(sh0.as_bytes().as_slice()).expect("sighash0");
+    let mut sig0 = signer.sign_schnorr(msg0).as_ref().to_vec();
+    sig0.push(SIG_HASH_ALL.to_u8());
+    let mut sig1 = signer.sign_schnorr(msg0).as_ref().to_vec();   // ALSO signs index 0
+    sig1.push(SIG_HASH_ALL.to_u8());
+
+    // Leader (input 0) carries the complete arrays; delegate (input 1) is empty.
+    let new_states: Expr = vec![new_state(owner_pk.clone(), out_amount, false, 0)].into();
+    let sigs: Expr = vec![Expr::bytes(sig0), Expr::bytes(sig1)].into();
+    let witnesses: Expr = Expr::bytes(vec![0u8, 1u8]);   // dormant filler, match-proven
+    let mut in0_ss = in0_compiled.build_sig_script_for_covenant_decl("transfer", vec![new_states, sigs, witnesses], CovenantDeclCallOptions { is_leader: true }).expect("build leader sigscript");
+    let redeem0 = ScriptBuilder::with_flags(EngineFlags { covenants_enabled: true, sigop_script_units: 0.into() }).add_data(&in0_compiled.script).expect("push redeem0").drain();
+    in0_ss.extend_from_slice(&redeem0);
+
+    let mut in1_ss = in1_compiled.build_sig_script_for_covenant_decl("transfer", vec![], CovenantDeclCallOptions { is_leader: false }).expect("build delegate sigscript");
+    let redeem1 = ScriptBuilder::with_flags(EngineFlags { covenants_enabled: true, sigop_script_units: 0.into() }).add_data(&in1_compiled.script).expect("push redeem1").drain();
+    in1_ss.extend_from_slice(&redeem1);
+
+    let in0 = TransactionInput { previous_outpoint: in0_outpoint, signature_script: in0_ss, sequence: 0, mass: cov_mass };
+    let in1 = TransactionInput { previous_outpoint: in1_outpoint, signature_script: in1_ss, sequence: 0, mass: cov_mass };
+    let mut tx = Transaction::new_non_finalized(TX_VERSION_TOCCATA, vec![in0, in1], vec![output], 0, SUBNETWORK_ID_NATIVE, 0, vec![]);
+    tx.finalize();
+    let txid = tx.id().to_string();
+    println!("[merge] merge tx id: {txid}");
+
+    // VM-verify BOTH covenant inputs.
+    println!("[merge] local VM verify (input 0)...");
+    match local_vm_verify(&tx, entries.clone(), 0) {
+        Ok(()) => println!("[merge] input 0: PASS"),
+        Err(e) => { println!("[merge] input 0: FAIL — {e:?}. aborting."); return; }
+    }
+    println!("[merge] local VM verify (input 1)...");
+    match local_vm_verify(&tx, entries.clone(), 1) {
+        Ok(()) => println!("[merge] input 1: PASS — both signed inputs accepted, 2->1 conserved."),
+        Err(e) => { println!("[merge] input 1: FAIL — {e:?}. aborting."); return; }
+    }
+
+    if !go {
+        println!("\n[merge] DRY RUN — not submitted. Re-run with --go to broadcast.");
+        return;
+    }
+
+    println!("[merge] SUBMITTING...");
+    match rpc.submit_transaction((&tx).into(), false).await {
+        Ok(resp) => {
+            println!("[merge] ACCEPTED. node response: {resp:?}");
+            // Record forward: BOTH input parcels spent, one merged not-for-sale parcel live (idx 0).
+            let mut wallet = load_wallet();
+            let in0_key = format!("{}:{}", tx.inputs[0].previous_outpoint.transaction_id, tx.inputs[0].previous_outpoint.index);
+            let in1_key = format!("{}:{}", tx.inputs[1].previous_outpoint.transaction_id, tx.inputs[1].previous_outpoint.index);
+            if let Some(rec) = wallet.get_mut(&in0_key) { rec.status = "spent".to_string(); }
+            if let Some(rec) = wallet.get_mut(&in1_key) { rec.status = "spent".to_string(); }
+            let p0 = Parcel { outpoint_txid: txid.clone(), outpoint_index: 0, owner_pk: owner_hex.clone(), amount: out_amount, for_sale: false, price: 0, value: out_value, max_ins: MAX_COV_INS, max_outs: MAX_COV_OUTS, status: "live".to_string() };
+            wallet.insert(p0.key(), p0);
+            save_wallet(&wallet);
+            println!("[merge] wallet.json updated: both inputs marked spent; merged out0 ({out_amount}) recorded.");
+        }
+        Err(e) => println!("[merge] REJECTED: {e}"),
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let raw: Vec<String> = std::env::args().collect();
     let go = raw.iter().any(|a| a == "--go");
     let pos: Vec<&String> = raw.iter().skip(1).filter(|a| !a.starts_with("--")).collect();
     if pos.is_empty() {
-        eprintln!("usage: bitphoque <import|balance|list|split|partial-list> ...");
+        eprintln!("usage: bitphoque <import|balance|list|split|merge|partial-list> ...");
         eprintln!("  import       <owner_pk_hex> <amount> <forSale 0|1> <price>");
         eprintln!("  balance      <owner_pk_hex>");
         eprintln!("  list         <owner_keyfile> <amount> <price> [--go]");
         eprintln!("  split        <owner_keyfile> <in_amount> <out0_amount> [--go]");
+        eprintln!("  merge        <owner_keyfile> <amount0> <amount1> [--go]");
         eprintln!("  partial-list <owner_keyfile> <in_amount> <list_amount> <price> [--go]");
         std::process::exit(2);
     }
@@ -711,6 +860,7 @@ async fn main() {
         "balance"      => cmd_balance(rest).await,
         "list"         => cmd_list(rest, go).await,
         "split"        => cmd_split(rest, go).await,
+        "merge"        => cmd_merge(rest, go).await,
         "partial-list" => cmd_partial_list(rest, go).await,
         other => { eprintln!("unknown subcommand: {other}"); std::process::exit(2); }
     }
