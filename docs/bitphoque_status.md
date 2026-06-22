@@ -6,13 +6,18 @@ committed to git, dry-run before broadcast, verify-by-reading-source for anythin
 local VM verify before TN10. BitPhoque lives in its OWN tree (`C:\bitphoque`) and its OWN git repo —
 separate from oracle-protocol. The end-of-session git checkpoint ritual covers TWO trees._
 
-_Last updated: **ENV RESYNC + CLI MERGE COMMITTED (cleanup pass).** (1) Big Daddy OS/dev drive is now **C:**
-(Acronis renamed E:→C: during the clone; old untrustworthy C: removed) — canonical paths `C:\bitphoque\` etc.
-are CORRECT as written. (2) Nodes renamed + role-swapped: **TestnetNode = 192.168.0.104** (the more-capable box,
-wRPC 17210 confirmed reachable from Big Daddy, gRPC now 16211); old PsychoNode @ .206 retired → now MainnetNode.
-(3) CLI: **merge committed** (`9847e00`) on top of split (`2211f09`) — CLI now has import / balance / partial-list /
-list / split / merge; **`claim` is the LAST subcommand to build.** Then shared lib → thin marketplace app → mainnet
-checklist._
+_Last updated: **CLI FEATURE-COMPLETE (claim committed) + TN10 NODE TOCCATA UPGRADE.** (1) CLI: **`claim` committed**
+(`78c14d9`) — CLI now has import / balance / list / split / merge / partial-list / **claim**; ALL subcommands built,
+compiling, committed. The harness-collapse phase is DONE in code. Remaining gate on claim: a LIVE dry-run VM-verify,
+blocked only on the TN10 node finishing IBD. (2) **TN10 node root-caused + rebuilt.** The TestnetNode kept wedging at
+the utxoindex/consensus-init step — root cause was a **mainnet-line kaspad 2.0.0 binary + a pre-Toccata datadir**
+(consensus store last written June 9; Toccata hit TN10 ~June 20). Fix: upgraded to **kaspad 2.0.1** (the post-Toccata
+floor per the Toccata guide), wiped to a fresh datadir (`datadir_pretoccata_old` set aside), launched clean —
+now IBD'ing healthily on the correct rules with gRPC reachable. (3) **gRPC fix:** the TN10 launch .bat was missing
+an external gRPC listener (only had `--rpclisten-borsh`), so the CLI (which uses GrpcClient) couldn't connect.
+Added `--rpclisten=0.0.0.0:16210`; confirmed `GRPC Server starting on: 0.0.0.0:16210` on launch. **CLI NODE const
+must be `192.168.0.104:16210`** (gRPC), NOT 16211 (that's P2P — the old "gRPC 16211" note was WRONG). After IBD:
+live claim dry-run → shared lib → thin marketplace app → mainnet checklist._
 
 _Prior milestone — **PARTIAL-BALANCE LISTING PROVEN ON-CHAIN.** One owner-signed tx now lists an arbitrary
 PART of a holding (`4b0c8187...`): 5000 of buyer1's 25301 merge parcel put up for sale @ 500000 sompi,
@@ -35,10 +40,10 @@ checkSaleState reads. Remaining: wallet/CLI collapse, then mainnet checklist._
 - **Two spend modes:** LISTING (owner-signed, flips a UTXO to forSale=true at a price) and CLAIM
   (payment-authorized, NO owner sig — a buyer pays >= price to the seller and receives the phoques).
 - **Auction:** recorded as a separate FUTURE build (see swap design doc) — stateful/temporal, own architecture.
-- **Next:** partial-balance listing is DONE on-chain (`4b0c8187...`); the wallet/CLI THIN SLICE is BUILT
-  (`bitphoque_cli.rs`: import / balance / partial-list / list / split / merge — claim is the last to port,
-  on the Option-C track-forward model). Next up the
-  list: port list/claim/split/merge into the CLI, extract a shared lib, then the thin marketplace app,
+- **Next:** the wallet/CLI is FEATURE-COMPLETE — `bitphoque_cli.rs` has import / balance / partial-list / list /
+  split / merge / **claim**, all built + committed (`78c14d9` claim), on the Option-C track-forward model. Only
+  remaining gate on claim is a LIVE dry-run VM-verify (waiting on TN10 IBD). Next up the
+  list: live claim dry-run, extract a shared lib, then the thin marketplace app,
   then the pre-mainnet checklist. Design + open items live in `bitphoque_swap_covenant_design.md`.
 
 ---
@@ -550,20 +555,35 @@ DELIBERATE SHORTCUT (noted so it doesn't become the design): the wallet.json par
 only its own flat output), to avoid a serde dep in the thin slice. When the shared lib is extracted for the
 full CLI, swap in serde_json.
 
-STILL TO PORT into the CLI: **claim** (list, split, merge are now PORTED + COMMITTED — `9847e00` merge,
-`2211f09` split; CLI = import / balance / partial-list / list / split / merge). claim is the LAST
-subcommand; then extract the shared lib; then the
-thin marketplace app.
+CLI SUBCOMMANDS COMPLETE: **claim is PORTED + COMMITTED** (`78c14d9`) — joining list/split/merge/partial-list
+(`9847e00` merge, `2211f09` split). CLI = import / balance / partial-list / list / split / merge / claim, all
+compiling + committed. claim's port notes: arg order is `<buyer_keyfile> <seller_pubkey_hex> <amount> <price>`
+(keyfile-first, matching list/split/merge convention); single covenant input so NO leader/delegate quirk (buyer's
+plain input signs its own index 1); local CLAIM_FEE=900k / CLAIM_SCRIPT_UNITS=300k / PAYMENT=100M consts scoped in
+the fn (like merge) so they don't disturb the shared 700k/240k calibration; forward-records the claimed parcel to
+wallet.json. REMAINING on claim: a LIVE dry-run VM-verify on-chain (every other subcommand got one; claim's was
+blocked on the node). Then extract the shared lib; then the thin marketplace app.
 
 ---
 
 ## TN10 ground facts
-- Node: **TestnetNode at 192.168.0.104** — wRPC borsh **17210** (all-ifaces, this is what the harnesses/CLI use;
-  Big Daddy reachability confirmed), gRPC **16211** (all-ifaces). Release tn10-toc3.
-  NOTE (node rename + box swap, cleanup pass): the old PsychoNode @ 192.168.0.206 is RETIRED for testnet — that
-  hardware now runs MainnetNode. Testnet was moved to the MORE CAPABLE box (now 192.168.0.104). gRPC changed
-  16210→16211; a 16210 binding still exists but is 127.0.0.1-ONLY (not reachable off-box). wRPC 17210 is the
-  only endpoint BitPhoque needs. MainnetNode exposes public p2p 16111 (separate infra, out of scope for TN10).
+- Node: **TestnetNode at 192.168.0.104** — release **kaspad 2.0.1** (post-Toccata; the Toccata guide's recommended
+  floor is 2.0.1+). gRPC **16210** all-ifaces (this is what the CLI's GrpcClient uses — `--rpclisten=0.0.0.0:16210`),
+  wRPC borsh **17210** all-ifaces (`--rpclisten-borsh=0.0.0.0:17210`). **CORRECTION (do not repeat the old error):
+  16211 is the P2P port, NOT gRPC.** An earlier note here said "gRPC 16211" — WRONG; the CLI pointing at 16211 got
+  `Unimplemented` (P2P answering a gRPC request). gRPC default on testnet is 16210; the launch .bat MUST include
+  `--rpclisten=0.0.0.0:16210` or gRPC falls back to 127.0.0.1-only (unreachable off-box). Launch .bat:
+  `C:\kaspatestnet10\start-tn10.bat`; datadir under user **`Karrrl Kaspa Node`** at
+  `...\AppData\Local\rusty-kaspa\kaspa-testnet-10\datadir`. The old PsychoNode @ 192.168.0.206 is RETIRED for
+  testnet — that hardware now runs MainnetNode (public p2p 16111 forwarded; separate infra, out of scope for TN10).
+  **TOCCATA NODE REBUILD (2026-06-22):** the TN10 node kept wedging at utxoindex/consensus-init — root cause was a
+  mainnet-line **kaspad 2.0.0** binary running on a **pre-Toccata datadir** (consensus store last written June 9;
+  Toccata activated on TN10 ~June 20). Both .104 and .206 had pre-Toccata datadirs (both useless now). Fix: kaspad
+  2.0.0→**2.0.1**, wiped to a FRESH datadir (old one moved to `datadir_pretoccata_old`), clean post-Toccata IBD.
+  LESSON: a wedge at the index step on a node that "was synced" can be a stale/incompatible DATABASE, not a code or
+  index bug — check the binary version and the consensus-store date against the last hardfork before fighting it.
+  kaspad must always be stopped with Ctrl+C and allowed to FLUSH (watch for clean exit); a force-kill mid-flush
+  corrupts the utxoindex (rename-and-rebuild recovery).
 - Funding addr (reused for both genesis runs): `kaspatest:qrwzyuc8lkvdsxgww53n7rsjetsqhh6p9hmy8vrvqpdun5r7ysevufmglhgl4`
   (key in bitphoque_owner.key; re-faucet-funded 100k TKAS for the v2 genesis).
 - rusty-kaspa clone: C:\kaspa-tn12\rusty-kaspa (tag tn10-toc3); silverscript: C:\kaspa-tn12\silverscript.
@@ -574,7 +594,14 @@ thin marketplace app.
 
 ---
 
-## RESUME POINT — combined 2×2 claim (on-chain F1 proof) is the headline; then generalize + mainnet
+## RESUME POINT — CLI feature-complete (claim committed); next is claim's LIVE dry-run once TN10 IBD finishes
+
+**Immediate next action (when the TN10 node @ .104 finishes its fresh post-Toccata IBD):** fix the CLI `NODE` const
+to `192.168.0.104:16210` (gRPC — NOT 16211), rebuild (copy canonical → `C:\kaspa-tn12\silverscript\silverscript-lang\src\bin\`,
+`cargo build --bin bitphoque_cli`), then run `balance` against buyer1 (`8c02c20a...`) to confirm the node serves a
+live by-address lookup. Then the headline: a LIVE `claim` dry-run (it VM-verifies the covenant input against a real
+for-sale parcel — the one proof claim hasn't yet gotten). If PASS, claim is fully validated end-to-end like the
+other subcommands. Then: extract shared lib → thin marketplace app → mainnet checklist.
 
 Fixed-price sale PROVEN end-to-end on-chain: 1x1 on v2, and on v3 at 2×2 as TWO SEPARATE CLAIMS plus a
 SECONDARY-MARKET RESALE. 2x2 AND 3x3 fanout proven AT THE VM on v3 — the work that found and fixed the F1 bug.
@@ -617,9 +644,11 @@ Remaining, in order:
 - [x] **Generalized inspect tool** — DONE (`bitphoque_inspect_v3.rs`). Compiles any v3 parcel P2SH from
       CLI params, queries with retry for the index lag, optional outpoint filter. Read-only, pubkey-only
       (stream-safe). Supersedes the hardcoded rothschild inspect for v3.
-- [ ] (unchanged) wallet/CLI build (engine now fully proven — collapse
-      harnesses → party-agnostic CLI → thin marketplace app); original-token owner quirk; AUCTION
-      future build; mainnet checklist; make public.
+- [x] **wallet/CLI build** — DONE in code. `bitphoque_cli.rs` feature-complete (import / balance / partial-list /
+      list / split / merge / claim), all built + committed (claim `78c14d9`). Option-C track-forward wallet.json.
+      ONLY remaining: claim's LIVE on-chain dry-run (blocked on TN10 IBD — see resume point). Still open beyond
+      that: extract shared lib → thin marketplace app; original-token owner quirk; AUCTION future build; mainnet
+      checklist; make public.
 - [x] **Split/merge for the sale (list a PARTIAL balance)** — DONE on-chain (`4b0c8187...`). One owner-
       signed tx lists 5000 of buyer1's 25301 merge parcel @ 500000 sompi (out0, for-sale) + keeps 20301
       (out1, not-for-sale change), same owner — collapses the old two-step split-then-list into one tx.
@@ -638,6 +667,12 @@ Remaining, in order:
       NEVER become mainnet keys.
 - [ ] **Make BitPhoque public** on GitHub (clean repo name + README explaining the phoque joke + fixed-supply/
       no-coordinator design). Secret-sweep first.
+      **FINDING (2026-06-22 secret sweep):** an actual 64-char hex TN10 privkey is committed in `docs/bitphoque_status.md`
+      (the original-token recipient key, `1c14a1de...`, in the section-2 transfer note). It is a TESTNET throwaway
+      (no value, quarantined to TN10), so not an emergency — but per the baseline "private keys never belong in a
+      tracked file." Before going public: scrub the hex from the doc (redact like the other key entries) AND rewrite
+      it out of git history (git-filter-repo / BFG), since history is permanent. Do this as a deliberate pre-public
+      step, not casually. The rest of the sweep was clean (only docs/comments ABOUT keys).
 
 ---
 
