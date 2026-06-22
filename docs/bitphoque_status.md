@@ -6,7 +6,15 @@ committed to git, dry-run before broadcast, verify-by-reading-source for anythin
 local VM verify before TN10. BitPhoque lives in its OWN tree (`C:\bitphoque`) and its OWN git repo —
 separate from oracle-protocol. The end-of-session git checkpoint ritual covers TWO trees._
 
-_Last updated: **PARTIAL-BALANCE LISTING PROVEN ON-CHAIN.** One owner-signed tx now lists an arbitrary
+_Last updated: **ENV RESYNC + CLI MERGE COMMITTED (cleanup pass).** (1) Big Daddy OS/dev drive is now **C:**
+(Acronis renamed E:→C: during the clone; old untrustworthy C: removed) — canonical paths `C:\bitphoque\` etc.
+are CORRECT as written. (2) Nodes renamed + role-swapped: **TestnetNode = 192.168.0.104** (the more-capable box,
+wRPC 17210 confirmed reachable from Big Daddy, gRPC now 16211); old PsychoNode @ .206 retired → now MainnetNode.
+(3) CLI: **merge committed** (`9847e00`) on top of split (`2211f09`) — CLI now has import / balance / partial-list /
+list / split / merge; **`claim` is the LAST subcommand to build.** Then shared lib → thin marketplace app → mainnet
+checklist._
+
+_Prior milestone — **PARTIAL-BALANCE LISTING PROVEN ON-CHAIN.** One owner-signed tx now lists an arbitrary
 PART of a holding (`4b0c8187...`): 5000 of buyer1's 25301 merge parcel put up for sale @ 500000 sompi,
 20301 kept as not-for-sale change, same owner — collapsing the old two-step split-then-list into one tx.
 Harness `bitphoque_partial_list_v3.rs` (minimal diff off the proven self-split: out0 for-sale at a CLI
@@ -28,7 +36,8 @@ checkSaleState reads. Remaining: wallet/CLI collapse, then mainnet checklist._
   (payment-authorized, NO owner sig — a buyer pays >= price to the seller and receives the phoques).
 - **Auction:** recorded as a separate FUTURE build (see swap design doc) — stateful/temporal, own architecture.
 - **Next:** partial-balance listing is DONE on-chain (`4b0c8187...`); the wallet/CLI THIN SLICE is BUILT
-  (`bitphoque_cli.rs`: import / balance / partial-list, on the Option-C track-forward model). Next up the
+  (`bitphoque_cli.rs`: import / balance / partial-list / list / split / merge — claim is the last to port,
+  on the Option-C track-forward model). Next up the
   list: port list/claim/split/merge into the CLI, extract a shared lib, then the thin marketplace app,
   then the pre-mainnet checklist. Design + open items live in `bitphoque_swap_covenant_design.md`.
 
@@ -280,7 +289,9 @@ merge pattern in `silverscript-lang/tests/kcc20_tests.rs` lines 289–304):
   the mass. Lighter than the 2×2 claim (1.5M) because no plain funding inputs / extra outputs.
 
 ### NODE / INDEXING QUIRKS
-- **PsychoNode address-index LAGS the tx-index by a few seconds after confirmation.** A claim run
+- **Address-index LAGS the tx-index by a few seconds after confirmation** (observed on the OLD PsychoNode
+  hardware, now retired; the new more-capable TestnetNode @ .104 may lag less, but treat the retry as still
+  required until re-confirmed). A claim run
   immediately after a listing confirmed returned "no for-sale covenant UTXO found" against the CORRECT
   P2SH (verified on the explorer that the listing output WAS there). Re-running the same command a
   moment later found it. The compiled P2SH was right the whole time — the node's by-address UTXO
@@ -539,13 +550,20 @@ DELIBERATE SHORTCUT (noted so it doesn't become the design): the wallet.json par
 only its own flat output), to avoid a serde dep in the thin slice. When the shared lib is extracted for the
 full CLI, swap in serde_json.
 
-STILL TO PORT into the CLI: list, claim, split, merge (same spine); then extract the shared lib; then the
+STILL TO PORT into the CLI: **claim** (list, split, merge are now PORTED + COMMITTED — `9847e00` merge,
+`2211f09` split; CLI = import / balance / partial-list / list / split / merge). claim is the LAST
+subcommand; then extract the shared lib; then the
 thin marketplace app.
 
 ---
 
 ## TN10 ground facts
-- Node: PsychoNode at 192.168.0.206 — wRPC borsh 17210, gRPC 16210. Release tn10-toc3.
+- Node: **TestnetNode at 192.168.0.104** — wRPC borsh **17210** (all-ifaces, this is what the harnesses/CLI use;
+  Big Daddy reachability confirmed), gRPC **16211** (all-ifaces). Release tn10-toc3.
+  NOTE (node rename + box swap, cleanup pass): the old PsychoNode @ 192.168.0.206 is RETIRED for testnet — that
+  hardware now runs MainnetNode. Testnet was moved to the MORE CAPABLE box (now 192.168.0.104). gRPC changed
+  16210→16211; a 16210 binding still exists but is 127.0.0.1-ONLY (not reachable off-box). wRPC 17210 is the
+  only endpoint BitPhoque needs. MainnetNode exposes public p2p 16111 (separate infra, out of scope for TN10).
 - Funding addr (reused for both genesis runs): `kaspatest:qrwzyuc8lkvdsxgww53n7rsjetsqhh6p9hmy8vrvqpdun5r7ysevufmglhgl4`
   (key in bitphoque_owner.key; re-faucet-funded 100k TKAS for the v2 genesis).
 - rusty-kaspa clone: C:\kaspa-tn12\rusty-kaspa (tag tn10-toc3); silverscript: C:\kaspa-tn12\silverscript.
