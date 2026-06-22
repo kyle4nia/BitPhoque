@@ -345,6 +345,18 @@ engine source (`crypto/txscript/src/lib.rs:80-81,143` + `data_stack.rs:331`):
   checkSig, no CSFS needed.
 - **Supply:** FIXED at genesis, NO minter. 42,069 phoques (TN10 placeholder; just a genesis ctor arg). Whole
   supply minted once; only split/merge/transfer, never increased.
+- **Subdivision — BitPups (DECIDED IN PRINCIPLE; bake in at MAINNET GENESIS).** A phoque subdivides into a named
+  base unit, the **BitPup** (seal-pup; mirrors BTC→satoshi, KAS→sompi). Convention: **1 phoque = 100,000,000
+  BitPups (8 decimal places)**, matching BTC/KAS. APPROACH = pure denomination, NO contract change ("option 1"):
+  the contract already tracks `amount` as an integer and enforces conservation on whole integer units, so we simply
+  declare the integer unit to BE the BitPup. "1 phoque" becomes a display-layer label for 10^8 BitPups — exactly
+  how Bitcoin only ever moves satoshis and "BTC" is the human label. The contract is UNIT-AGNOSTIC: it can already
+  send any whole BitPup amount (e.g. amount=50,000,000 = half a phoque), conservation holds, no fractional logic
+  needed. CONSEQUENCE: at mainnet genesis the supply integer becomes 42,069 × 10^8 = **4,206,900,000,000,000
+  BitPups** (well within i64's ~9.2e18 ceiling — checked, no overflow). CONSTRAINT: this is a GENESIS decision,
+  permanent and unchangeable after mint, and it CANNOT be retrofitted to the live TN10 token (minted as 42,069 whole
+  units with no sub-unit headroom — would need re-genesis). Decide once, correctly, at mainnet day one. Wallet/CLI
+  display divides by 10^8 to show phoques; no covenant work required.
 - **Self-erecting property:** with NO minter covenant deployed and every UTXO genesis'd `isMinter=false`,
   conservation is ALWAYS enforced and supply is mathematically fixed. PROVEN, not asserted (reject-tests).
 - **Sale model (v2/v3):** per-UTXO `forSale` (bool) + `price` (int) state. Listing is owner-signed; claiming is
