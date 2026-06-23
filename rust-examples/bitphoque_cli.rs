@@ -1134,6 +1134,173 @@ async fn cmd_claim(args: &[&String], go: bool) {
     }
 }
 
+// send <signer_keyfile> <in_amount> <send_amount> <recipient_pubkey_hex> [--go]
+//   Transfer phoques to a DIFFERENT owner. The transfer half is a minimal diff off cmd_split — same
+//   single-input, owner-signed, leader-ABI path — with ONE change: out0's owner is the RECIPIENT's
+//   pubkey, not the signer's. Two cases:
+//     PARTIAL (send_amount < in_amount): 2-out. out0 -> recipient (send_amount), out1 -> signer change
+//        (in_amount - send_amount). Both not-for-sale. Proven shape (== bitphoque_split_transfer_v3).
+//     WHOLE   (send_amount == in_amount): 1-out. out0 -> recipient (whole parcel). No change output.
+//        The 1-out covenant shape is proven (original bitphoque_transfer is 1-in/1-out); the v3
+//        leader-ABI single-element new_states is gated by the LOCAL VM VERIFY below before any --go.
+//   On --go ACCEPTED: the signer's CHANGE parcel (if any) is recorded in wallet.json; the recipient's
+//   out0 is NOT recorded (not ours) — instead a parcel DESCRIPTOR for out0 is emitted to hand over.
+//   The recipient runs `receive <descriptor>` to confirm + record it. send produces what receive consumes.
+async fn cmd_send(args: &[&String], go: bool) {
+    if args.len() < 4 {
+        eprintln!("usage: bitphoque send <signer_keyfile> <in_amount> <send_amount> <recipient_pubkey_hex> [--go]");
+        std::process::exit(2);
+    }
+    let signer_key_file = args[0].as_str();
+    let in_amount: i64 = args[1].parse().expect("in_amount must be an integer");
+    let send_amount: i64 = args[2].parse().expect("send_amount must be an integer");
+    let recipient_pk = decode_pubkey(args[3]);
+    let recipient_hex = faster_hex::hex_string(&recipient_pk);
+
+    assert!(send_amount > 0, "send_amount must be > 0");
+    assert!(send_amount <= in_amount, "send_amount must be <= in_amount");
+    let whole = send_amount == in_amount;
+    let change_amount = in_amount - send_amount; // 0 in the whole-parcel case
+    if whole {
+        println!("[send] WHOLE parcel: in {in_amount} -> recipient {send_amount} (1-out, no change)");
+    } else {
+        println!("[send] PARTIAL: in {in_amount} -> recipient {send_amount} (out0) + change {change_amount} (out1)");
+    }
+
+    let source = fs::read_to_string(SIL_FILE).expect("read sil");
+    let input_budget = ComputeBudget::checked_covering_script_units(ScriptUnits(COVENANT_SCRIPT_UNITS)).expect("budget fits");
+    let input_mass = TxInputMass::ComputeBudget(input_budget);
+
+    let signer = load_keypair(signer_key_file);
+    let owner_pk = signer.x_only_public_key().0.serialize().to_vec();
+    let owner_hex = faster_hex::hex_string(&owner_pk);
+    println!("[send] signer (input owner): {owner_hex}");
+    println!("[send] recipient (out0 owner): {recipient_hex}");
+
+    // Input contract: signer-owned, not-for-sale, at in_amount.
+    let in_compiled = compile_contract(&source, &ctor_args(owner_pk.clone(), in_amount, false, 0), CompileOptions::default()).expect("compile input");
+    let in_p2sh = pay_to_script_hash_script(&in_compiled.script);
+    // out0 = recipient-owned, not-for-sale, send_amount.
+    let out0_compiled = compile_contract(&source, &ctor_args(recipient_pk.clone(), send_amount, false, 0), CompileOptions::default()).expect("compile out0");
+    let out0_p2sh = pay_to_script_hash_script(&out0_compiled.script);
+
+    let rpc = connect().await;
+    let token_addr = extract_script_pub_key_address(&in_p2sh, Prefix::Testnet).expect("p2sh address");
+    println!("[send] looking for not-for-sale cov UTXO ({in_amount} phoques) at {token_addr}");
+    let resp = rpc.get_utxos_by_addresses(vec![token_addr]).await.expect("get_utxos failed");
+    if resp.is_empty() { println!("[send] no covenant UTXO at this P2SH (signer/in_amount/caps must match). aborting."); return; }
+    let entry = &resp[0];
+    let outpoint = TransactionOutpoint::from(entry.outpoint.clone());
+    let in_value = entry.utxo_entry.amount;
+    println!("[send] spending cov utxo {}:{}  value {}", outpoint.transaction_id, outpoint.index, in_value);
+    if in_value <= FEE { println!("[send] value {in_value} <= fee {FEE}. aborting."); return; }
+
+    let cov_id = covenant_id();
+    let in_utxo = UtxoEntry::new(in_value, in_p2sh.clone(), 0, false, Some(cov_id));
+    let spendable = in_value - FEE;
+
+    // Build outputs + parallel new_states. WHOLE -> 1 output; PARTIAL -> 2 outputs (out0 recipient, out1 change).
+    let (outputs, new_states_vec, val0, val1): (Vec<TransactionOutput>, Vec<Expr>, u64, u64) = if whole {
+        if spendable < MIN_OUT_VALUE { println!("[send] sole output {spendable} below {MIN_OUT_VALUE} floor. aborting."); return; }
+        let o0 = TransactionOutput { value: spendable, script_public_key: out0_p2sh, covenant: Some(CovenantBinding { authorizing_input: 0, covenant_id: cov_id }) };
+        (vec![o0], vec![new_state(recipient_pk.clone(), send_amount, false, 0)], spendable, 0)
+    } else {
+        // proportional TKAS split, same as cmd_split; out0 = recipient share.
+        let v0: u64 = ((spendable as u128 * send_amount as u128) / in_amount as u128) as u64;
+        let v1: u64 = spendable - v0;
+        if v0 < MIN_OUT_VALUE || v1 < MIN_OUT_VALUE { println!("[send] an output below {MIN_OUT_VALUE} floor (out0 {v0}, out1 {v1}). aborting."); return; }
+        let out1_compiled = compile_contract(&source, &ctor_args(owner_pk.clone(), change_amount, false, 0), CompileOptions::default()).expect("compile out1");
+        let out1_p2sh = pay_to_script_hash_script(&out1_compiled.script);
+        let o0 = TransactionOutput { value: v0, script_public_key: out0_p2sh, covenant: Some(CovenantBinding { authorizing_input: 0, covenant_id: cov_id }) };
+        let o1 = TransactionOutput { value: v1, script_public_key: out1_p2sh, covenant: Some(CovenantBinding { authorizing_input: 0, covenant_id: cov_id }) };
+        (vec![o0, o1],
+         vec![new_state(recipient_pk.clone(), send_amount, false, 0), new_state(owner_pk.clone(), change_amount, false, 0)],
+         v0, v1)
+    };
+    if whole { println!("[send] value: out0 {val0} sompi (fee {FEE})"); }
+    else     { println!("[send] value split (proportional): out0 {val0} sompi, out1 {val1} sompi (fee {FEE})"); }
+
+    // Sign input 0 (not-for-sale -> signature path), leader ABI — identical to cmd_split.
+    let in_unsigned = TransactionInput { previous_outpoint: outpoint, signature_script: vec![], sequence: 0, mass: input_mass };
+    let unsigned = Transaction::new_non_finalized(TX_VERSION_TOCCATA, vec![in_unsigned], outputs.clone(), 0, SUBNETWORK_ID_NATIVE, 0, vec![]);
+    let mtx = MutableTransaction::with_entries(unsigned, vec![in_utxo.clone()]);
+    let reused = SigHashReusedValuesUnsync::new();
+    let sig_hash = calc_schnorr_signature_hash(&mtx.as_verifiable(), 0, SIG_HASH_ALL, &reused);
+    let msg = secp256k1::Message::from_digest_slice(sig_hash.as_bytes().as_slice()).expect("sighash msg");
+    let sig = signer.sign_schnorr(msg);
+    let mut signature = sig.as_ref().to_vec();
+    signature.push(SIG_HASH_ALL.to_u8());
+
+    let new_states: Expr = new_states_vec.into();
+    let sigs: Expr = vec![Expr::bytes(signature)].into();
+    let witnesses: Expr = Expr::bytes(vec![0u8]); // dormant on signed branch; ABI expects one entry per input
+    let mut sigscript = in_compiled
+        .build_sig_script_for_covenant_decl("transfer", vec![new_states, sigs, witnesses], CovenantDeclCallOptions { is_leader: true })
+        .expect("build leader sigscript");
+    let redeem_push = ScriptBuilder::with_flags(EngineFlags { covenants_enabled: true, sigop_script_units: 0.into() }).add_data(&in_compiled.script).expect("push redeem").drain();
+    sigscript.extend_from_slice(&redeem_push);
+
+    let in_signed = TransactionInput { previous_outpoint: outpoint, signature_script: sigscript, sequence: 0, mass: input_mass };
+    let mut tx = Transaction::new_non_finalized(TX_VERSION_TOCCATA, vec![in_signed], outputs, 0, SUBNETWORK_ID_NATIVE, 0, vec![]);
+    tx.finalize();
+    let txid = tx.id().to_string();
+    println!("[send] tx id: {txid}");
+
+    println!("[send] local VM verify...");
+    match local_vm_verify(&tx, vec![in_utxo.clone()], 0) {
+        Ok(()) => println!("[send] LOCAL VM VERIFY: PASS"),
+        Err(e) => { println!("[send] LOCAL VM VERIFY: FAIL — {e:?}. aborting."); return; }
+    }
+
+    if !go {
+        println!("\n[send] DRY RUN — not submitted. Re-run with --go to broadcast (the recipient descriptor prints only after broadcast).");
+        return;
+    }
+
+    println!("[send] SUBMITTING...");
+    match rpc.submit_transaction((&tx).into(), false).await {
+        Ok(resp) => {
+            println!("[send] ACCEPTED. node response: {resp:?}");
+            let mut wallet = load_wallet();
+            // input parcel spent
+            let in_key = format!("{}:{}", tx.inputs[0].previous_outpoint.transaction_id, tx.inputs[0].previous_outpoint.index);
+            if let Some(rec) = wallet.get_mut(&in_key) { rec.status = "spent".to_string(); }
+            // record OUR change parcel (partial only); out0 belongs to the recipient -> NOT recorded.
+            if !whole {
+                let pc = Parcel { outpoint_txid: txid.clone(), outpoint_index: 1, owner_pk: owner_hex.clone(), amount: change_amount, for_sale: false, price: 0, value: val1, max_ins: MAX_COV_INS, max_outs: MAX_COV_OUTS, status: "live".to_string() };
+                wallet.insert(pc.key(), pc);
+                println!("[send] wallet.json updated: input spent; change parcel ({change_amount}) recorded (out0 is the recipient's, not recorded).");
+            } else {
+                println!("[send] wallet.json updated: input spent (whole parcel sent; no change).");
+            }
+            save_wallet(&wallet);
+
+            // Emit the descriptor for out0 (the recipient's parcel) — what they feed to `receive`.
+            let mut cov_arr = [0u8; 32];
+            faster_hex::hex_decode(COVENANT_ID_HEX.as_bytes(), &mut cov_arr).expect("cov id");
+            let mut owner_arr = [0u8; 32];
+            owner_arr.copy_from_slice(&recipient_pk);
+            let mut txid_arr = [0u8; 32];
+            txid_arr.copy_from_slice(tx.id().as_bytes().as_slice());
+            let desc = Descriptor {
+                version: DESC_VERSION,
+                covenant_id: cov_arr,
+                owner_pubkey: owner_arr,
+                amount: send_amount as u64,
+                for_sale: false,
+                price: 0,
+                txid: txid_arr,
+                output_index: 0,
+            };
+            let desc_str = encode_descriptor(&desc);
+            println!("\n[send] === RECIPIENT DESCRIPTOR (hand this to {recipient_hex}) ===");
+            println!("{desc_str}");
+            println!("[send] === they run: bitphoque receive <descriptor> ===");
+        }
+        Err(e) => println!("[send] REJECTED: {e}"),
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let raw: Vec<String> = std::env::args().collect();
@@ -1149,6 +1316,7 @@ async fn main() {
         eprintln!("  merge        <owner_keyfile> <amount0> <amount1> [--go]");
         eprintln!("  partial-list <owner_keyfile> <in_amount> <list_amount> <price> [--go]");
         eprintln!("  claim        <buyer_keyfile> <seller_pubkey_hex> <amount> <price> [--go]");
+        eprintln!("  send         <signer_keyfile> <in_amount> <send_amount> <recipient_pubkey_hex> [--go]");
         std::process::exit(2);
     }
     let cmd = pos[0].as_str();
@@ -1162,6 +1330,7 @@ async fn main() {
         "merge"        => cmd_merge(rest, go).await,
         "partial-list" => cmd_partial_list(rest, go).await,
         "claim"        => cmd_claim(rest, go).await,
+        "send"         => cmd_send(rest, go).await,
         other => { eprintln!("unknown subcommand: {other}"); std::process::exit(2); }
     }
 }
