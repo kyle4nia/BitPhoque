@@ -1,0 +1,885 @@
+<!DOCTYPE html>
+<!--
+  BitPhoque Wallet — create / restore / unlock + HOME (mirrors the proven CLI).
+  Aesthetic reconciled to the live index.html (real seal, exact palette,
+  Inter body / Fraunces display, color-scheme light).
+  ============================================================================
+  Plain HTML/JS, NO bundler. Lives in public_html ALONGSIDE bitphoque.jpeg
+  (seal is a relative path — both files must share a folder) and the vendor/
+  folder (the @scure/@noble ESM packages, resolved by the import map in <head>).
+
+  >>> SERVE OVER HTTP(S) <<< ES modules do NOT load from file:// (origin null).
+  Open via a server (locally: `python -m http.server`, then localhost:PORT) or
+  the live https host. Double-clicking the file will load the page but BIP-39
+  will be unavailable and "Create" will explain why.
+
+  CRYPTO STATUS — the old "PRODUCTION SEAM" is now WIRED:
+    • mnemonic: vendored @scure/bip39 v2.2.0 — real crypto.getRandomValues
+      entropy, full 2048-word list, real checksum (bridge: window.BIP39 in <head>).
+    • persistence: WebCrypto AES-GCM under a PBKDF2 passphrase, ciphertext only
+      in localStorage, passphrase never stored (bridge: window.WALLET_STORE).
+      Optional — the done screen offers save-or-skip; a saved wallet boots to Unlock.
+
+  REMAINING SEAM — the NODE SEAM (see the HOME script): balance reads and tx
+  builds need (1) a WASM P2SH compiler the browser doesn't have yet and (2) a
+  synced TN10 node. Until then HOME shows an honest empty balance and the action
+  panels PRINT the CLI-equivalent call rather than broadcasting.
+
+  MAINNET NOTE: at mainnet genesis the supply gains 8-decimal BitPup headroom;
+  the balance formatter already renders "N phoques · M pups" and is forward-ready
+  (on TN10 the remainder is always 0 — whole-unit token, no sub-unit headroom).
+============================================================================
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BitPhoque Wallet</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+
+<!-- ===================================================================
+  BIP-39 PRODUCTION SEAM — WIRED (vendored @scure/bip39 v2.2.0).
+  Real entropy (crypto.getRandomValues), full 2048-word English list, real
+  checksum. NO build step: native ES modules resolved by this import map.
+  The audited library files live in web/vendor/ and load locally — NOT from
+  a CDN — so the seed-generating code is code you ship, not code a third
+  party serves at runtime.
+
+  NB MODULES NEED HTTP: ES modules do not load from file:// (origin null).
+  Open via a server (locally `python -m http.server` then localhost:PORT,
+  or just the live https host). Double-clicking the file will NOT load BIP-39.
+==================================================================== -->
+<script type="importmap">
+{
+  "imports": {
+    "@scure/bip39": "./vendor/scure-bip39/index.js",
+    "@scure/bip39/wordlists/english.js": "./vendor/scure-bip39/wordlists/english.js",
+    "@scure/base": "./vendor/scure-base/index.js",
+    "@noble/hashes/": "./vendor/noble-hashes/"
+  }
+}
+</script>
+<script type="module">
+  // Bridge the audited ESM API onto the plain-script wallet below.
+  // generateMnemonic returns a SPACE-JOINED STRING and validateMnemonic takes
+  // a STRING; the wallet works in 12-element ARRAYS, so convert at the boundary
+  // (keeps every existing screen unchanged — smallest diff).
+  import { generateMnemonic, validateMnemonic, mnemonicToSeedSync } from '@scure/bip39';
+  import { wordlist } from '@scure/bip39/wordlists/english.js';
+  window.BIP39 = {
+    ready: true,
+    wordlist,
+    genArray: () => generateMnemonic(wordlist, 128).split(' '),   // 12 words, real entropy+checksum
+    validateArray: (arr) => {
+      if (!Array.isArray(arr) || arr.length !== 12) return { ok:false, reason:"Need exactly 12 words." };
+      const phrase = arr.map(w => (w||'').trim().toLowerCase()).join(' ');
+      // surface the first not-in-list word with a precise message (better UX than a bare checksum fail)
+      const set = new Set(wordlist);
+      for (let i=0;i<12;i++){ const w=arr[i]?.trim().toLowerCase(); if(!w) return {ok:false,reason:`Word ${i+1} is empty.`}; if(!set.has(w)) return {ok:false,reason:`"${arr[i]}" isn't a valid recovery word.`}; }
+      if (!validateMnemonic(phrase, wordlist)) return { ok:false, reason:"Phrase checksum is invalid — check the word order." };
+      return { ok:true };
+    },
+    toSeedHex: (arr) => { const s = mnemonicToSeedSync(arr.join(' '), ''); return [...s].map(b=>b.toString(16).padStart(2,'0')).join(''); }
+  };
+
+  // ---- Encrypted persistence (WebCrypto AES-GCM under a PBKDF2 passphrase) ----
+  // Stores ONLY ciphertext + salt + IV in localStorage. Passphrase is never
+  // stored. Wrong passphrase fails the GCM auth tag -> decrypt throws -> "wrong
+  // passphrase", never silent garbage. WebCrypto needs a secure context
+  // (https:// or localhost); it is the browser's own audited crypto.
+  const LS_KEY = "bitphoque_wallet_v1";
+  const enc = new TextEncoder(), dec = new TextDecoder();
+  const b64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
+  const unb64 = (s) => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+
+  async function deriveKey(passphrase, salt){
+    const base = await crypto.subtle.importKey("raw", enc.encode(passphrase), "PBKDF2", false, ["deriveKey"]);
+    return crypto.subtle.deriveKey(
+      { name:"PBKDF2", salt, iterations: 250000, hash:"SHA-256" },
+      base, { name:"AES-GCM", length:256 }, false, ["encrypt","decrypt"]);
+  }
+  window.WALLET_STORE = {
+    secureContext: () => (window.isSecureContext === true),
+    exists: () => !!localStorage.getItem(LS_KEY),
+    async save(seedArr, passphrase){
+      const salt = crypto.getRandomValues(new Uint8Array(16));
+      const iv   = crypto.getRandomValues(new Uint8Array(12));
+      const key  = await deriveKey(passphrase, salt);
+      const ct   = await crypto.subtle.encrypt({name:"AES-GCM", iv}, key, enc.encode(seedArr.join(' ')));
+      localStorage.setItem(LS_KEY, JSON.stringify({ v:1, salt:b64(salt), iv:b64(iv), ct:b64(ct) }));
+    },
+    async unlock(passphrase){
+      const rec = JSON.parse(localStorage.getItem(LS_KEY) || "null");
+      if(!rec) throw new Error("NO_WALLET");
+      const key = await deriveKey(passphrase, unb64(rec.salt));
+      let pt;
+      try { pt = await crypto.subtle.decrypt({name:"AES-GCM", iv:unb64(rec.iv)}, key, unb64(rec.ct)); }
+      catch(e){ throw new Error("BAD_PASSPHRASE"); }   // GCM auth-tag failure
+      return dec.decode(pt).split(' ');
+    },
+    forget(){ localStorage.removeItem(LS_KEY); }
+  };
+
+  window.dispatchEvent(new Event('bip39-ready'));
+</script>
+<style>
+  :root {
+    --ink: #111110;
+    --paper: #FBFAF7;
+    --paper-edge: #EFEDE6;
+    --muted: #6B6A64;
+    --hair: rgba(17,17,16,0.12);
+    --hair-strong: rgba(17,17,16,0.28);
+    --danger: #8a2f24;
+    --ok: #3d6b4a;
+    --radius: 10px;
+    --maxw: 560px;
+    color-scheme: light;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: 'Inter', system-ui, sans-serif;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+  }
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 30px 24px 64px; }
+
+  .mast { display: flex; align-items: center; gap: 13px; margin-bottom: 32px; }
+  .seal { width: 46px; height: 46px; object-fit: contain; flex: none; mix-blend-mode: multiply; }
+  .seal-fallback {
+    width: 46px; height: 46px; border: 1.5px dashed var(--hair-strong); border-radius: 8px;
+    display: none; align-items: center; justify-content: center; font-size: 9px; color: var(--muted);
+    text-align: center; line-height: 1.2; flex: none;
+  }
+  .mast h1 { font-family: 'Fraunces', Georgia, serif; font-weight: 500; font-size: 24px; letter-spacing: -0.02em; line-height: 1; }
+  .mast .sub { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.14em; margin-top: 4px; }
+
+  .rail { display: flex; gap: 6px; margin: 0 0 28px; }
+  .rail .seg { height: 3px; flex: 1; background: var(--hair); border-radius: 2px; transition: background .3s ease; }
+  .rail .seg.on { background: var(--ink); }
+
+  .screen { display: none; }
+  .screen.active { display: block; animation: rise 420ms cubic-bezier(0.16,1,0.3,1) both; }
+  @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+  h2.title { font-family: 'Fraunces', Georgia, serif; font-weight: 500; font-size: clamp(28px,7vw,34px); line-height: 1.1; letter-spacing: -0.02em; margin: 0 0 12px; }
+  p.lede { font-size: 16px; color: var(--muted); margin: 0 0 26px; max-width: 48ch; }
+
+  .btn {
+    font-family: 'Inter', sans-serif; font-size: 15px; font-weight: 500;
+    padding: 14px 20px; border-radius: var(--radius); cursor: pointer; width: 100%;
+    border: 1.5px solid var(--ink); background: var(--ink); color: var(--paper);
+    transition: transform 120ms ease, background 160ms ease, border-color 160ms ease;
+  }
+  .btn:hover { background: #000; }
+  .btn:active { transform: scale(0.985); }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
+  .btn.ghost { background: transparent; color: var(--ink); border-color: var(--hair-strong); }
+  .btn.ghost:hover { background: transparent; border-color: var(--ink); }
+  .btn-row { display: flex; gap: 12px; margin-top: 12px; }
+  .btn-row .btn { width: auto; flex: 1; }
+  .link { background: none; border: none; color: var(--muted); font-family: 'Inter', sans-serif; font-size: 13px; text-decoration: underline; cursor: pointer; padding: 8px 0; }
+  .link:hover { color: var(--ink); }
+
+  .choice {
+    display: flex; align-items: flex-start; gap: 14px; background: var(--paper);
+    border: 1.5px solid var(--hair); border-radius: var(--radius); padding: 18px;
+    cursor: pointer; width: 100%; text-align: left; font-family: 'Inter', sans-serif; margin-bottom: 12px;
+    transition: border-color 160ms ease, background 160ms ease;
+  }
+  .choice:hover { border-color: var(--hair-strong); background: #fff; }
+  .choice .ic { font-family: 'Fraunces', serif; font-size: 24px; line-height: 1; margin-top: 1px; flex: none; }
+  .choice .ct { font-size: 16px; font-weight: 500; }
+  .choice .cd { font-size: 13px; color: var(--muted); margin-top: 3px; }
+
+  .vault { background: #fff; border: 1.5px solid var(--hair-strong); border-radius: var(--radius); padding: 20px; margin: 4px 0 8px; position: relative; }
+  .vault.blur .word .w { filter: blur(7px); }
+  .vault-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 11px 14px; }
+  .word { display: flex; align-items: baseline; gap: 8px; border-bottom: 1px solid var(--hair); padding-bottom: 5px; }
+  .word .n { font-size: 11px; color: var(--muted); width: 18px; text-align: right; flex: none; font-variant-numeric: tabular-nums; }
+  .word .w { font-family: 'Fraunces', Georgia, serif; font-size: 16px; font-weight: 500; color: var(--ink); }
+  .reveal-hint { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.12em; }
+  .vault:not(.blur) .reveal-hint { display: none; }
+
+  .warn { display: flex; gap: 10px; background: #F6EFE2; border: 1px solid #E6D9BE; border-radius: var(--radius); padding: 13px 15px; margin: 18px 0; font-size: 14px; color: #6B5A32; line-height: 1.5; }
+  .warn .ic { flex: none; margin-top: 1px; font-weight: 500; }
+
+  .tools { display: flex; gap: 18px; margin: 14px 0 2px; justify-content: center; }
+
+  .entry-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 11px 12px; margin: 4px 0 6px; }
+  .cell { display: flex; align-items: center; gap: 7px; background: var(--paper); border: 1.5px solid var(--hair); border-radius: 8px; padding: 0 10px; height: 42px; transition: border-color 140ms ease, background 140ms ease; }
+  .cell:focus-within { border-color: var(--ink); background: #fff; }
+  .cell .n { font-size: 11px; color: var(--muted); width: 16px; text-align: right; flex: none; font-variant-numeric: tabular-nums; }
+  .cell input { border: none; background: none; outline: none; font-family: 'Fraunces', Georgia, serif; font-size: 15px; font-weight: 500; color: var(--ink); width: 100%; padding: 0; }
+  .cell.filled { background: #fff; }
+  .cell.bad { border-color: var(--danger); }
+  .cell.target { border-color: var(--ink); background: #fff; }
+  .cell.locked input { color: var(--muted); }
+
+  .msg { font-size: 13px; margin: 10px 0; min-height: 16px; }
+  .msg.bad { color: var(--danger); }
+  .msg.ok { color: var(--ok); }
+
+  .done-seal { width: 64px; height: 64px; object-fit: contain; mix-blend-mode: multiply; margin: 0 0 18px; }
+  .done-check { font-family: 'Fraunces', serif; font-size: 30px; }
+
+  .foot { margin-top: 38px; font-size: 11px; color: var(--muted); letter-spacing: 0.03em; text-align: center; }
+  .foot b { color: var(--ink); font-weight: 500; }
+
+  /* ---- HOME (post-onboarding wallet view; mirrors the CLI surface) ---- */
+  .bal { border: 1.5px solid var(--hair-strong); border-radius: var(--radius); background: #fff; padding: 22px 22px 20px; margin: 4px 0 22px; }
+  .bal .lab { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.14em; }
+  .bal .amt { font-family: 'Fraunces', Georgia, serif; font-weight: 500; font-size: clamp(34px,9vw,46px); line-height: 1.05; letter-spacing: -0.02em; margin: 6px 0 0; font-variant-numeric: tabular-nums; }
+  .bal .amt .u { font-size: 0.42em; font-weight: 400; color: var(--muted); letter-spacing: 0; margin-left: 8px; }
+  .bal .pups { font-size: 13px; color: var(--muted); margin-top: 5px; font-variant-numeric: tabular-nums; }
+  .bal .pups.zero { opacity: .5; }
+  .bal .empty { font-size: 14px; color: var(--muted); margin-top: 8px; line-height: 1.5; }
+  .bal-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--hair); }
+  .bal-foot .pc { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .bal-foot .rf { font-size: 12px; }
+
+  .acts { display: grid; grid-template-columns: repeat(2,1fr); gap: 12px; margin: 0 0 16px; }
+  .act { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; background: var(--paper); border: 1.5px solid var(--hair); border-radius: var(--radius); padding: 16px 16px 15px; cursor: pointer; text-align: left; font-family: 'Inter', sans-serif; transition: border-color 160ms ease, background 160ms ease, transform 120ms ease; }
+  .act:hover { border-color: var(--hair-strong); background: #fff; }
+  .act:active { transform: scale(0.99); }
+  .act .ai { font-family: 'Fraunces', serif; font-size: 22px; line-height: 1; }
+  .act .at { font-size: 15px; font-weight: 500; color: var(--ink); }
+  .act .ad { font-size: 12px; color: var(--muted); line-height: 1.4; }
+
+  .more { border: 1.5px solid var(--hair); border-radius: var(--radius); overflow: hidden; margin: 0 0 18px; }
+  .more summary { list-style: none; cursor: pointer; padding: 14px 16px; font-size: 14px; font-weight: 500; color: var(--ink); display: flex; align-items: center; justify-content: space-between; }
+  .more summary::-webkit-details-marker { display: none; }
+  .more summary .chev { color: var(--muted); transition: transform 200ms ease; }
+  .more[open] summary .chev { transform: rotate(90deg); }
+  .more .more-body { border-top: 1px solid var(--hair); padding: 6px; display: grid; grid-template-columns: repeat(2,1fr); gap: 6px; }
+  .more .mact { background: none; border: 1px solid transparent; border-radius: 8px; padding: 11px 12px; text-align: left; cursor: pointer; font-family: 'Inter', sans-serif; transition: background 140ms ease, border-color 140ms ease; }
+  .more .mact:hover { background: var(--paper); border-color: var(--hair); }
+  .more .mact .mt { font-size: 14px; font-weight: 500; color: var(--ink); }
+  .more .mact .md { font-size: 11px; color: var(--muted); margin-top: 2px; line-height: 1.35; }
+
+  /* slide-up panel for an action (send/receive/claim/list/...) */
+  .panel-back { position: fixed; inset: 0; background: rgba(17,17,16,0.28); display: none; align-items: flex-end; justify-content: center; z-index: 40; }
+  .panel-back.open { display: flex; animation: fade 200ms ease both; }
+  @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+  .panel { background: var(--paper); width: 100%; max-width: var(--maxw); border-radius: 16px 16px 0 0; border: 1.5px solid var(--hair-strong); border-bottom: none; padding: 22px 24px 30px; max-height: 88vh; overflow-y: auto; animation: slideup 320ms cubic-bezier(0.16,1,0.3,1) both; }
+  @keyframes slideup { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+  .panel .ph { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px; }
+  .panel .ph h3 { font-family: 'Fraunces', Georgia, serif; font-weight: 500; font-size: 24px; letter-spacing: -0.02em; }
+  .panel .ph .x { background: none; border: none; font-size: 22px; color: var(--muted); cursor: pointer; line-height: 1; padding: 4px; }
+  .panel .pl { font-size: 14px; color: var(--muted); margin-bottom: 18px; line-height: 1.5; }
+  .panel .pl code { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 0.9em; color: var(--ink); background: var(--paper-edge); padding: 1px 5px; border-radius: 4px; }
+  .panel label { display: block; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; margin: 14px 0 6px; }
+  .panel input.fld, .panel textarea.fld { width: 100%; font-family: 'Inter', sans-serif; font-size: 15px; color: var(--ink); background: #fff; border: 1.5px solid var(--hair-strong); border-radius: 8px; padding: 11px 13px; outline: none; transition: border-color 140ms ease; }
+  .panel input.fld:focus, .panel textarea.fld:focus { border-color: var(--ink); }
+  .panel textarea.fld { resize: vertical; min-height: 70px; font-family: 'Fraunces', Georgia, serif; word-break: break-all; line-height: 1.5; }
+  .panel .hint { font-size: 12px; color: var(--muted); margin-top: 5px; line-height: 1.4; }
+  .panel .seam { display: flex; gap: 9px; background: #F6EFE2; border: 1px solid #E6D9BE; border-radius: 8px; padding: 11px 13px; margin: 16px 0 4px; font-size: 12.5px; color: #6B5A32; line-height: 1.5; }
+  .panel .seam .ic { flex: none; font-weight: 600; }
+  .panel .out { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 12px; background: var(--ink); color: #E9E7E0; border-radius: 8px; padding: 13px 14px; margin-top: 14px; white-space: pre-wrap; word-break: break-all; line-height: 1.6; display: none; }
+  .panel .out.show { display: block; }
+  .descbox { font-family: 'Fraunces', Georgia, serif; font-size: 14px; background: #fff; border: 1.5px solid var(--hair-strong); border-radius: 8px; padding: 13px; word-break: break-all; line-height: 1.55; margin-top: 6px; }
+
+  .save-box { border: 1.5px solid var(--hair-strong); border-radius: var(--radius); background: #fff; padding: 20px; margin: 4px 0 0; }
+  .save-box .save-head { font-family: 'Fraunces', Georgia, serif; font-size: 18px; font-weight: 500; }
+  .save-box .save-sub { font-size: 13px; color: var(--muted); line-height: 1.5; margin: 6px 0 4px; }
+  .save-box label { display: block; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; margin: 14px 0 6px; }
+  .save-box input.fld { width: 100%; font-family: 'Inter', sans-serif; font-size: 15px; color: var(--ink); background: var(--paper); border: 1.5px solid var(--hair-strong); border-radius: 8px; padding: 11px 13px; outline: none; transition: border-color 140ms ease; }
+  .save-box input.fld:focus { border-color: var(--ink); background: #fff; }
+  .save-box .btn { margin-top: 16px; }
+
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+  @media (max-width: 440px) { .vault-grid, .entry-grid { grid-template-columns: repeat(2,1fr); } .acts { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="mast">
+    <img class="seal" src="bitphoque.jpeg" alt="BitPhoque seal"
+         onerror="this.style.display='none'; document.getElementById('seal-fb').style.display='flex';">
+    <div class="seal-fallback" id="seal-fb">seal</div>
+    <div>
+      <h1>BitPhoque</h1>
+      <div class="sub">Wallet · TN10 practice</div>
+    </div>
+  </div>
+
+  <div class="rail" id="rail">
+    <div class="seg" data-step="0"></div>
+    <div class="seg" data-step="1"></div>
+    <div class="seg" data-step="2"></div>
+    <div class="seg" data-step="3"></div>
+  </div>
+
+  <section class="screen" id="s-welcome">
+    <h2 class="title">All out of phoques?<br>Let's fix that.</h2>
+    <p class="lede">A non-custodial wallet for BitPhoque. Your keys are generated on
+      this device and never leave it — no account, no server, no custodian.</p>
+    <button class="choice" onclick="startCreate()">
+      <span class="ic">&#9633;</span>
+      <span>
+        <span class="ct" style="display:block">Create a new wallet</span>
+        <span class="cd" style="display:block">Generate a fresh 12-word recovery phrase.</span>
+      </span>
+    </button>
+    <button class="choice" onclick="startRestore()">
+      <span class="ic">&#8635;</span>
+      <span>
+        <span class="ct" style="display:block">Restore an existing wallet</span>
+        <span class="cd" style="display:block">Enter a 12-word phrase you already hold.</span>
+      </span>
+    </button>
+  </section>
+
+  <section class="screen" id="s-seed">
+    <h2 class="title">Your recovery phrase</h2>
+    <p class="lede">These twelve words <b>are</b> your wallet. Write them down in order,
+      on paper, and keep them somewhere only you can reach.</p>
+    <div class="vault blur" id="vault">
+      <div class="vault-grid" id="vaultGrid"></div>
+      <div class="reveal-hint" onclick="document.getElementById('vault').classList.remove('blur')">Tap to reveal</div>
+    </div>
+    <div class="tools">
+      <button class="link" onclick="copySeed()" id="copyBtn">Copy words</button>
+      <button class="link" onclick="regen()">Generate again</button>
+    </div>
+    <div class="warn">
+      <span class="ic">!</span>
+      <span>Anyone with these words can take your phoques. BitPhoque can't reset them,
+        can't recover them, and will never ask for them.</span>
+    </div>
+    <button class="btn" onclick="goVerify()">I've written them down</button>
+    <div class="btn-row"><button class="btn ghost" onclick="show('welcome')">Back</button></div>
+  </section>
+
+  <section class="screen" id="s-verify">
+    <h2 class="title">Confirm your phrase</h2>
+    <p class="lede">Fill in the missing words to prove you saved them. We blanked three at random.</p>
+    <div class="entry-grid" id="verifyGrid"></div>
+    <div class="msg" id="verifyMsg"></div>
+    <button class="btn" onclick="checkVerify()">Confirm</button>
+    <div class="btn-row"><button class="btn ghost" onclick="show('seed')">Back to phrase</button></div>
+  </section>
+
+  <section class="screen" id="s-restore">
+    <h2 class="title">Restore your wallet</h2>
+    <p class="lede">Enter your 12-word recovery phrase in order. Paste the whole phrase
+      into the first box and it'll spread across the grid.</p>
+    <div class="entry-grid" id="restoreGrid"></div>
+    <div class="msg" id="restoreMsg"></div>
+    <button class="btn" onclick="checkRestore()">Restore wallet</button>
+    <div class="btn-row"><button class="btn ghost" onclick="show('welcome')">Back</button></div>
+  </section>
+
+  <section class="screen" id="s-done">
+    <img class="done-seal" src="bitphoque.jpeg" alt=""
+         onerror="this.style.display='none'; document.getElementById('done-fb').style.display='inline'">
+    <span class="done-check" id="done-fb" style="display:none">&#10003;</span>
+    <h2 class="title" id="doneTitle">Wallet ready</h2>
+    <p class="lede" id="doneLede">Your wallet is set up and held in this browser. Next
+      you'll fund it with a little KAS for fees, then you can send, receive, and claim phoques.</p>
+
+    <div class="save-box" id="saveBox">
+      <div class="save-head">Save this wallet to this browser?</div>
+      <p class="save-sub">Set a passphrase and your recovery phrase is encrypted (AES-GCM)
+        and kept on this device, so it survives a refresh. The passphrase is never stored —
+        only you can unlock it. Or skip and keep the wallet for this session only.</p>
+      <label for="ppNew">Passphrase</label>
+      <input class="fld" id="ppNew" type="password" autocomplete="new-password" placeholder="choose a strong passphrase" oninput="ppStrength()">
+      <div class="hint" id="ppStrengthHint" style="min-height:15px"></div>
+      <label for="ppNew2">Confirm passphrase</label>
+      <input class="fld" id="ppNew2" type="password" autocomplete="new-password" placeholder="type it again">
+      <div class="msg" id="saveMsg"></div>
+      <button class="btn" onclick="saveWallet()" id="saveBtn">Encrypt &amp; save</button>
+      <div class="tools" style="margin-top:14px">
+        <button class="link" onclick="enterWallet()">Skip — this session only</button>
+      </div>
+    </div>
+
+    <div id="enteredBox" style="display:none">
+      <button class="btn" onclick="enterWallet()">Enter wallet</button>
+      <div class="tools" style="margin-top:18px"><button class="link" onclick="resetAll()">Start over</button></div>
+    </div>
+  </section>
+
+  <!-- Unlock: shown on load when an encrypted wallet is already stored -->
+  <section class="screen" id="s-unlock">
+    <h2 class="title">Welcome back</h2>
+    <p class="lede">This browser has a saved BitPhoque wallet. Enter your passphrase to unlock it.</p>
+    <label for="ppUnlock" style="display:block;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;margin:0 0 6px">Passphrase</label>
+    <input class="fld" id="ppUnlock" type="password" autocomplete="current-password" placeholder="your passphrase"
+           style="width:100%;font-family:'Inter',sans-serif;font-size:15px;background:#fff;border:1.5px solid var(--hair-strong);border-radius:8px;padding:11px 13px;outline:none"
+           onkeydown="if(event.key==='Enter')unlockWallet()">
+    <div class="msg" id="unlockMsg"></div>
+    <button class="btn" style="margin-top:14px" onclick="unlockWallet()">Unlock</button>
+    <div class="tools" style="margin-top:16px">
+      <button class="link" onclick="forgetWallet()">Forget this wallet &amp; start over</button>
+    </div>
+  </section>
+
+  <!-- ====================== HOME (post-onboarding) ====================== -->
+  <!-- Mirrors the proven CLI surface. Everyday 4 are primary; plumbing verbs
+       live in the "More" drawer. Balance + all chain reads/writes are routed
+       through the NODE SEAM (see script) — node-free prototype, no fake chain
+       truth shown. -->
+  <section class="screen" id="s-home">
+    <div class="bal">
+      <div class="lab">Balance</div>
+      <div class="amt" id="balAmt">0 <span class="u">phoques</span></div>
+      <div class="pups zero" id="balPups">· 0 pups</div>
+      <div class="empty" id="balEmpty">No parcels yet. This wallet is empty until you
+        receive phoques or import a parcel descriptor.</div>
+      <div class="bal-foot">
+        <span class="pc" id="parcelCount">0 parcels</span>
+        <button class="link rf" onclick="refreshBalance()" id="refreshBtn">Refresh</button>
+      </div>
+    </div>
+
+    <div class="acts">
+      <button class="act" onclick="openPanel('send')">
+        <span class="ai">&#8599;</span><span class="at">Send</span>
+        <span class="ad">Transfer phoques to another wallet.</span>
+      </button>
+      <button class="act" onclick="openPanel('receive')">
+        <span class="ai">&#8601;</span><span class="at">Receive</span>
+        <span class="ad">Import a parcel descriptor someone sent you.</span>
+      </button>
+      <button class="act" onclick="openPanel('claim')">
+        <span class="ai">&#9671;</span><span class="at">Claim</span>
+        <span class="ad">Pay a listing and receive the phoques.</span>
+      </button>
+      <button class="act" onclick="openPanel('list')">
+        <span class="ai">&#9650;</span><span class="at">List</span>
+        <span class="ad">Put a parcel up for sale at a price.</span>
+      </button>
+    </div>
+
+    <details class="more">
+      <summary>More actions <span class="chev">&#8250;</span></summary>
+      <div class="more-body">
+        <button class="mact" onclick="openPanel('partial')">
+          <div class="mt">Partial-list</div>
+          <div class="md">List part of a parcel; keep the rest.</div>
+        </button>
+        <button class="mact" onclick="openPanel('split')">
+          <div class="mt">Split</div>
+          <div class="md">Break one parcel into two.</div>
+        </button>
+        <button class="mact" onclick="openPanel('merge')">
+          <div class="mt">Merge</div>
+          <div class="md">Combine parcels into one.</div>
+        </button>
+        <button class="mact" onclick="openPanel('import')">
+          <div class="mt">Import</div>
+          <div class="md">Load a parcel by outpoint.</div>
+        </button>
+      </div>
+    </details>
+
+    <div class="tools">
+      <button class="link" onclick="lockWallet()">Lock wallet</button>
+    </div>
+  </section>
+
+  <div class="foot">BIP-39 via <b>@scure</b> (vendored) · keys generated and encrypted in your browser · TN10 practice</div>
+</div>
+
+<!-- action panel host (filled by openPanel) -->
+<div class="panel-back" id="panelBack" onclick="if(event.target===this)closePanel()">
+  <div class="panel" id="panel"></div>
+</div>
+
+<script>
+// BIP-39 is provided by the vendored @scure module bridge (window.BIP39, set up
+// in <head>). These thin wrappers keep the rest of the wallet calling the same
+// names it always did. If the module hasn't loaded yet (e.g. opened over file://
+// where ES modules can't load), they fail loud rather than silently stubbing.
+function generateMnemonic(){
+  if(!window.BIP39?.ready) throw new Error("BIP39_NOT_LOADED");
+  return window.BIP39.genArray();           // 12 words, real entropy + checksum
+}
+function validateMnemonic(arr){
+  if(!window.BIP39?.ready) return {ok:false,reason:"Crypto library not loaded — open this wallet over http(s), not as a local file."};
+  return window.BIP39.validateArray(arr);   // real checksum validation
+}
+
+let seed=[], verifyBlanks=[], mode="create";
+const STEP_OF={welcome:0,seed:1,verify:2,restore:1,done:3,home:-1};
+
+function show(name){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.getElementById('s-'+name).classList.add('active');
+  const step=STEP_OF[name]??0;
+  // rail is onboarding chrome only — hide it once the wallet is open (home) or on unlock
+  document.getElementById('rail').style.display = (name==='home'||name==='unlock') ? 'none' : 'flex';
+  document.querySelectorAll('#rail .seg').forEach(seg=>seg.classList.toggle('on', Number(seg.dataset.step)<=step));
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+
+function startCreate(){
+  if(!window.BIP39?.ready){ alert("The recovery-phrase library hasn't loaded.\n\nThis wallet uses ES modules, which browsers only load over http(s) — not from a double-clicked local file. Serve the folder (e.g. `python -m http.server`) or open it on the live site."); return; }
+  mode="create"; regen(); show('seed');
+}
+function regen(){
+  seed=generateMnemonic();
+  document.getElementById('vaultGrid').innerHTML=seed.map((w,i)=>
+    `<div class="word"><span class="n">${i+1}</span><span class="w">${w}</span></div>`).join('');
+  document.getElementById('vault').classList.add('blur');
+}
+function copySeed(){
+  navigator.clipboard?.writeText(seed.join(' ')).then(()=>{
+    const b=document.getElementById('copyBtn'), t=b.textContent;
+    b.textContent='Copied'; setTimeout(()=>b.textContent=t,1400);
+  });
+}
+
+function goVerify(){
+  verifyBlanks=pickThree();
+  document.getElementById('verifyGrid').innerHTML=seed.map((w,i)=>{
+    const blank=verifyBlanks.includes(i);
+    return `<div class="cell ${blank?'target':'locked'}"><span class="n">${i+1}</span>
+      <input value="${blank?'':w}" ${blank?'':'disabled'} data-i="${i}"
+        autocomplete="off" autocapitalize="off" spellcheck="false" oninput="markFilled(this)"></div>`;
+  }).join('');
+  const m=document.getElementById('verifyMsg'); m.textContent=''; m.className='msg';
+  show('verify');
+}
+function pickThree(){ const idx=[...Array(12).keys()], out=[]; for(let k=0;k<3;k++) out.push(idx.splice(Math.floor(Math.random()*idx.length),1)[0]); return out; }
+function markFilled(inp){ const c=inp.closest('.cell'); c.classList.toggle('filled',inp.value.trim().length>0); c.classList.remove('bad'); }
+function checkVerify(){
+  let ok=true;
+  document.querySelectorAll('#verifyGrid input').forEach(inp=>{
+    const i=Number(inp.dataset.i);
+    if(verifyBlanks.includes(i)){
+      const good=inp.value.trim().toLowerCase()===seed[i].toLowerCase();
+      inp.closest('.cell').classList.toggle('bad',!good); if(!good) ok=false;
+    }
+  });
+  const m=document.getElementById('verifyMsg');
+  if(ok){ m.className='msg ok'; m.textContent='Phrase confirmed.'; finishCreate(); }
+  else { m.className='msg bad'; m.textContent="That doesn't match. Check the highlighted words."; }
+}
+function prepDone(){
+  // reset the done screen into "offer to save" mode each time we arrive
+  const hasStore = window.WALLET_STORE && window.WALLET_STORE.secureContext();
+  document.getElementById('saveBox').style.display = hasStore ? 'block' : 'none';
+  document.getElementById('enteredBox').style.display = hasStore ? 'none' : 'block';
+  ['ppNew','ppNew2'].forEach(id=>{ const e=document.getElementById(id); if(e) e.value=''; });
+  const sm=document.getElementById('saveMsg'); if(sm){ sm.textContent=''; sm.className='msg'; }
+  const sh=document.getElementById('ppStrengthHint'); if(sh) sh.textContent='';
+  // if not a secure context, persistence is unavailable — explain why via enteredBox only
+}
+function finishCreate(){
+  document.getElementById('doneTitle').textContent='Wallet ready';
+  document.getElementById('doneLede').textContent="Your wallet is set up and held in this browser. Set a passphrase below to keep it on this device, or skip for a session-only wallet.";
+  prepDone();
+  setTimeout(()=>show('done'),600);
+}
+
+function startRestore(){
+  mode="restore";
+  document.getElementById('restoreGrid').innerHTML=[...Array(12)].map((_,i)=>
+    `<div class="cell"><span class="n">${i+1}</span><input data-i="${i}" autocomplete="off"
+      autocapitalize="off" spellcheck="false" oninput="markFilled(this)" onpaste="restorePaste(event)"></div>`).join('');
+  const m=document.getElementById('restoreMsg'); m.textContent=''; m.className='msg';
+  show('restore');
+}
+function restorePaste(e){
+  const txt=(e.clipboardData||window.clipboardData).getData('text').trim(), parts=txt.split(/\s+/);
+  if(parts.length>1){
+    e.preventDefault();
+    const inputs=document.querySelectorAll('#restoreGrid input');
+    parts.slice(0,12).forEach((w,i)=>{ if(inputs[i]){ inputs[i].value=w; markFilled(inputs[i]); }});
+  }
+}
+function checkRestore(){
+  const arr=[...document.querySelectorAll('#restoreGrid input')].map(i=>i.value.trim());
+  const res=validateMnemonic(arr); const m=document.getElementById('restoreMsg');
+  if(!res.ok){ m.className='msg bad'; m.textContent=res.reason; return; }
+  seed=arr.map(w=>w.toLowerCase()); m.className='msg ok'; m.textContent='Phrase valid.';
+  document.getElementById('doneTitle').textContent='Wallet restored';
+  document.getElementById('doneLede').textContent="Welcome back. Your wallet is loaded in this browser. Set a passphrase below to keep it on this device, or skip for a session-only wallet.";
+  prepDone();
+  setTimeout(()=>show('done'),500);
+}
+
+/* ====================================================================
+   HOME SCREEN — mirrors the proven CLI (import/balance/list/split/merge/
+   partial-list/claim/send/receive). Everyday 4 are primary; the rest are
+   in the "More" drawer.
+
+   >>> NODE SEAM (the place live chain access drops in) <<<
+     Every read (balance, parcel discovery, confirm) and every write (the
+     covenant txs) needs TWO things this prototype does NOT have:
+       (1) P2SH derivation — the browser has no silverscript compiler. The
+           real build compiles the v3 covenant ctor-args → P2SH via WASM
+           (keeps "browser = full trustless client", fits self-erecting).
+       (2) a live node — gRPC get_utxos_by_addresses (the ONLY UTXO lookup;
+           there is no by-outpoint RPC) with the retry the CLI already does.
+     Until both are wired, balance reads as empty and actions PRINT the exact
+     CLI-equivalent call / descriptor rather than touching a chain. No fake
+     balances are shown — chain truth is never faked, only deferred.
+   ==================================================================== */
+
+const PUPS_PER_PHOQUE = 100_000_000n;            // 1 phoque = 10^8 BitPups (8 dp), mainnet-genesis convention
+const COVENANT_ID = "3baed5a3";                  // v3 covenant_id prefix (from status doc) — descriptor must match
+// wallet.json analogue: parcels the wallet tracks. Empty in the prototype —
+// populated by `receive`/`import`/`refreshBalance` against the NODE SEAM.
+let parcels = [];                                // [{outpoint, amount_pups, forSale, price, owner}]
+
+function fmtBalance(){
+  const total = parcels.reduce((a,p)=>a + BigInt(p.amount_pups||0), 0n);
+  const phoques = total / PUPS_PER_PHOQUE;
+  const pups    = total % PUPS_PER_PHOQUE;
+  return { phoques, pups, total, count: parcels.length };
+}
+function groupThousands(bi){ return bi.toString().replace(/\B(?=(\d{3})+(?!\d))/g,','); }
+
+function renderBalance(){
+  const { phoques, pups, count } = fmtBalance();
+  document.getElementById('balAmt').innerHTML =
+    `${groupThousands(phoques)} <span class="u">phoque${phoques===1n?'':'s'}</span>`;
+  const pupsEl = document.getElementById('balPups');
+  pupsEl.textContent = `· ${groupThousands(pups)} pups`;
+  pupsEl.classList.toggle('zero', pups===0n);
+  document.getElementById('parcelCount').textContent =
+    `${count} parcel${count===1?'':'s'}`;
+  document.getElementById('balEmpty').style.display = count===0 ? 'block' : 'none';
+}
+
+function enterWallet(){ renderBalance(); show('home'); }
+
+function refreshBalance(){
+  // NODE SEAM: real impl = for each tracked parcel address, gRPC
+  // get_utxos_by_addresses (with retry for index lag), reconcile to wallet.json.
+  const b=document.getElementById('refreshBtn'), t=b.textContent;
+  b.textContent='Node syncing…';
+  setTimeout(()=>{ b.textContent=t; renderBalance(); }, 700);
+}
+
+function lockWallet(){
+  // prototype: seed is in-memory only; "lock" returns to welcome without wiping
+  // the in-session seed. Real impl re-prompts the WebCrypto passphrase.
+  show('welcome');
+}
+
+/* ---- action panels: real UI, chain action routed to the NODE SEAM ---- */
+const PANELS = {
+  send: {
+    title: "Send phoques",
+    lede: "Transfer to another wallet. Mirrors the proven CLI <code>send</code> — owner-signed, leader ABI. Out0 is owned by the recipient; any change returns to you.",
+    fields: [
+      {id:"to",   label:"Recipient owner pubkey (hex)", ph:"02ab… (33-byte compressed)"},
+      {id:"amt",  label:"Amount (phoques)", ph:"e.g. 1000", type:"number"},
+    ],
+    cta: "Build send",
+    run: (v)=>seamTx("send",
+      `bitphoque send --to ${v.to||"<pubkey>"} --amount ${v.amt||"<n>"} --go`,
+      "On --go the node accepts the tx and the wallet emits a base58check descriptor for the recipient's out0 (exactly what their `receive` consumes). Round-trip already proven on-chain (tx e45d9c2b..).")
+  },
+  receive: {
+    title: "Receive phoques",
+    lede: "Paste a parcel descriptor someone sent you. Mirrors the proven CLI <code>receive</code> — it decodes, version-gates, checks the covenant_id, recomputes the P2SH locally, and confirms against the chain.",
+    fields: [
+      {id:"desc", label:"Parcel descriptor (base58check)", ph:"paste descriptor…", textarea:true},
+    ],
+    cta: "Decode & confirm",
+    run: (v)=>{
+      const d=(v.desc||"").trim();
+      if(!d) return {err:"Paste a descriptor first."};
+      // NODE SEAM: real impl = base58check decode → version byte → covenant_id
+      // match (refuse wrong token) → recompute P2SH (WASM) → gRPC confirm → record.
+      return {out:
+        `decode(descriptor)\n  • version gate ……… OK (prototype)\n  • covenant_id ……… expect ${COVENANT_ID}…\n  • P2SH recompute … NODE SEAM (needs WASM compiler)\n  • confirm on-chain  NODE SEAM (needs synced node)\n\nReal 'receive' recomputes the P2SH locally — the chain is authority,\nthe descriptor is only a hint — then records the parcel in wallet.json.`};
+    }
+  },
+  claim: {
+    title: "Claim a listing",
+    lede: "Pay a listing at or above its price and receive the phoques. Mirrors the proven CLI <code>claim</code> — payment-authorized, NO owner signature; the covenant input is unsigned with a dummy sig, you sign the funding input.",
+    fields: [
+      {id:"seller", label:"Seller pubkey (hex)", ph:"02ab…"},
+      {id:"out",    label:"Listing outpoint", ph:"txid:index"},
+      {id:"pay",    label:"Payment (sompi)", ph:"≥ listed price", type:"number"},
+    ],
+    cta: "Build claim",
+    run: (v)=>seamTx("claim",
+      `bitphoque claim --seller ${v.seller||"<pubkey>"} --outpoint ${v.out||"<txid:idx>"} --pay ${v.pay||"<sompi>"} --go`,
+      "Claim is the heaviest tx (2-in/3-out, reveals the 2793B script). Fee floor 857k → use 900k; pay ≥ price AND ≥ 100M to dodge the KIP-9 dust penalty. Still node-gated on TN10 IBD for the live dry-run.")
+  },
+  list: {
+    title: "List for sale",
+    lede: "Flip one of your parcels to for-sale at a price. Mirrors the CLI <code>list</code> — owner-signed; the covenant allows a for-sale OUTPUT only when no input is for-sale.",
+    fields: [
+      {id:"out",   label:"Parcel outpoint", ph:"txid:index"},
+      {id:"price", label:"Price (sompi)", ph:"e.g. 500000", type:"number"},
+    ],
+    cta: "Build listing",
+    run: (v)=>seamTx("list",
+      `bitphoque list --outpoint ${v.out||"<txid:idx>"} --price ${v.price||"<sompi>"} --go`,
+      "Single-input/single-output listing clears at the 700k v3 fee floor.")
+  },
+  partial: {
+    title: "Partial-list",
+    lede: "List PART of a parcel and keep the rest as not-for-sale change, in one owner-signed tx. Mirrors the CLI <code>partial-list</code> (proven on-chain, tx 4b0c8187..).",
+    fields: [
+      {id:"out",   label:"Parcel outpoint", ph:"txid:index"},
+      {id:"amt",   label:"Amount to list (phoques)", ph:"e.g. 5000", type:"number"},
+      {id:"price", label:"Price (sompi)", ph:"e.g. 500000", type:"number"},
+    ],
+    cta: "Build partial-list",
+    run: (v)=>seamTx("partial-list",
+      `bitphoque partial-list --outpoint ${v.out||"<txid:idx>"} --amount ${v.amt||"<n>"} --price ${v.price||"<sompi>"} --go`,
+      "Out0 = for-sale slice; out1 = not-for-sale change to the same owner. Proportional value split, dust-floor guard on the change.")
+  },
+  split: {
+    title: "Split a parcel",
+    lede: "Break one parcel into two (e.g. to send a round amount). Mirrors the CLI <code>split</code>. Conservation is enforced by the covenant.",
+    fields: [
+      {id:"out", label:"Parcel outpoint", ph:"txid:index"},
+      {id:"amt", label:"First piece (phoques)", ph:"remainder stays as the second", type:"number"},
+    ],
+    cta: "Build split",
+    run: (v)=>seamTx("split",
+      `bitphoque split --outpoint ${v.out||"<txid:idx>"} --amount ${v.amt||"<n>"} --go`,
+      "1→2 split clears at the 700k v3 fee floor.")
+  },
+  merge: {
+    title: "Merge parcels",
+    lede: "Combine several same-owner parcels into one. Mirrors the CLI <code>merge</code> (N→1, proven on-chain tx 519063be..). Leader/delegate ABI — every covenant input signs at the leader index.",
+    fields: [
+      {id:"outs", label:"Parcel outpoints (one per line)", ph:"txid:index\ntxid:index", textarea:true},
+    ],
+    cta: "Build merge",
+    run: (v)=>{
+      const lines=(v.outs||"").trim().split(/\n+/).filter(Boolean);
+      if(lines.length<2) return {err:"Merge needs at least two outpoints."};
+      return seamTx("merge",
+        `bitphoque merge ${lines.map(l=>`--outpoint ${l.trim()}`).join(" ")} --go`,
+        `${lines.length} inputs → 1. Two 2793B script reveals dominate the mass; node-confirmed floor 1,244,500 → use 1.3M.`);
+    }
+  },
+  import: {
+    title: "Import a parcel",
+    lede: "Track a parcel you control by its outpoint. Mirrors the CLI <code>import</code> — read-only registration into wallet.json; it does not move anything.",
+    fields: [
+      {id:"out", label:"Parcel outpoint", ph:"txid:index"},
+    ],
+    cta: "Import",
+    run: (v)=>{
+      if(!(v.out||"").trim()) return {err:"Enter an outpoint."};
+      // NODE SEAM: real impl = gRPC confirm the outpoint exists & decode its
+      // covenant state, then add to wallet.json. Prototype only echoes intent.
+      return {out:`import ${v.out.trim()}\n  • confirm on-chain … NODE SEAM (needs synced node)\n  • decode cov state … NODE SEAM (needs WASM)\n  → would record the parcel in wallet.json (no funds move).`};
+    }
+  },
+};
+
+function seamTx(kind, cli, note){
+  // Uniform NODE SEAM result for the write actions: show the exact CLI call
+  // this wallet would make, plus the relevant on-chain note. No broadcast.
+  return { out:
+    `# ${kind} — would run (NODE SEAM, not broadcast):\n${cli}\n\n# ${note}\n\n# The web build constructs + signs this tx in-browser (key never leaves\n# the device) and submits via gRPC. Blocked here on: WASM P2SH compiler\n# + a synced TN10 node.` };
+}
+
+let activePanel=null;
+function openPanel(key){
+  const p=PANELS[key]; if(!p) return;
+  activePanel=key;
+  const fields=p.fields.map(f=>{
+    const input = f.textarea
+      ? `<textarea class="fld" id="f_${f.id}" placeholder="${f.ph||''}" rows="3"></textarea>`
+      : `<input class="fld" id="f_${f.id}" type="${f.type||'text'}" placeholder="${f.ph||''}" autocomplete="off" spellcheck="false">`;
+    return `<label>${f.label}</label>${input}`;
+  }).join('');
+  document.getElementById('panel').innerHTML = `
+    <div class="ph"><h3>${p.title}</h3><button class="x" onclick="closePanel()">&times;</button></div>
+    <div class="pl">${p.lede}</div>
+    ${fields}
+    <div class="seam"><span class="ic">&#9888;</span><span>Prototype — node-free. This builds the call and shows what would run; nothing is broadcast. Live action is gated on the WASM P2SH compiler and a synced TN10 node.</span></div>
+    <button class="btn" style="margin-top:14px" onclick="runPanel()">${p.cta}</button>
+    <pre class="out" id="panelOut"></pre>`;
+  document.getElementById('panelBack').classList.add('open');
+}
+function closePanel(){ document.getElementById('panelBack').classList.remove('open'); activePanel=null; }
+function runPanel(){
+  const p=PANELS[activePanel]; if(!p) return;
+  const v={}; p.fields.forEach(f=>{ v[f.id]=document.getElementById('f_'+f.id).value; });
+  const res=p.run(v);
+  const out=document.getElementById('panelOut');
+  out.textContent = res.err ? `! ${res.err}` : res.out;
+  out.classList.add('show');
+}
+
+function resetAll(){ seed=[]; verifyBlanks=[]; parcels=[]; closePanel(); show('welcome'); }
+
+/* ---- encrypted persistence UI (optional; passphrase on the done screen) ---- */
+function ppStrength(){
+  const v=document.getElementById('ppNew').value, h=document.getElementById('ppStrengthHint');
+  if(!v){ h.textContent=''; return; }
+  // simple, honest heuristic — length is what matters most for a passphrase
+  let label, cls;
+  if(v.length<8){ label='Too short — use at least 8 characters (a passphrase of several words is best).'; cls='bad'; }
+  else if(v.length<12){ label='OK. Longer is stronger — consider a few random words.'; cls=''; }
+  else { label='Good length.'; cls='ok'; }
+  h.textContent=label; h.className='hint'; h.style.color = cls==='bad' ? 'var(--danger)' : (cls==='ok'?'var(--ok)':'var(--muted)');
+}
+async function saveWallet(){
+  const p1=document.getElementById('ppNew').value, p2=document.getElementById('ppNew2').value;
+  const m=document.getElementById('saveMsg');
+  if(p1.length<8){ m.className='msg bad'; m.textContent='Passphrase must be at least 8 characters.'; return; }
+  if(p1!==p2){ m.className='msg bad'; m.textContent='The two passphrases don\u2019t match.'; return; }
+  if(!seed.length){ m.className='msg bad'; m.textContent='No wallet in memory to save.'; return; }
+  const btn=document.getElementById('saveBtn'); btn.disabled=true; const t=btn.textContent; btn.textContent='Encrypting\u2026';
+  try{
+    await window.WALLET_STORE.save(seed, p1);
+    m.className='msg ok'; m.textContent='Saved and encrypted on this device.';
+    // collapse the save box, reveal Enter
+    document.getElementById('saveBox').style.display='none';
+    document.getElementById('enteredBox').style.display='block';
+  }catch(e){
+    m.className='msg bad'; m.textContent='Could not save: '+(e.message||e);
+  }finally{ btn.disabled=false; btn.textContent=t; }
+}
+async function unlockWallet(){
+  const pp=document.getElementById('ppUnlock').value, m=document.getElementById('unlockMsg');
+  if(!pp){ m.className='msg bad'; m.textContent='Enter your passphrase.'; return; }
+  m.className='msg'; m.textContent='Unlocking\u2026';
+  try{
+    seed = await window.WALLET_STORE.unlock(pp);
+    if(!window.BIP39?.validateArray(seed).ok) throw new Error('Stored phrase failed validation.');
+    document.getElementById('ppUnlock').value='';
+    enterWallet();
+  }catch(e){
+    m.className='msg bad';
+    m.textContent = (e.message==='BAD_PASSPHRASE') ? 'Wrong passphrase. Try again.' : ('Could not unlock: '+(e.message||e));
+  }
+}
+function forgetWallet(){
+  if(!confirm('Forget the saved wallet on this device? You can only restore it from your 12-word phrase. This does not affect any phoques on-chain.')) return;
+  window.WALLET_STORE?.forget(); seed=[]; show('welcome');
+}
+
+/* ---- load-time routing: stored wallet -> unlock; else welcome ---- */
+function boot(){
+  if(window.WALLET_STORE && window.WALLET_STORE.exists() && window.WALLET_STORE.secureContext()){
+    show('unlock'); setTimeout(()=>document.getElementById('ppUnlock')?.focus(),300);
+  } else {
+    show('welcome');
+  }
+}
+// BIP-39 module may load after this script — wait for the ready signal (or fire
+// now if it already loaded). Either way, route appropriately.
+if(window.BIP39?.ready) boot();
+else window.addEventListener('bip39-ready', boot, {once:true});
+// safety net: if modules never load (file:// open), still show welcome so the
+// page isn't blank — startCreate() will explain why create is unavailable.
+setTimeout(()=>{ if(!document.querySelector('.screen.active')) show('welcome'); }, 1500);
+</script>
+</body>
+</html>
