@@ -12,19 +12,19 @@ session-startup: where we are, the live design, and what's next. Start a session
 history file only to look up a specific past fact. Consensus rules / fee floors / node quirks were KEPT here
 (still actively consulted when building txs)._
 
-_Last updated: **2026-06-23 — DESCRIPTOR INTEGER ENCODING PINNED + TN10 NODE BACK UP (server_v 2.0.1).** Two
-things this session. (1) NODE: TestnetNode @ .104 is reachable over gRPC again (diag connected in 177ms, server
-v2.0.1, **utxo_indexed=true**, all known parcels FOUND with no index lag) — BUT `get_info` still reports
-**`synced=false`** (post-IBD virtual-chain still settling at session time). The live `claim` dry-run REMAINS the
-node-gated step and is unblocked the moment `synced=true` (re-poll `bitphoque_node_diag`). NB the diag's NODE const
-was found pointing at .206 (MainnetNode) and corrected to `192.168.0.104:16210` in the canonical rust-examples copy.
-(2) DESIGN: the descriptor's last open item — integer encoding for amount/price/output_index — is now PINNED to
-**Kaspa minimal script-number (CScriptNum), NOT 8-byte LE** (the prior lean was wrong; verified against
-compiler/mod.rs:342 → add_i64 → serialize_i64 + in-tree test vectors). Full detail + consequence in the receive-
-problem section below. (3) DESCRIPTOR FORMAT FINALIZED: chose Option B (fixed-width transport — amount/price as
-u64-LE, output_index u32-LE, 118-byte fixed payload, base58check-wrapped) with CScriptNum living ONLY at P2SH
-derivation. Full layout + derivation rule in the receive-problem section. No code/commit this session beyond the
-diag const fix + this doc edit — the doc edit itself is not yet git-protected._
+_Last updated: **2026-06-23 — DESCRIPTOR CODEC BUILT + PROVEN (the send/receive keystone) + int encoding pinned + format finalized.**
+Headline: `bitphoque_descriptor_v1.rs` (committed `dedc62d`) — the parcel-descriptor codec is built and its `--selftest`
+PASSES all three checks node-free: round-trip identity, base58check reject-on-corruption, and the on-chain assertion
+(derived P2SH == the live `4b0c8187..:0` parcel address as computed by the proven inspect_v3). Getting there settled two
+design questions first: (1) ctor `int` encoding PINNED to Kaspa minimal CScriptNum (NOT 8-byte LE — the prior lean was
+wrong; verified against compiler→add_i64→serialize_i64 + test vectors); (2) descriptor format FINALIZED as Option B
+(fixed-width transport — amount/price u64-LE, output_index u32-LE, 118-byte payload, base58check-wrapped; CScriptNum
+lives ONLY at P2SH derivation). Also this session: inspect_v3's NODE const fixed `.206→.104` (same stale-address bug as
+node_diag had). NODE STATUS: TestnetNode @ .104 reachable, utxo_indexed=true, server v2.0.1, but `get_info` still
+`synced=false` (post-IBD virtual chain settling; was making progress — blocks 365k→383k, tips 2→1 across the session).
+The live `claim` dry-run REMAINS the one node-gated step. NEXT on the wallet track (node-independent to build): wire the
+proven codec into the CLI as `send`/`receive`. Commits this session: `3a4f809` (pin), `06806b8` (format), `dedc62d`
+(codec + inspect_v3 fix). NB the bs58 build dep lives in the disposable silverscript tree — rebuild recipe updated._
 
 _Prior — **WALLET ARCHITECTURE DESIGN SESSION (2026-06-22, no code/commit yet — design only).** A working
 session spent on the USER-FACING wallet (the "thin marketplace app" successor), entirely while the TN10 node was
@@ -308,6 +308,9 @@ Rebuild recipe (from `C:\kaspa-tn12\silverscript`): `cargo add kaspa-grpc-client
 --git rusty-kaspa --branch tn12 -p silverscript-lang`; `cargo add tokio --features macros,rt-multi-thread`;
 copy the .rs into `silverscript-lang\src\bin\`; `cargo build/run -p silverscript-lang --bin <name>`.
 Genesis-class: `cargo build/run --release -p rothschild --bin <name>`.
+**For `bitphoque_descriptor_v1.rs` (descriptor codec), one extra dep:** `cargo add bs58 --features check -p silverscript-lang`
+(base58check; the `check` feature pulls `sha2` for the 4-byte checksum). This dep lives in the DISPOSABLE silverscript
+tree's Cargo.toml, NOT the bitphoque repo — so a fresh clone must re-run this `cargo add`.
 
 ### Party-agnostic v3 harnesses (the seed of the planned CLI)
 - `bitphoque_sale_list_v3.rs` — CLI: `<amount> <price> <owner_keyfile> [--go]`. Owner KEYFILE is an arg
@@ -365,6 +368,10 @@ C:\bitphoque\
     bitphoque_cli.rs                   <- WALLET CLI thin slice: import / balance / partial-list, on the
                                           Option-C track-forward model (reads/writes wallet.json)
     bitphoque_node_diag.rs             <- read-only node health + index-lag probe (old-vs-new parcel)
+    bitphoque_descriptor_v1.rs         <- PARCEL DESCRIPTOR CODEC v1 (send/receive keystone): encode/decode
+                                          (118B fixed-width, base58check) + derive_p2sh (canonical builder path).
+                                          --selftest PROVEN: round-trip + checksum-reject + on-chain-matching P2SH
+                                          (derives 4b0c8187..:0's address). Node-free. committed dedc62d. Needs bs58.
   docs\
     bitphoque_status.md                <- this file
     bitphoque_history.md               <- PERMANENT record: on-chain tx ledger (txids, sections 1–10) +
@@ -598,6 +605,16 @@ Descriptor format (keystone) → CLI gains `send`/`receive` (emit/import + verif
 engine → marketplace as the optional indexer → web app UI pointed at node/indexer → native wraps. The relay +
 client-side signing are the true unlock that everything visual sits on. NEXT NODE-GATED STEP is still the claim
 live dry-run (see resume point) — none of this wallet design changes that gate.
+
+**PROGRESS (2026-06-23): descriptor codec BUILT + PROVEN** (`bitphoque_descriptor_v1.rs`, committed `dedc62d`).
+encode/decode (118B fixed-width Option-B layout, base58check) + `derive_p2sh` (lifts inspect_v3's canonical
+ctor_args→compile_contract→pay_to_script_hash_script→address path verbatim). `--selftest` PASSES all three:
+round-trip identity, checksum-reject on a flipped char, AND the on-chain assertion — derived P2SH ==
+`kaspatest:pp6yju0m..rkwdkj`, the live `4b0c8187..:0` parcel's address as computed by the proven inspect_v3. This
+confirms the fixed-width-transport / CScriptNum-at-derivation decoupling produces chain-correct addresses. NEXT on
+this track: wire `encode`/`decode`/`derive_p2sh` into the CLI as `send` (emit a descriptor for an owned parcel) and
+`receive`/`import` (decode + verify a pasted descriptor, confirm live on the node) — these reuse the proven codec
+as a lib. (Still node-independent to BUILD; the `receive` on-chain-confirm step wants a synced node to TEST.)
 
 ---
 
