@@ -12,19 +12,56 @@ session-startup: where we are, the live design, and what's next. Start a session
 history file only to look up a specific past fact. Consensus rules / fee floors / node quirks were KEPT here
 (still actively consulted when building txs)._
 
-_Last updated: **2026-06-23 — DESCRIPTOR CODEC BUILT + PROVEN (the send/receive keystone) + int encoding pinned + format finalized.**
-Headline: `bitphoque_descriptor_v1.rs` (committed `dedc62d`) — the parcel-descriptor codec is built and its `--selftest`
-PASSES all three checks node-free: round-trip identity, base58check reject-on-corruption, and the on-chain assertion
-(derived P2SH == the live `4b0c8187..:0` parcel address as computed by the proven inspect_v3). Getting there settled two
-design questions first: (1) ctor `int` encoding PINNED to Kaspa minimal CScriptNum (NOT 8-byte LE — the prior lean was
-wrong; verified against compiler→add_i64→serialize_i64 + test vectors); (2) descriptor format FINALIZED as Option B
-(fixed-width transport — amount/price u64-LE, output_index u32-LE, 118-byte payload, base58check-wrapped; CScriptNum
-lives ONLY at P2SH derivation). Also this session: inspect_v3's NODE const fixed `.206→.104` (same stale-address bug as
-node_diag had). NODE STATUS: TestnetNode @ .104 reachable, utxo_indexed=true, server v2.0.1, but `get_info` still
-`synced=false` (post-IBD virtual chain settling; was making progress — blocks 365k→383k, tips 2→1 across the session).
-The live `claim` dry-run REMAINS the one node-gated step. NEXT on the wallet track (node-independent to build): wire the
-proven codec into the CLI as `send`/`receive`. Commits this session: `3a4f809` (pin), `06806b8` (format), `dedc62d`
-(codec + inspect_v3 fix). NB the bs58 build dep lives in the disposable silverscript tree — rebuild recipe updated._
+_Last updated: **2026-06-23 — SEND/RECEIVE WIRED INTO THE CLI + PROVEN ON-CHAIN (the receive problem, solved end-to-end) + descriptor format fully verified.**
+Headline: the send/receive keystone is CLOSED. `receive` and `send` are both built into `bitphoque_cli.rs` and proven against
+the live node. **`receive` (committed earlier this session):** decodes a base58check descriptor → version gate → covenant_id
+match (refuses a descriptor for the wrong token) → recomputes the P2SH locally (chain is authority, descriptor is only a hint)
+→ confirms live → records in wallet.json. Proven on-chain: fed the descriptor for the live `4b0c8187..:0` parcel, CONFIRMED +
+recorded. **`send` (committed `d9e0bb9`):** a minimal diff off `cmd_split` — single-input, owner-signed, leader ABI — with
+out0 owned by the RECIPIENT (not the signer). TWO cases, BOTH proven: PARTIAL (2-out: recipient + signer change) and WHOLE
+(1-out, no change; the single-element `new_states` under v3 leader ABI confirmed by LOCAL VM VERIFY before broadcast). On
+`--go` ACCEPTED, send records the signer's CHANGE parcel and EMITS a base58check descriptor for the recipient's out0 — exactly
+what `receive` consumes. **FULL ROUND-TRIP PROVEN LIVE:** `send --go` (partial, 1000 phoques buyer1→buyer2, tx `e45d9c2b..`)
+emitted a descriptor; `receive` decoded it and confirmed a matching parcel on-chain. The loop closes: send produces what receive
+consumes. **Descriptor format FULLY VERIFIED this session** (beyond the codec's own selftest): hand-decoded the send-emitted
+descriptor and confirmed all 8 fields read back correct AND the txid byte-order is FORWARD (== `tx.id()` display order, NOT
+reversed) — mainnet-clean. **NODE/PORT FIX:** the CLI's `NODE` const was wrong at `16211` (that's P2P — `Unimplemented` gRPC
+error); corrected to `192.168.0.104:16210` (gRPC, all-ifaces per the live `--rpclisten=0.0.0.0:16210` launch). The "16210
+localhost-only" comment was stale/false. NODE STATUS: TestnetNode @ .104 mid-IBD all session (body download ~10 blocks/sec,
+I/O-bound on a 500GB SSD; root-caused NOT a bug — headers complete at 1,463,494, bodies filling ~481k→ climbing; disk at 100%,
+kaspad bursting-then-idle = waiting on disk). `receive` CONFIRMED both a deep-history parcel AND a tip-fresh one mid-IBD — the
+address index keeps up with new parcels even before full sync (the query only needs the parcel's block, not the tip). DECIDED
+NOT to swap testnet→.206 (weaker hardware makes I/O-bound IBD worse). OPEN: (1) live WHOLE-parcel `send --go` is VM-proven but
+not yet broadcast — needs the node synced (the 16301 change parcel reads NOT-confirmed mid-IBD, can't be spent yet); (2) the
+live `claim` dry-run still node-gated on IBD finishing; (3) note for mainnet: identical parcels (same owner+amount+forSale+price)
+share ONE amount-derived P2SH, so `receive`/`confirm_parcel` confirms "a matching parcel exists," not "this specific txid's
+parcel" — fungible-at-address, a design characteristic not a bug. Commits this session: `receive`, `d9e0bb9` (send). NEXT on
+the wallet track: the user-facing WEB WALLET at BitPhoque.org (first slice — UI shell + BIP-39 create/restore flow — prototyped
+node-free; see WEB WALLET note below)._
+
+_Prior — **DESCRIPTOR CODEC BUILT + PROVEN (the send/receive keystone) + int encoding pinned + format finalized (2026-06-23, earlier).**
+`bitphoque_descriptor_v1.rs` (committed `dedc62d`) — the parcel-descriptor codec built; `--selftest` PASSES three checks node-free:
+round-trip identity, base58check reject-on-corruption, on-chain assertion (derived P2SH == live `4b0c8187..:0`). Settled two design
+questions: (1) ctor `int` encoding PINNED to Kaspa minimal CScriptNum (NOT 8-byte LE — prior lean was wrong; verified against
+compiler→add_i64→serialize_i64 + test vectors); (2) descriptor format FINALIZED as Option B (fixed-width transport — amount/price
+u64-LE, output_index u32-LE, 118-byte payload, base58check-wrapped; CScriptNum lives ONLY at P2SH derivation). inspect_v3's NODE
+const fixed `.206→.104`. Commits: `3a4f809` (pin), `06806b8` (format), `dedc62d` (codec + inspect_v3 fix). NB the bs58 build dep
+lives in the disposable silverscript tree (`cargo add bs58 --features check -p silverscript-lang`) — a fresh clone must re-add it.
+NOW SUPERSEDED: the codec is wired into the CLI as send/receive and proven on-chain (see headline)._
+
+_**WEB WALLET — FIRST SLICE (2026-06-23, prototype only, no git tree yet).** Started the user-facing wallet at BitPhoque.org.
+Decided: plain HTML/JS single file (matches the existing `index.html`, no build step), drops into `public_html`. Built the UI
+SHELL + BIP-39 create/restore FLOW (welcome → create/restore → seed display → verify → done), reconciled to the live landing-page
+aesthetic (real `bitphoque.jpeg` seal via `mix-blend-mode: multiply` on cream; exact tokens `--paper #FBFAF7` / `--ink #111110` /
+`--muted #6B6A64`; Inter body + Fraunces display; `color-scheme: light`). STUBBED: seed entropy uses `Math.random()` + a 245-word
+BIP-39 excerpt, NO checksum — flagged at a single "PRODUCTION SEAM" (swap to `@scure/bip39` `generateMnemonic`/`validateMnemonic` +
+encrypted WebCrypto storage). HARD RULE: do NOT publish at a guessable/linked path on the live cPanel host until the seam is wired —
+a `Math.random()` seed is not secure. Seal only renders if `wallet.html` sits in the SAME folder as `bitphoque.jpeg`. This slice is
+NOT in a git repo — it's a prototype file, not yet part of a tracked web project. NEXT web slices: wallet HOME (balance/send/receive/
+claim mirroring the proven CLI), then wire the BIP-39 seam. ARCHITECTURE NOTE for the eventual real build: the browser has no
+silverscript compiler — P2SH derivation needs WASM (keeps "browser = full trustless client", fits self-erecting) vs a backend
+(faster but reintroduces a coordinator) vs JS reimpl (re-specs the encoding — the thing the descriptor codec deliberately avoided).
+WASM is the lean; not yet decided._
 
 _Prior — **WALLET ARCHITECTURE DESIGN SESSION (2026-06-22, no code/commit yet — design only).** A working
 session spent on the USER-FACING wallet (the "thin marketplace app" successor), entirely while the TN10 node was
@@ -81,11 +118,14 @@ checkSaleState reads. Remaining: wallet/CLI collapse, then mainnet checklist._
 - **Two spend modes:** LISTING (owner-signed, flips a UTXO to forSale=true at a price) and CLAIM
   (payment-authorized, NO owner sig — a buyer pays >= price to the seller and receives the phoques).
 - **Auction:** recorded as a separate FUTURE build (see swap design doc) — stateful/temporal, own architecture.
-- **Next:** the wallet/CLI is FEATURE-COMPLETE — `bitphoque_cli.rs` has import / balance / partial-list / list /
-  split / merge / **claim**, all built + committed (`78c14d9` claim), on the Option-C track-forward model. Only
-  remaining gate on claim is a LIVE dry-run VM-verify (waiting on TN10 IBD). Next up the
-  list: live claim dry-run, extract a shared lib, then the thin marketplace app,
-  then the pre-mainnet checklist. Design + open items live in `bitphoque_swap_covenant_design.md`.
+- **Next:** the wallet/CLI is FEATURE-COMPLETE + the SEND/RECEIVE loop is CLOSED — `bitphoque_cli.rs` has import / balance /
+  list / split / merge / partial-list / claim / **send** / **receive**, all built + committed (`78c14d9` claim, `d9e0bb9` send;
+  receive committed same session). send/receive PROVEN ON-CHAIN end-to-end (round-trip: send emits a descriptor, receive consumes
+  it — tx `e45d9c2b..`). Descriptor format fully verified (incl. forward txid byte-order). The CLI proves every primitive the web
+  wallet needs to mirror. STILL node-gated (waiting on TN10 IBD): live `claim` dry-run + live WHOLE-parcel `send --go` (VM-proven,
+  not yet broadcast). Now building the USER-FACING WEB WALLET at BitPhoque.org (first slice done — UI shell + BIP-39 create/restore,
+  prototype; see headline + WEB WALLET note). Then: live claim dry-run, the wallet HOME screen, the BIP-39 production seam, mainnet
+  checklist. Design + open items live in `bitphoque_swap_covenant_design.md`.
 
 ---
 
@@ -365,8 +405,10 @@ C:\bitphoque\
     bitphoque_sale_merge_v3.rs         <- MERGE 2→1 harness (LIVE merge 519063be...). committed 46e4568
     bitphoque_partial_list_v3.rs       <- PARTIAL-LIST harness (LIVE 4b0c8187...): lists PART of a
                                           balance in one owner-signed tx (out0 for-sale + out1 change)
-    bitphoque_cli.rs                   <- WALLET CLI thin slice: import / balance / partial-list, on the
-                                          Option-C track-forward model (reads/writes wallet.json)
+    bitphoque_cli.rs                   <- WALLET CLI: import / balance / list / split / merge / partial-list /
+                                          claim / send / receive — feature-complete + send/receive loop CLOSED.
+                                          Option-C track-forward (reads/writes wallet.json). Copies the frozen
+                                          descriptor codec (from descriptor_v1) for send/receive. NODE=...:16210 (gRPC).
     bitphoque_node_diag.rs             <- read-only node health + index-lag probe (old-vs-new parcel)
     bitphoque_descriptor_v1.rs         <- PARCEL DESCRIPTOR CODEC v1 (send/receive keystone): encode/decode
                                           (118B fixed-width, base58check) + derive_p2sh (canonical builder path).
