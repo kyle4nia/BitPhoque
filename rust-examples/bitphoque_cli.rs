@@ -57,7 +57,7 @@ use secp256k1::Keypair;
 use silverscript_lang::ast::Expr;
 use silverscript_lang::compiler::{compile_contract, struct_object, CompileOptions, CovenantDeclCallOptions};
 
-const NODE: &str = "192.168.0.104:16211";  // TestnetNode (box swap): gRPC all-ifaces. 16210 now localhost-only; 17210 is wRPC.
+const NODE: &str = "192.168.0.104:16210";  // TestnetNode gRPC, all-ifaces (--rpclisten=0.0.0.0:16210). 16211 is P2P; 17210 is wRPC.
 const SIL_FILE: &str = r"C:\bitphoque\covenants\bitphoque_sale_v3.sil";
 const COVENANT_ID_HEX: &str = "3baed5a39ed95e6aa62a0d8d46aae39a8d832d4f900e5a6a351dca4fbc326458";
 const WALLET_FILE: &str = r"C:\bitphoque\wallet.json";
@@ -100,6 +100,81 @@ impl Parcel {
             self.for_sale, self.price, self.value, self.max_ins, self.max_outs, self.status
         )
     }
+}
+
+// ----------------------------------------------------------------------------------------------
+// PARCEL DESCRIPTOR CODEC — copied VERBATIM from the proven bitphoque_descriptor_v1.rs (committed
+// dedc62d, --selftest PASSED). The wire FORMAT is FINALIZED (Option B, 2026-06-23): a flat
+// fixed-offset 118-byte payload, base58check-wrapped. Frozen format => safe to duplicate (it will
+// not drift). encode/decode are the transport half; P2SH derivation reuses the CLI's existing
+// confirm_parcel machinery (ctor_args -> compile_contract -> pay_to_script_hash_script), so the
+// descriptor's covenant_id is checked but the address is recomputed locally, never trusted from wire.
+//
+// Layout: version(1) | covenant_id(32) | owner_pubkey x-only(32) | amount u64-LE(8)
+//         | forSale(1) | price u64-LE(8) | txid(32) | output_index u32-LE(4) = 118 B
+// ----------------------------------------------------------------------------------------------
+
+const DESC_VERSION: u8 = 1;
+const DESC_LEN: usize = 118;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Descriptor {
+    version: u8,
+    covenant_id: [u8; 32],
+    owner_pubkey: [u8; 32], // x-only
+    amount: u64,
+    for_sale: bool,
+    price: u64,
+    txid: [u8; 32],
+    output_index: u32,
+}
+
+fn encode_payload(d: &Descriptor) -> Vec<u8> {
+    let mut out = Vec::with_capacity(DESC_LEN);
+    out.push(d.version);
+    out.extend_from_slice(&d.covenant_id);
+    out.extend_from_slice(&d.owner_pubkey);
+    out.extend_from_slice(&d.amount.to_le_bytes());
+    out.push(if d.for_sale { 1 } else { 0 });
+    out.extend_from_slice(&d.price.to_le_bytes());
+    out.extend_from_slice(&d.txid);
+    out.extend_from_slice(&d.output_index.to_le_bytes());
+    debug_assert_eq!(out.len(), DESC_LEN, "payload must be exactly {DESC_LEN} bytes");
+    out
+}
+
+#[allow(dead_code)]
+fn encode_descriptor(d: &Descriptor) -> String {
+    bs58::encode(encode_payload(d)).with_check().into_string()
+}
+
+fn decode_descriptor(s: &str) -> Result<Descriptor, String> {
+    let payload = bs58::decode(s.trim())
+        .with_check(None)
+        .into_vec()
+        .map_err(|e| format!("base58check decode failed (bad checksum or alphabet): {e}"))?;
+    if payload.len() != DESC_LEN {
+        return Err(format!("descriptor payload is {} bytes, expected {DESC_LEN}", payload.len()));
+    }
+    let mut o = 0usize;
+    let take = |o: &mut usize, n: usize| -> &[u8] { let s = &payload[*o..*o + n]; *o += n; s };
+    let version = take(&mut o, 1)[0];
+    let mut covenant_id = [0u8; 32];
+    covenant_id.copy_from_slice(take(&mut o, 32));
+    let mut owner_pubkey = [0u8; 32];
+    owner_pubkey.copy_from_slice(take(&mut o, 32));
+    let amount = u64::from_le_bytes(take(&mut o, 8).try_into().unwrap());
+    let for_sale = match take(&mut o, 1)[0] {
+        0 => false,
+        1 => true,
+        b => return Err(format!("forSale byte must be 0 or 1, got {b}")),
+    };
+    let price = u64::from_le_bytes(take(&mut o, 8).try_into().unwrap());
+    let mut txid = [0u8; 32];
+    txid.copy_from_slice(take(&mut o, 32));
+    let output_index = u32::from_le_bytes(take(&mut o, 4).try_into().unwrap());
+    debug_assert_eq!(o, DESC_LEN);
+    Ok(Descriptor { version, covenant_id, owner_pubkey, amount, for_sale, price, txid, output_index })
 }
 
 // Tiny tolerant parser for the flat objects we write (NOT a general JSON parser — only reads our own
@@ -293,6 +368,73 @@ async fn cmd_import(args: &[&String]) {
             println!("[import] recorded in wallet.json.");
         }
         None => println!("[import] NOT FOUND on-chain after retries (owner/amount/forSale/price/caps must match a live parcel). nothing recorded."),
+    }
+}
+
+// receive <descriptor>
+//   Decode a base58check parcel descriptor handed over by a sender, VERIFY it (checksum via decode,
+//   version, covenant_id against our known token), CONFIRM the parcel is live on-chain, and record it
+//   in wallet.json. This is the descriptor-driven sibling of `import`: same end-state (a confirmed
+//   parcel in the wallet) but the four parcel fields arrive in one paste-safe string instead of being
+//   hand-typed, and the descriptor additionally carries covenant_id/txid/index for integrity.
+//   Chain stays the authority: we recompute the P2SH locally (confirm_parcel) and never trust the
+//   descriptor's claimed outpoint blindly — a descriptor for a spent/non-existent parcel records nothing.
+async fn cmd_receive(args: &[&String]) {
+    if args.is_empty() {
+        eprintln!("usage: bitphoque receive <descriptor>");
+        std::process::exit(2);
+    }
+    let d = match decode_descriptor(args[0]) {
+        Ok(d) => d,
+        Err(e) => { eprintln!("[receive] BAD descriptor — {e}"); std::process::exit(2); }
+    };
+
+    // version gate
+    if d.version != DESC_VERSION {
+        eprintln!("[receive] descriptor version {} not supported (this build expects v{DESC_VERSION}).", d.version);
+        std::process::exit(2);
+    }
+
+    // covenant_id integrity tie: refuse a descriptor for a different token rather than derive a wrong P2SH.
+    let mut our_cov = [0u8; 32];
+    faster_hex::hex_decode(COVENANT_ID_HEX.as_bytes(), &mut our_cov).expect("bad cov id hex const");
+    if d.covenant_id != our_cov {
+        let mut got = vec![0u8; 64];
+        faster_hex::hex_encode(&d.covenant_id, &mut got).ok();
+        eprintln!("[receive] REFUSED — descriptor covenant_id does not match this token.");
+        eprintln!("          descriptor: {}", String::from_utf8_lossy(&got));
+        eprintln!("          expected  : {COVENANT_ID_HEX}");
+        std::process::exit(2);
+    }
+
+    // amount/price are non-negative on the wire (u64); confirm_parcel + ctor want i64.
+    let amount = i64::try_from(d.amount).expect("amount fits i64");
+    let price = i64::try_from(d.price).expect("price fits i64");
+    let owner_pk = d.owner_pubkey.to_vec();
+    let mut owner_hex = vec![0u8; 64];
+    faster_hex::hex_encode(&d.owner_pubkey, &mut owner_hex).ok();
+    let owner_hex = String::from_utf8(owner_hex).unwrap();
+
+    println!("[receive] descriptor OK: owner {owner_hex} amount {amount} forSale {} price {price} caps {MAX_COV_INS}/{MAX_COV_OUTS}", d.for_sale);
+    println!("[receive] confirming parcel live on-chain (chain is the authority; descriptor is only a hint)...");
+    let rpc = connect().await;
+    match confirm_parcel(&rpc, &owner_pk, amount, d.for_sale, price).await {
+        Some((outpoint, value)) => {
+            let p = Parcel {
+                outpoint_txid: outpoint.transaction_id.to_string(),
+                outpoint_index: outpoint.index,
+                owner_pk: owner_hex,
+                amount, for_sale: d.for_sale, price, value,
+                max_ins: MAX_COV_INS, max_outs: MAX_COV_OUTS,
+                status: "live".to_string(),
+            };
+            println!("[receive] CONFIRMED on-chain: {}:{}  value {} sompi", p.outpoint_txid, p.outpoint_index, p.value);
+            let mut wallet = load_wallet();
+            wallet.insert(p.key(), p);
+            save_wallet(&wallet);
+            println!("[receive] recorded in wallet.json.");
+        }
+        None => println!("[receive] NOT FOUND on-chain after retries — the descriptor may name a spent or non-existent parcel, or the node is still syncing. nothing recorded."),
     }
 }
 
@@ -998,8 +1140,9 @@ async fn main() {
     let go = raw.iter().any(|a| a == "--go");
     let pos: Vec<&String> = raw.iter().skip(1).filter(|a| !a.starts_with("--")).collect();
     if pos.is_empty() {
-        eprintln!("usage: bitphoque <import|balance|list|split|merge|partial-list> ...");
+        eprintln!("usage: bitphoque <import|receive|balance|list|split|merge|partial-list|claim> ...");
         eprintln!("  import       <owner_pk_hex> <amount> <forSale 0|1> <price>");
+        eprintln!("  receive      <descriptor>          (decode + verify + confirm + record a handed-over parcel)");
         eprintln!("  balance      <owner_pk_hex>");
         eprintln!("  list         <owner_keyfile> <amount> <price> [--go]");
         eprintln!("  split        <owner_keyfile> <in_amount> <out0_amount> [--go]");
@@ -1012,6 +1155,7 @@ async fn main() {
     let rest = &pos[1..];
     match cmd {
         "import"       => cmd_import(rest).await,
+        "receive"      => cmd_receive(rest).await,
         "balance"      => cmd_balance(rest).await,
         "list"         => cmd_list(rest, go).await,
         "split"        => cmd_split(rest, go).await,
