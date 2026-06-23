@@ -12,7 +12,19 @@ session-startup: where we are, the live design, and what's next. Start a session
 history file only to look up a specific past fact. Consensus rules / fee floors / node quirks were KEPT here
 (still actively consulted when building txs)._
 
-_Last updated: **WALLET ARCHITECTURE DESIGN SESSION (2026-06-22, no code/commit yet — design only).** A working
+_Last updated: **2026-06-23 — DESCRIPTOR INTEGER ENCODING PINNED + TN10 NODE BACK UP (server_v 2.0.1).** Two
+things this session. (1) NODE: TestnetNode @ .104 is reachable over gRPC again (diag connected in 177ms, server
+v2.0.1, **utxo_indexed=true**, all known parcels FOUND with no index lag) — BUT `get_info` still reports
+**`synced=false`** (post-IBD virtual-chain still settling at session time). The live `claim` dry-run REMAINS the
+node-gated step and is unblocked the moment `synced=true` (re-poll `bitphoque_node_diag`). NB the diag's NODE const
+was found pointing at .206 (MainnetNode) and corrected to `192.168.0.104:16210` in the canonical rust-examples copy.
+(2) DESIGN: the descriptor's last open item — integer encoding for amount/price/output_index — is now PINNED to
+**Kaspa minimal script-number (CScriptNum), NOT 8-byte LE** (the prior lean was wrong; verified against
+compiler/mod.rs:342 → add_i64 → serialize_i64 + in-tree test vectors). Full detail + consequence in the receive-
+problem section below. No code/commit this session beyond the diag const fix + this doc edit — the doc edit itself
+is not yet git-protected._
+
+_Prior — **WALLET ARCHITECTURE DESIGN SESSION (2026-06-22, no code/commit yet — design only).** A working
 session spent on the USER-FACING wallet (the "thin marketplace app" successor), entirely while the TN10 node was
 mid-IBD so nothing on-chain could be tested. Decisions settled (full detail in the new "USER WALLET — ARCHITECTURE
 (2026-06-22)" section below): (a) FORM = a web app at BitPhoque.org — one codebase, all four platforms via browser
@@ -501,9 +513,25 @@ DECIDED solution = HYBRID (the only one that serves non-technical users AND the 
 - A descriptor is a SNAPSHOT, not a permanent address: the instant a parcel is spent (list/claim/split/merge) its
   outpoint dies and its P2SH may move. Wallet rule: re-derive live state against the chain on open; treat the
   descriptor as a hint to VERIFY, never a cached account number.
-- OPEN (small, closeable): pin the integer encoding for amount/price/output_index in the descriptor. LEANING
-  8-byte little-endian to match the existing ctor-arg serialization (and Oracle's verdict_bytes LE convention) —
-  but VERIFY against the actual ctor serialization in the proven harness before committing (read-the-source rule).
+- PINNED (2026-06-23, verified against source + test vectors — the earlier "leaning 8-byte LE" guess was WRONG):
+  ctor `int` args (amount, price, output_index) are serialized as **Kaspa minimal script-number encoding
+  (CScriptNum)** — variable-length little-endian with a sign bit — NOT fixed 8-byte LE. Fixed 8-byte LE would have
+  computed the WRONG P2SH for almost every value (this is exactly the read-the-source-not-infer trap). Trace:
+  silverscript `compiler/mod.rs:342` lowers `ExprKind::Int` via `builder.add_i64(value)`; `add_i64`
+  (`crypto/txscript/src/script_builder.rs:261`) is THREE branches — `0`→`Op0` (one opcode, ZERO data bytes);
+  `-1` and `1..=16`→a single `OP_1NEGATE`/`OP_1..OP_16` opcode (NO data push); everything else→
+  `OpcodeData::<i64>::serialize` then `add_data`. The serialize impl is `serialize_i64`
+  (`crypto/txscript/src/data_stack.rs:153`): minimal LE magnitude bytes, sign carried in the high bit of the top
+  byte, with an extra `0x00`/`0x80` byte appended only when the magnitude's MSB would otherwise collide with the
+  sign bit. Confirmed by the in-tree test vectors: `0`→`[]`, `1`→`01`, `-1`→`81`, `127`→`7f`, `128`→`8000`,
+  `-128`→`8080`, `255`→`ff00`, `256`→`0001`. (bool ctor args funnel through the same `add_i64` path as `0`/`1`.)
+  CONSEQUENCE for the descriptor + wallet: the descriptor commits to the LOGICAL integer values (amount/price/
+  output_index), and the wallet derives the P2SH by running the SAME canonical `add_i64`/script-builder path the
+  harnesses use — it must NOT reimplement integer encoding from a fixed-width spec, because small values (0, 1..16)
+  and zero are OPCODES not data pushes and the byte length is value-dependent. Byte-identity to the on-chain script
+  is guaranteed by reusing the builder, not by re-specifying it. (Self-erecting-lens fit: transport logical values,
+  re-derive against the canonical builder/chain — never transport pre-encoded P2SH bytes that could drift.) This
+  CLOSES the descriptor's last open item; format is finalizable.
 
 ### Native KAS handling — REQUIRED, "gas-tank not vault"
 - The wallet MUST hold + spend native KAS: every phoque action is a Kaspa tx that costs KAS (fee floors: ~700k
