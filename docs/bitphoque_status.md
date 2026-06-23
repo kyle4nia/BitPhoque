@@ -21,8 +21,10 @@ was found pointing at .206 (MainnetNode) and corrected to `192.168.0.104:16210` 
 (2) DESIGN: the descriptor's last open item — integer encoding for amount/price/output_index — is now PINNED to
 **Kaspa minimal script-number (CScriptNum), NOT 8-byte LE** (the prior lean was wrong; verified against
 compiler/mod.rs:342 → add_i64 → serialize_i64 + in-tree test vectors). Full detail + consequence in the receive-
-problem section below. No code/commit this session beyond the diag const fix + this doc edit — the doc edit itself
-is not yet git-protected._
+problem section below. (3) DESCRIPTOR FORMAT FINALIZED: chose Option B (fixed-width transport — amount/price as
+u64-LE, output_index u32-LE, 118-byte fixed payload, base58check-wrapped) with CScriptNum living ONLY at P2SH
+derivation. Full layout + derivation rule in the receive-problem section. No code/commit this session beyond the
+diag const fix + this doc edit — the doc edit itself is not yet git-protected._
 
 _Prior — **WALLET ARCHITECTURE DESIGN SESSION (2026-06-22, no code/commit yet — design only).** A working
 session spent on the USER-FACING wallet (the "thin marketplace app" successor), entirely while the TN10 node was
@@ -499,8 +501,20 @@ amount. So "someone sent me phoques" is NOT self-evident to a fresh wallet the w
 DECIDED solution = HYBRID (the only one that serves non-technical users AND the self-erecting lens):
 - **Parcel descriptor (the trustless protocol truth).** An off-chain "receipt" the sender hands the receiver,
   carrying exactly what's needed to FIND and VERIFY the parcel. It is essentially the `inspect_v3` input args made
-  portable. Fields (v1, draft layout — all load-bearing): format-version byte ‖ covenant_id (32B) ‖ owner_pubkey
-  (x-only 32B) ‖ amount ‖ forSale (1B) ‖ price ‖ txid (32B) ‖ output_index.
+  portable. **FORMAT FINALIZED (2026-06-23, Option B — fixed-width transport, CScriptNum only at derivation).** The
+  descriptor carries LOGICAL values in a flat fixed-offset struct; the variable-length CScriptNum encoding (see the
+  PINNED note above) lives ONLY in P2SH derivation, NEVER in transport — conflating the two was the trap. v1 payload
+  (118 bytes, FIXED, no length prefixes needed):
+  `version(1B) ‖ covenant_id(32B) ‖ owner_pubkey x-only(32B) ‖ amount u64-LE(8B) ‖ forSale(1B) ‖ price u64-LE(8B) ‖
+  txid(32B) ‖ output_index u32-LE(4B)` = 118 B. Then base58check-encode the whole 118 B (version-prefix byte for
+  base58check is separate from the in-payload format-version; pick a distinct app version byte). DERIVATION RULE (the
+  one place that MUST match the chain): to rebuild the P2SH, feed amount/price/forSale as INTEGERS into the SAME
+  canonical `add_i64`/script-builder path the harnesses use — do NOT re-encode from the transport bytes by hand. The
+  fixed-u64 transport and the CScriptNum derivation are deliberately decoupled: transport stays a dead-simple flat
+  struct, byte-identity to the chain comes from reusing the builder. CAVEAT (note so a future field doesn't silently
+  break it): fixed u64/u32 transport is correct ONLY because amount/price/output_index are all NON-NEGATIVE and fit
+  u64/u32 (Kaspa values are u64 sompi, indices small). A future negative or >u64 ctor-arg field would need a framing
+  rethink. forSale is the byte {0,1} as-is (it funnels through add_i64's 0/1 fast-path at derivation).
 - **Transport = base58check** (the Bitcoin-address alphabet — no confusable 0/O/I/l — WITH a checksum baked into
   the standard, so a hand-transcribed receipt fails LOUDLY instead of computing a wrong P2SH silently). This
   SUPERSEDES the earlier "add a separate checksum field" idea — base58check IS the checksum, one fewer thing to own.
