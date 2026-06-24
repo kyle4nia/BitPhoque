@@ -797,3 +797,16 @@ Remaining, in order:
 - `silverscript-lang/src/compiler/mod.rs` — compile_contract, struct_object, CompileOptions,
   CovenantDeclCallOptions, build_sig_script_for_covenant_decl.
 - OracleRep `oracle_genesis_establish.rs` — the genesis harness model.
+
+---
+
+## PARKED DESIGN — see `bitphoque_swap_covenant_design.md` (full reasoning there)
+
+Future design decisions captured 2026-06-24 (notes session during TN10 IBD). Titles only —
+read the design doc for the A/B/hybrid forks and detail:
+- **#1 — Wallet "gas tank" fee sizing** (buyer 900k/claim, lister 700k/listing; seed ~0.1–0.2 KAS headroom).
+- **#2 — Wallet sends pups (sub-unit) + dust** (OPEN: derive per-UTXO KAS dust floor from `calc_storage_mass` / KIP-9 before hard-coding).
+- **#3 — Marketing audience** (3 angles: Kaspa-native / meme-culture / self-erecting-thesis).
+- **#4 — "Boques"** = colloquial for phoques (like "bucks"); completes phoque/pup/boque denomination story.
+- **#5 — Price-escalating emission schedule** = step bonding curve; DESIGN FORK (A primary-mint / B secondary-market / Hybrid launch-only minter). Decide model before any curve math.
+- **#6 — Wallet clarity** (a: receive page must disambiguate KAS vs phoque parcel; b: pre-publish unit-confusion audit across all surfaces; c: "how to acquire KAS" tutorial — verify exchanges LIVE at write-time).

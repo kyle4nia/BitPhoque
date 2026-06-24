@@ -357,3 +357,109 @@ STILL OPEN (next): generalize beyond SINGLE-input/output to 2x2 FANOUT (checkSal
   payment, cross-referenced witness indices); then ON-CHAIN (re-encounters the v1-mass/ComputeBudget/fee
   rules from the transfer; needs a broadcast + local-VM-verify harness like the transfer; needs a FRESH
   GENESIS since v2's layout/script differ from the deployed token). AUCTION is a separate future build (see end).
+
+---
+
+## PARKED DESIGN NOTES (2026-06-24, decide/address later)
+
+_Captured from a design-notes session while TN10 was mid-IBD. Pointer stub lives in
+`bitphoque_status.md`; full reasoning is here._
+
+**#1 — Wallet "gas tank" fee sizing (fees only, separate from purchase price).**
+Per-tx floors, proven on-chain:
+- _Buyer side (claim):_ single 2-input claim = 900k sompi (0.009 KAS); heaviest 2×2
+  multi-parcel claim = 1.5M sompi. A normal one-parcel buy is the single-claim path.
+  3 buys ≈ 0.027 KAS, 5 ≈ 0.045, 10 ≈ 0.090 — **under 0.1 KAS for 10 purchases.**
+- _Seller/lister side (partial-list, owner-signed single-input):_ script-reveal floor
+  ~659k, use 700k sompi (0.007 KAS) per listing.
+- _Sizing default:_ seed gas tank with **~0.1–0.2 KAS fee headroom** beyond purchase
+  funds (~10–20 claims of runway). Keeps the browser-key risk surface small (gas-tank-
+  not-vault). Wrinkles to handle: claims must be funded with spendable KAS *UTXOs* (not
+  just total balance); fragmented change can force an extra input → heavier tx; want a
+  consolidate primitive eventually.
+
+**#2 — Wallet should send pups (sub-unit), not just whole phoques.**
+- _Display:_ 1 phoque = 10^8 pups, same integer under the hood. Offer both views —
+  `0.80000000 phoques` (default) and `80,000,000 pups` (power-user toggle). Accept input
+  in either; parse the decimal string → BigInt pup count at the input boundary, NEVER
+  float math. The list function currently shows whole phoques only — make the formatter
+  pup-aware (mainnet-forward; on TN10 the remainder is always 0, the live token has no
+  sub-unit headroom).
+- _Dust — the real constraint (OPEN, needs source-read):_ two SEPARATE floors.
+  (a) the covenant's own dust-floor guard on the partial-list value split — already
+  implemented. (b) **Kaspa consensus storage mass (KIP-9)** — the actual trap. Every
+  token parcel is a UTXO carrying KAS; the floor is **per-UTXO KAS value, NOT pup count.**
+  A 1-pup parcel and a 1M-pup parcel carry identical KAS overhead, so micro-sends are
+  mechanically valid but economically silly — each costs the same KAS to clear the
+  storage-mass floor. **TODO: derive the real KAS-per-parcel dust minimum from
+  `calc_storage_mass` (consensus/core/src/mass/mod.rs, KIP-9 ~line 437) BEFORE the wallet
+  hard-codes a "minimum KAS to attach to any token send" constant. Don't infer — read the
+  source (enforces → verify-by-reading rule).**
+
+**#3 — Marketing to a specific audience (parked, address pre-launch).**
+Three candidate angles, not mutually exclusive — a launch can lead with one and back-fill
+the others:
+- _Kaspa-native:_ existing KAS holders, non-custodial-comfortable; get fixed-supply /
+  no-coordinator / fair-launch without translation. Warmest lead, smallest pond.
+- _Meme / culture-first:_ 42,069, the phoque/seal joke, the aesthetic — covenant rigor as
+  the substance UNDER the meme, not the pitch.
+- _Self-erecting / no-coordinator thesis:_ overlaps the *Revolution* / Oracle-Protocol
+  values audience — no minter, no admin, no indexer-as-authority. Values-first.
+
+**#4 — "Boques" = colloquial nickname for phoques (like "bucks" for dollars).**
+Casual unit-of-account term — "that'll run you 50 boques." Branding/flavor only, no
+contract or wallet impact. Completes the denomination story: formal name (phoque) + base
+unit (pup / BitPup) + colloquial (boque), mirroring dollar / cent / buck. Fits the
+meme/culture-first angle (#3).
+
+**#5 — Price-escalating emission schedule ("first 100 cost x, next 100 cost xx, …").**
+The pattern has a name: a **step bonding curve** (price = deterministic function of
+supply-sold-so-far; well-established — Bancor/Uniswap-lineage). NOT exotic. BUT it's an
+EMISSION/MINTING mechanism, and that collides with BitPhoque's core thesis (fixed supply
+at genesis, NO minter, `isMinter=false`, conservation enforced). A curve needs something
+that issues tokens at a rising price = a coordinator. KEY DISTINCTION: trustless ≠
+no-coordinator — a curve covenant that can't cheat is still a privileged supply-holder.
+This is a DESIGN FORK, decide the MODEL before any curve math:
+- **(A) Primary distribution curve** — protocol mints/releases at escalating price. Needs
+  a minter covenant holding genesis supply, releasing a parcel only when paid the curve
+  price. Contradicts no-coordinator (it's a rule-bound coordinator). Buys a funding ramp +
+  "get in early" narrative; costs the no-coordinator purity that is currently BitPhoque's
+  whole differentiator. = a DIFFERENT token model, not an add-on.
+- **(B) Secondary-market price discovery** — NO new mechanism. v3 sale already does this:
+  each holder `partial-list`s their parcel at a self-chosen price. Early-cheap/later-dear
+  listings produce an escalating curve EMERGENTLY, market-set not coordinator-set. Fully
+  self-erecting. Cost: protocol doesn't CONTROL the curve and doesn't capture the upside —
+  early holders do.
+- **(Hybrid) Launch-only minter** — a time-boxed genesis auction / tiered initial sale
+  distributes the fixed supply at escalating tiers, THEN the minter covenant provably
+  self-destructs (supply fully out, conservation takes over forever). Gets the
+  distribution-ramp feel WITHOUT a permanent coordinator — the coordinator exists only
+  during launch and is demonstrably gone after. The defensible middle: a launch-only
+  minter that burns itself is arguably OK; a permanent one isn't. (Apply the baseline's
+  "note how mainnet-grade differs from the testnet shortcut" instinct here.)
+DECISION DEFERRED — neutral. Pick the model (A / B / Hybrid) before specifying any curve.
+
+**#6 — Wallet clarity: asset/unit disambiguation + new-user on-ramp.**
+Three related items:
+- **(a) Receive page — KAS vs phoques must be explicit.** Two STRUCTURALLY different
+  receive flows share the page today: (i) a **phoque parcel** arrives via signed
+  descriptor (`receive` decodes base58check → confirms amount-derived P2SH on-chain — NOT
+  a normal address); (ii) **plain KAS** arrives at the derived `kaspatest:`/`kaspa:`
+  address (the `m/44'/111111'/0'/0/0` key, gas-tank funding). The page must make the user
+  PICK what they're receiving first, then show the right artifact — KAS address + QR for
+  funding, or the descriptor-paste flow for an incoming parcel. Concrete wallet-build item,
+  not just a label.
+- **(b) General confusion audit (pre-publish).** Domain has 5 easily-conflated value
+  words: KAS (native gas), sompi (KAS base unit), phoque (token), pup/BitPup (phoque base
+  unit), boque (colloquial). Audit EVERY wallet surface (HOME balance, send, receive, list,
+  claim, More drawer) — each displayed number must be labeled with its asset+unit; no
+  screen silently mixes them. A checklist pass near publish, not a feature.
+- **(c) "How to acquire KAS" tutorial for crypto newcomers.** Content/docs work, different
+  kind than the wallet code. **MUST verify exchanges / fiat on-ramps LIVE at write-time
+  (web search) — which exchanges list KAS, regional availability, fees, who still operates
+  all change constantly; do NOT write from memory.** Self-erecting tension to honor: a
+  "go to centralized exchange X, do KYC" tutorial sits awkwardly against no-coordinator
+  ethos — not a blocker (users need KAS somehow), but the doc should ALSO surface the more
+  decentralized paths (mining — Kyle already runs K1Pool — atomic swaps, DEX bridges)
+  alongside the easy centralized ones, so the on-ramp doesn't quietly undercut the values
+  pitch.
