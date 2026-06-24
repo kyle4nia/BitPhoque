@@ -12,7 +12,10 @@ session-startup: where we are, the live design, and what's next. Start a session
 history file only to look up a specific past fact. Consensus rules / fee floors / node quirks were KEPT here
 (still actively consulted when building txs)._
 
-_Last updated: **2026-06-23 — SEND/RECEIVE WIRED INTO THE CLI + PROVEN ON-CHAIN (the receive problem, solved end-to-end) + descriptor format fully verified.**
+_Last updated: **2026-06-23 — WEB WALLET: HOME SCREEN BUILT + BIP-39 SEAM WIRED (real @scure mnemonic + AES-GCM persistence), proven in-browser + committed to git.**
+Headline: the web wallet at BitPhoque.org is now a TRACKED git project (was a loose prototype) with two real slices done. **(1) HOME screen** — the post-onboarding view, mirrors the proven CLI surface: a balance header + the everyday four (send/receive/claim/list) as primary actions, with split/merge/partial-list/import in a "More" drawer. Balance renders **"N phoques · M pups"** (1 phoque = 10^8 BitPups, BigInt math); on TN10 the pup remainder is always 0 (whole-unit token, no sub-unit headroom — the formatter is mainnet-forward-ready anyway). Every chain read/write is routed through an explicit **NODE SEAM** that PRINTS the CLI-equivalent call rather than faking chain truth — no fake balances, nothing broadcast (still needs the WASM P2SH compiler + a synced node). **(2) BIP-39 PRODUCTION SEAM — WIRED (was the HARD-RULE publish gate).** Swapped `Math.random()`/245-word stub for **vendored `@scure/bip39` v2.2.0** (real `crypto.getRandomValues` entropy, full 2048-word list, real checksum) + **WebCrypto AES-GCM persistence** under a PBKDF2 passphrase (250k iters; ciphertext-only in localStorage, passphrase never stored). NO bundler — native ES modules resolved by an import map; the audited libs live LOCALLY in `web/vendor/` (NOT a CDN — the seed-generating code is code we ship, fits self-erecting). Persistence is OPTIONAL (save-or-skip on the done screen); a saved wallet boots to an Unlock screen. PROVEN IN-BROWSER on Big Daddy: create → verify → set passphrase → save → refresh → Unlock → wrong-pass rejected (GCM auth tag) → right-pass → HOME, seed restored exact; restore-existing-phrase path also walked. Secret-swept clean (only param-name/wordlist false positives; `wallet.html` clean). Commits: `4006c59` (web tree: HOME + wired seam, 43 files incl. vendored @scure/@noble), `8501fd9` (remove stray `cd` paste-artifact). **SERVE-OVER-HTTP NOTE:** ES modules don't load from `file://` — the wallet must be served (local `python -m http.server`, or the https host); double-click won't load BIP-39. **STILL OPEN on the wallet track:** (a) the **NODE SEAM** — balance reads + tx builds need a WASM P2SH compiler (browser has no silverscript compiler) + a synced TN10 node; (b) **key derivation** — the wallet generates + securely stores a real BIP-39 seed but does NOT yet derive a Kaspa spending key from it (BIP-32/derivation-path step; belongs with the WASM layer, correct sequencing); (c) publish to the live cPanel host (the seam gate is now LIFTED, but defer until key-derivation + node seam land so it's a working wallet, not just an onboarding shell). NEXT (node-free): the pre-public **secret scrub** — the TN10 privkey `1c14a1de…` in this doc needs redaction + git-history rewrite before any public release._
+
+_Prior — **SEND/RECEIVE WIRED INTO THE CLI + PROVEN ON-CHAIN (the receive problem, solved end-to-end) + descriptor format fully verified.**
 Headline: the send/receive keystone is CLOSED. `receive` and `send` are both built into `bitphoque_cli.rs` and proven against
 the live node. **`receive` (committed earlier this session):** decodes a base58check descriptor → version gate → covenant_id
 match (refuses a descriptor for the wrong token) → recomputes the P2SH locally (chain is authority, descriptor is only a hint)
@@ -49,16 +52,24 @@ const fixed `.206→.104`. Commits: `3a4f809` (pin), `06806b8` (format), `dedc62
 lives in the disposable silverscript tree (`cargo add bs58 --features check -p silverscript-lang`) — a fresh clone must re-add it.
 NOW SUPERSEDED: the codec is wired into the CLI as send/receive and proven on-chain (see headline)._
 
-_**WEB WALLET — FIRST SLICE (2026-06-23, prototype only, no git tree yet).** Started the user-facing wallet at BitPhoque.org.
+_**WEB WALLET — now a TRACKED PROJECT, HOME built + seam wired (2026-06-23; supersedes the "first slice / prototype" notes below).** The
+items below describe how the wallet STARTED (first slice, stubbed seed, no git tree). Current state has moved past all of that:
+the wallet lives at `C:\bitphoque\web\` (committed `4006c59`), has a working HOME screen, and the BIP-39 seam + AES-GCM persistence
+are WIRED and proven in-browser (full detail in this session's headline up top). The STUBBED-seed and "do NOT publish until the seam
+is wired" lines below are RESOLVED — the seam is wired; publish is still deferred for the node-seam + key-derivation reasons in the
+headline, not the entropy reason. The folder layout is now `web/{wallet.html, bitphoque.jpeg, vendor/}` and MUST be served over
+http(s) (ES modules don't load from `file://`). The WASM-P2SH architecture note below is STILL the open lean (NODE SEAM)._
+
+_**WEB WALLET — FIRST SLICE (2026-06-23, prototype only — HISTORICAL, see resolution above).** Started the user-facing wallet at BitPhoque.org.
 Decided: plain HTML/JS single file (matches the existing `index.html`, no build step), drops into `public_html`. Built the UI
 SHELL + BIP-39 create/restore FLOW (welcome → create/restore → seed display → verify → done), reconciled to the live landing-page
 aesthetic (real `bitphoque.jpeg` seal via `mix-blend-mode: multiply` on cream; exact tokens `--paper #FBFAF7` / `--ink #111110` /
-`--muted #6B6A64`; Inter body + Fraunces display; `color-scheme: light`). STUBBED: seed entropy uses `Math.random()` + a 245-word
+`--muted #6B6A64`; Inter body + Fraunces display; `color-scheme: light`). [RESOLVED] STUBBED: seed entropy uses `Math.random()` + a 245-word
 BIP-39 excerpt, NO checksum — flagged at a single "PRODUCTION SEAM" (swap to `@scure/bip39` `generateMnemonic`/`validateMnemonic` +
-encrypted WebCrypto storage). HARD RULE: do NOT publish at a guessable/linked path on the live cPanel host until the seam is wired —
-a `Math.random()` seed is not secure. Seal only renders if `wallet.html` sits in the SAME folder as `bitphoque.jpeg`. This slice is
-NOT in a git repo — it's a prototype file, not yet part of a tracked web project. NEXT web slices: wallet HOME (balance/send/receive/
-claim mirroring the proven CLI), then wire the BIP-39 seam. ARCHITECTURE NOTE for the eventual real build: the browser has no
+encrypted WebCrypto storage). [RESOLVED] HARD RULE: do NOT publish at a guessable/linked path on the live cPanel host until the seam is wired —
+a `Math.random()` seed is not secure. Seal only renders if `wallet.html` sits in the SAME folder as `bitphoque.jpeg`. [RESOLVED] This slice is
+NOT in a git repo — it's a prototype file, not yet part of a tracked web project. [DONE] NEXT web slices: wallet HOME (balance/send/receive/
+claim mirroring the proven CLI), then wire the BIP-39 seam. ARCHITECTURE NOTE for the eventual real build (STILL OPEN — the NODE SEAM): the browser has no
 silverscript compiler — P2SH derivation needs WASM (keeps "browser = full trustless client", fits self-erecting) vs a backend
 (faster but reintroduces a coordinator) vs JS reimpl (re-specs the encoding — the thing the descriptor codec deliberately avoided).
 WASM is the lean; not yet decided._
@@ -123,9 +134,11 @@ checkSaleState reads. Remaining: wallet/CLI collapse, then mainnet checklist._
   receive committed same session). send/receive PROVEN ON-CHAIN end-to-end (round-trip: send emits a descriptor, receive consumes
   it — tx `e45d9c2b..`). Descriptor format fully verified (incl. forward txid byte-order). The CLI proves every primitive the web
   wallet needs to mirror. STILL node-gated (waiting on TN10 IBD): live `claim` dry-run + live WHOLE-parcel `send --go` (VM-proven,
-  not yet broadcast). Now building the USER-FACING WEB WALLET at BitPhoque.org (first slice done — UI shell + BIP-39 create/restore,
-  prototype; see headline + WEB WALLET note). Then: live claim dry-run, the wallet HOME screen, the BIP-39 production seam, mainnet
-  checklist. Design + open items live in `bitphoque_swap_covenant_design.md`.
+  not yet broadcast). The USER-FACING WEB WALLET at BitPhoque.org is now a TRACKED git project (`web/`, commit `4006c59`) with
+  the HOME screen built and the BIP-39 seam + AES-GCM persistence WIRED and proven in-browser (see headline). REMAINING on the wallet
+  track: the NODE SEAM (WASM P2SH compiler + synced node for real balance/tx) and key derivation (seed → Kaspa spending key), then
+  publish; in parallel still node-gated: live `claim` dry-run + live WHOLE-parcel `send --go`. Design + open items live in
+  `bitphoque_swap_covenant_design.md`.
 
 ---
 
