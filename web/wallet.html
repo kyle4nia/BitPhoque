@@ -56,7 +56,9 @@
   "imports": {
     "@scure/bip39": "./vendor/scure-bip39/index.js",
     "@scure/bip39/wordlists/english.js": "./vendor/scure-bip39/wordlists/english.js",
+    "@scure/bip32": "./vendor/scure-bip32/index.js",
     "@scure/base": "./vendor/scure-base/index.js",
+    "@noble/curves/": "./vendor/noble-curves/",
     "@noble/hashes/": "./vendor/noble-hashes/"
   }
 }
@@ -68,6 +70,8 @@
   // (keeps every existing screen unchanged — smallest diff).
   import { generateMnemonic, validateMnemonic, mnemonicToSeedSync } from '@scure/bip39';
   import { wordlist } from '@scure/bip39/wordlists/english.js';
+  import { HDKey } from '@scure/bip32';
+  import { schnorr } from '@noble/curves/secp256k1.js';
   window.BIP39 = {
     ready: true,
     wordlist,
@@ -82,6 +86,40 @@
       return { ok:true };
     },
     toSeedHex: (arr) => { const s = mnemonicToSeedSync(arr.join(' '), ''); return [...s].map(b=>b.toString(16).padStart(2,'0')).join(''); }
+  };
+
+  // ---- Kaspa key derivation: seed -> BIP-32 (m/44'/111111'/0'/0/index) -> x-only pubkey -> kaspa address ----
+  // Path is the documented Kaspa standard (coin type 111111). The address encoder
+  // (custom Kaspa bech32) is VERIFIED against a real keygen vector
+  // (5d338aa5... -> kaspatest:qpwn8z49...). NETWORK: 'kaspatest' for TN10; swap to
+  // 'kaspa' + version stays 0 (PubKey) for mainnet. SEAM: the full seed->address
+  // chain is not yet cross-checked against an external wallet vector — fine for
+  // testnet practice; add an external mnemonic->address vector before mainnet.
+  const KAS_CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+  const KAS_GEN = [0x98f2bc8e61n,0x79b76d99e2n,0xf33e5fb3c4n,0xae2eabe2a8n,0x1e4f43e470n];
+  function kasPolymod(v){let c=1n;for(const d of v){const c0=c>>35n;c=((c&0x07ffffffffn)<<5n)^BigInt(d);for(let i=0;i<5;i++)if((c0>>BigInt(i))&1n)c^=KAS_GEN[i];}return c^1n;}
+  function kasChecksum(payload,prefix){const pe=[];for(const ch of prefix)pe.push(ch.charCodeAt(0)&0x1f);pe.push(0);const data=pe.concat(payload).concat([0,0,0,0,0,0,0,0]);const pm=kasPolymod(data);const o=[];for(let i=0;i<8;i++)o.push(Number((pm>>BigInt(5*(7-i)))&0x1fn));return o;}
+  function kas8to5(bytes){let acc=0,bits=0;const o=[];for(const b of bytes){acc=(acc<<8)|b;bits+=8;while(bits>=5){bits-=5;o.push((acc>>bits)&0x1f);}}if(bits>0)o.push((acc<<(5-bits))&0x1f);return o;}
+  function kasEncode(prefix,version,payload){const f=kas8to5([version,...payload]);const comb=f.concat(kasChecksum(f,prefix));let a=prefix+':';for(const v of comb)a+=KAS_CHARSET[v];return a;}
+
+  window.KASPA = {
+    network: 'kaspatest',          // TN10; 'kaspa' for mainnet
+    // derive the spending keypair for a given account/index from the seed words
+    derive(seedArr, account=0, index=0){
+      const seed = mnemonicToSeedSync(seedArr.join(' '), '');
+      const path = `m/44'/111111'/${account}'/0/${index}`;
+      const child = HDKey.fromMasterSeed(seed).derive(path);
+      const priv = child.privateKey;
+      const xpub = schnorr.getPublicKey(priv);   // 32-byte x-only, matches keygen
+      const address = kasEncode(this.network, 0, xpub);   // version 0 = PubKey
+      return {
+        path,
+        privHex: [...priv].map(b=>b.toString(16).padStart(2,'0')).join(''),
+        pubHex:  [...xpub].map(b=>b.toString(16).padStart(2,'0')).join(''),
+        address
+      };
+    },
+    encode: kasEncode   // exposed for tests
   };
 
   // ---- Encrypted persistence (WebCrypto AES-GCM under a PBKDF2 passphrase) ----
@@ -653,7 +691,13 @@ function renderBalance(){
   document.getElementById('balEmpty').style.display = count===0 ? 'block' : 'none';
 }
 
-function enterWallet(){ renderBalance(); show('home'); }
+let myKey = null;   // derived Kaspa keypair {path, privHex, pubHex, address} for this wallet
+function enterWallet(){
+  // derive the spending key from the seed (account 0, index 0) once on entry
+  try { myKey = (window.KASPA && seed.length) ? window.KASPA.derive(seed, 0, 0) : null; }
+  catch(e){ myKey = null; }
+  renderBalance(); show('home');
+}
 
 function refreshBalance(){
   // NODE SEAM: real impl = for each tracked parcel address, gRPC
@@ -685,7 +729,8 @@ const PANELS = {
   },
   receive: {
     title: "Receive phoques",
-    lede: "Paste a parcel descriptor someone sent you. Mirrors the proven CLI <code>receive</code> — it decodes, version-gates, checks the covenant_id, recomputes the P2SH locally, and confirms against the chain.",
+    lede: "Your wallet address is below — share it to receive KAS for fees. To receive phoques, paste a parcel descriptor someone sent you. Mirrors the proven CLI <code>receive</code> — it decodes, version-gates, checks the covenant_id, recomputes the P2SH locally, and confirms against the chain.",
+    addrField: true,
     fields: [
       {id:"desc", label:"Parcel descriptor (base58check)", ph:"paste descriptor…", textarea:true},
     ],
@@ -797,9 +842,16 @@ function openPanel(key){
       : `<input class="fld" id="f_${f.id}" type="${f.type||'text'}" placeholder="${f.ph||''}" autocomplete="off" spellcheck="false">`;
     return `<label>${f.label}</label>${input}`;
   }).join('');
+  const addrBlock = (p.addrField && myKey) ? `
+    <label>Your wallet address (${window.KASPA.network})</label>
+    <div class="descbox" id="myAddr">${myKey.address}</div>
+    <div class="tools" style="justify-content:flex-start;margin:8px 0 4px">
+      <button class="link" onclick="copyAddr()">Copy address</button>
+    </div>` : (p.addrField ? `<div class="hint">Address unavailable — re-enter the wallet.</div>` : '');
   document.getElementById('panel').innerHTML = `
     <div class="ph"><h3>${p.title}</h3><button class="x" onclick="closePanel()">&times;</button></div>
     <div class="pl">${p.lede}</div>
+    ${addrBlock}
     ${fields}
     <div class="seam"><span class="ic">&#9888;</span><span>Prototype — node-free. This builds the call and shows what would run; nothing is broadcast. Live action is gated on the WASM P2SH compiler and a synced TN10 node.</span></div>
     <button class="btn" style="margin-top:14px" onclick="runPanel()">${p.cta}</button>
@@ -816,7 +868,13 @@ function runPanel(){
   out.classList.add('show');
 }
 
-function resetAll(){ seed=[]; verifyBlanks=[]; parcels=[]; closePanel(); show('welcome'); }
+function resetAll(){ seed=[]; verifyBlanks=[]; parcels=[]; myKey=null; closePanel(); show('welcome'); }
+function copyAddr(){
+  if(!myKey) return;
+  navigator.clipboard?.writeText(myKey.address);
+  const el=document.querySelector('#panel .tools .link');
+  if(el){ const t=el.textContent; el.textContent='Copied'; setTimeout(()=>el.textContent=t,1400); }
+}
 
 /* ---- encrypted persistence UI (optional; passphrase on the done screen) ---- */
 function ppStrength(){
