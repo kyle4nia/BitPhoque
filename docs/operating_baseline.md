@@ -51,6 +51,12 @@ self-contained: this baseline + that project's status doc, no cross-tree pointer
   or paste multi-line content into the EDITOR (not the terminal).
 - **Plain-English-before-code.** Explain the what and why first, then the code. Define
   terms on first use. State expected output.
+- **Terse strategy notes, not essays.** Give the answer/command directly. When a real choice
+  is being made, name the reason in a brief clause — "use @scure/bip39, it's audited" — not a
+  paragraph. Teach the relevant term or strategy in passing (this is wanted), but skip the
+  worked-out-loud reasoning, the restated end-prize prose, and multi-paragraph justification.
+  One-line why, then move. (The periodic end-prize re-statement below is a deliberate
+  exception — offer it at seams, but don't pad every reply with it.)
 - **Isolate one hard problem at a time.** Prove it in the smallest possible test before
   building on it (local verify before broadcast; self-test before trusting a tool).
 - **Be upfront about tradeoffs and difficulty.** Don't paper over hard parts or pretend a
