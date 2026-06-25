@@ -57,7 +57,7 @@ use secp256k1::Keypair;
 use silverscript_lang::ast::Expr;
 use silverscript_lang::compiler::{compile_contract, struct_object, CompileOptions, CovenantDeclCallOptions};
 
-const NODE: &str = "192.168.0.104:16210";  // TestnetNode gRPC, all-ifaces (--rpclisten=0.0.0.0:16210). 16211 is P2P; 17210 is wRPC.
+const NODE: &str = "127.0.0.1:16210";  // TestnetNode gRPC, all-ifaces (--rpclisten=0.0.0.0:16210). 16211 is P2P; 17210 is wRPC.
 const SIL_FILE: &str = r"C:\bitphoque\covenants\bitphoque_sale_v3.sil";
 const COVENANT_ID_HEX: &str = "3baed5a39ed95e6aa62a0d8d46aae39a8d832d4f900e5a6a351dca4fbc326458";
 const WALLET_FILE: &str = r"C:\bitphoque\wallet.json";
@@ -298,7 +298,7 @@ fn local_vm_verify(tx: &Transaction, entries: Vec<UtxoEntry>, input_idx: usize) 
     let mut vm = TxScriptEngine::from_transaction_input(
         &populated, &input, input_idx, utxo,
         EngineCtx::new(&sig_cache).with_reused(&reused_values).with_covenants_ctx(&cov_ctx),
-        EngineFlags { covenants_enabled: true, sigop_script_units: 0.into() },
+        EngineFlags { covenants_enabled: true, zk_hardening_enabled: true, sigop_script_units: 0.into() },
     );
     vm.execute()
 }
@@ -560,7 +560,7 @@ async fn cmd_list(args: &[&String], go: bool) {
     let mut sigscript = in_compiled
         .build_sig_script_for_covenant_decl("transfer", vec![new_states, sigs, witnesses], CovenantDeclCallOptions { is_leader: true })
         .expect("build leader sigscript");
-    let redeem_push = ScriptBuilder::with_flags(EngineFlags { covenants_enabled: true, sigop_script_units: 0.into() }).add_data(&in_compiled.script).expect("push redeem").drain();
+    let redeem_push = ScriptBuilder::with_flags(EngineFlags { covenants_enabled: true, zk_hardening_enabled: true, sigop_script_units: 0.into() }).add_data(&in_compiled.script).expect("push redeem").drain();
     sigscript.extend_from_slice(&redeem_push);
 
     let in_signed = TransactionInput { previous_outpoint: outpoint, signature_script: sigscript, sequence: 0, mass: input_mass };
@@ -674,7 +674,7 @@ async fn cmd_partial_list(args: &[&String], go: bool) {
     let mut sigscript = in_compiled
         .build_sig_script_for_covenant_decl("transfer", vec![new_states, sigs, witnesses], CovenantDeclCallOptions { is_leader: true })
         .expect("build leader sigscript");
-    let redeem_push = ScriptBuilder::with_flags(EngineFlags { covenants_enabled: true, sigop_script_units: 0.into() }).add_data(&in_compiled.script).expect("push redeem").drain();
+    let redeem_push = ScriptBuilder::with_flags(EngineFlags { covenants_enabled: true, zk_hardening_enabled: true, sigop_script_units: 0.into() }).add_data(&in_compiled.script).expect("push redeem").drain();
     sigscript.extend_from_slice(&redeem_push);
 
     let in_signed = TransactionInput { previous_outpoint: outpoint, signature_script: sigscript, sequence: 0, mass: input_mass };
@@ -793,7 +793,7 @@ async fn cmd_split(args: &[&String], go: bool) {
     let mut sigscript = in_compiled
         .build_sig_script_for_covenant_decl("transfer", vec![new_states, sigs, witnesses], CovenantDeclCallOptions { is_leader: true })
         .expect("build leader sigscript");
-    let redeem_push = ScriptBuilder::with_flags(EngineFlags { covenants_enabled: true, sigop_script_units: 0.into() }).add_data(&in_compiled.script).expect("push redeem").drain();
+    let redeem_push = ScriptBuilder::with_flags(EngineFlags { covenants_enabled: true, zk_hardening_enabled: true, sigop_script_units: 0.into() }).add_data(&in_compiled.script).expect("push redeem").drain();
     sigscript.extend_from_slice(&redeem_push);
 
     let in_signed = TransactionInput { previous_outpoint: outpoint, signature_script: sigscript, sequence: 0, mass: input_mass };
@@ -930,11 +930,11 @@ async fn cmd_merge(args: &[&String], go: bool) {
     let sigs: Expr = vec![Expr::bytes(sig0), Expr::bytes(sig1)].into();
     let witnesses: Expr = Expr::bytes(vec![0u8, 1u8]);   // dormant filler, match-proven
     let mut in0_ss = in0_compiled.build_sig_script_for_covenant_decl("transfer", vec![new_states, sigs, witnesses], CovenantDeclCallOptions { is_leader: true }).expect("build leader sigscript");
-    let redeem0 = ScriptBuilder::with_flags(EngineFlags { covenants_enabled: true, sigop_script_units: 0.into() }).add_data(&in0_compiled.script).expect("push redeem0").drain();
+    let redeem0 = ScriptBuilder::with_flags(EngineFlags { covenants_enabled: true, zk_hardening_enabled: true, sigop_script_units: 0.into() }).add_data(&in0_compiled.script).expect("push redeem0").drain();
     in0_ss.extend_from_slice(&redeem0);
 
     let mut in1_ss = in1_compiled.build_sig_script_for_covenant_decl("transfer", vec![], CovenantDeclCallOptions { is_leader: false }).expect("build delegate sigscript");
-    let redeem1 = ScriptBuilder::with_flags(EngineFlags { covenants_enabled: true, sigop_script_units: 0.into() }).add_data(&in1_compiled.script).expect("push redeem1").drain();
+    let redeem1 = ScriptBuilder::with_flags(EngineFlags { covenants_enabled: true, zk_hardening_enabled: true, sigop_script_units: 0.into() }).add_data(&in1_compiled.script).expect("push redeem1").drain();
     in1_ss.extend_from_slice(&redeem1);
 
     let in0 = TransactionInput { previous_outpoint: in0_outpoint, signature_script: in0_ss, sequence: 0, mass: cov_mass };
@@ -1094,7 +1094,7 @@ async fn cmd_claim(args: &[&String], go: bool) {
     let mut in0_sigscript = forsale_compiled
         .build_sig_script_for_covenant_decl("transfer", vec![new_states, sigs, witnesses], CovenantDeclCallOptions { is_leader: true })
         .expect("build leader sigscript");
-    let redeem_push = ScriptBuilder::with_flags(EngineFlags { covenants_enabled: true, sigop_script_units: 0.into() }).add_data(&forsale_compiled.script).expect("push redeem").drain();
+    let redeem_push = ScriptBuilder::with_flags(EngineFlags { covenants_enabled: true, zk_hardening_enabled: true, sigop_script_units: 0.into() }).add_data(&forsale_compiled.script).expect("push redeem").drain();
     in0_sigscript.extend_from_slice(&redeem_push);
 
     let in0 = TransactionInput { previous_outpoint: fs_outpoint, signature_script: in0_sigscript, sequence: 0, mass: cov_mass };
@@ -1237,7 +1237,7 @@ async fn cmd_send(args: &[&String], go: bool) {
     let mut sigscript = in_compiled
         .build_sig_script_for_covenant_decl("transfer", vec![new_states, sigs, witnesses], CovenantDeclCallOptions { is_leader: true })
         .expect("build leader sigscript");
-    let redeem_push = ScriptBuilder::with_flags(EngineFlags { covenants_enabled: true, sigop_script_units: 0.into() }).add_data(&in_compiled.script).expect("push redeem").drain();
+    let redeem_push = ScriptBuilder::with_flags(EngineFlags { covenants_enabled: true, zk_hardening_enabled: true, sigop_script_units: 0.into() }).add_data(&in_compiled.script).expect("push redeem").drain();
     sigscript.extend_from_slice(&redeem_push);
 
     let in_signed = TransactionInput { previous_outpoint: outpoint, signature_script: sigscript, sequence: 0, mass: input_mass };

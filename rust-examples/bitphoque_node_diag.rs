@@ -58,7 +58,7 @@ async fn probe(rpc: &GrpcClient, source: &str, owner: &[u8], label: &str, amount
         Ok(utxos) if !utxos.is_empty() => {
             let e = &utxos[0];
             let op = &e.outpoint;
-            println!("  [{label}] FOUND ({ms} ms): {}:{}  value {} sompi", op.transaction_id, op.index, e.utxo_entry.amount);
+            println!("  [{label}] FOUND ({ms} ms) at {addr}: {}:{}  value {} sompi", op.transaction_id, op.index, e.utxo_entry.amount);
         }
         Ok(_) => println!("  [{label}] NOT FOUND ({ms} ms) at {addr}"),
         Err(err) => println!("  [{label}] RPC ERROR ({ms} ms): {err}"),
