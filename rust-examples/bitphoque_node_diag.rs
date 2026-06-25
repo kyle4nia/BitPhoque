@@ -25,7 +25,7 @@ use kaspa_txscript::{pay_to_script_hash_script, extract_script_pub_key_address};
 use silverscript_lang::ast::Expr;
 use silverscript_lang::compiler::{compile_contract, CompileOptions};
 
-const NODE: &str = "192.168.0.104:16210";
+const NODE: &str = "127.0.0.1:16210";
 const SIL_FILE: &str = r"C:\bitphoque\covenants\bitphoque_sale_v3.sil";
 
 const MAX_COV_INS: i64 = 3;

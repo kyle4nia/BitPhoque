@@ -810,3 +810,34 @@ read the design doc for the A/B/hybrid forks and detail:
 - **#4 — "Boques"** = colloquial for phoques (like "bucks"); completes phoque/pup/boque denomination story.
 - **#5 — Price-escalating emission schedule** = step bonding curve; DESIGN FORK (A primary-mint / B secondary-market / Hybrid launch-only minter). Decide model before any curve math.
 - **#6 — Wallet clarity** (a: receive page must disambiguate KAS vs phoque parcel; b: pre-publish unit-confusion audit across all surfaces; c: "how to acquire KAS" tutorial — verify exchanges LIVE at write-time).
+
+---
+
+## INFRASTRUCTURE UPDATE (2026-06-24): TN10 node relocated to Big Daddy
+
+**TN10 node moved off TestnetNode (.104) to Big Daddy (192.168.0.118).** The .104 node
+would not sync after 3 days (reached tip, slid back to header mode -- pruning-point
+thrashing). Judged to be configuration cruft from too many node instances on one box, NOT
+hardware (.104 was the stronger box but the sicker node; .206 runs mainnet flawlessly on
+the same v2.0.1). Rebuilt fresh on Big Daddy (Ryzen 5900 12c/24t, 128GB, fresh NVMe) with
+hard isolation. A dedicated NVMe node box arrives ~2026-06-26; Big Daddy may be interim.
+
+**LESSON (worth keeping): isolation beats horsepower.** One box, one node, one datadir, one
+launch script -- undisturbed -- is what made .206 reliable and what .104 lost. The rebuild
+applies exactly that: isolated tree `C:\kaspa-testnet10\`, own v2.0.1 binary, datadir pinned
+via `--appdir`, single launch script, pinned ports (gRPC 16210 / P2P 16211 / wRPC 17210).
+
+**Result:** fresh sync cleared the pruning-point proof cleanly (the stage .104 kept failing)
+and ran healthy. Node endpoint is now `127.0.0.1:16210` for Big-Daddy-local clients (was
+.104 / .206). Mainnet node stays on .206, untouched.
+
+**Client IP updates: fix-on-use, not bulk.** 17 `.rs` clients in `rust-examples\` had stale
+`const NODE` endpoints (.104 / .206). Only `bitphoque_node_diag.rs` was repointed to
+`127.0.0.1:16210` this session (rebuilt, confirmed). The other 16 are deliberately left to
+fail-loud on first use and get fixed one at a time then -- the connection error is the
+reminder. Expect to fix `claim`/`list`/etc. on their next real run against the new node.
+
+**Detailed session handoff:** see `SESSION_HANDOFF_2026-06-24.md` (one-timer) for the
+specific decisions, the launch-script flags, the `--utxoindex` single-vs-two-phase note, the
+diag-reads-zero-during-segment-download quirk, and the open threads (confirm `28a90bc9...`
+claim mined; SMS Twilio monitor started-not-built).
