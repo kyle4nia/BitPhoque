@@ -699,13 +699,136 @@ function enterWallet(){
   renderBalance(); show('home');
 }
 
-function refreshBalance(){
-  // NODE SEAM: real impl = for each tracked parcel address, gRPC
-  // get_utxos_by_addresses (with retry for index lag), reconcile to wallet.json.
-  const b=document.getElementById('refreshBtn'), t=b.textContent;
-  b.textContent='Node syncing…';
-  setTimeout(()=>{ b.textContent=t; renderBalance(); }, 700);
+/* ============================================================================
+   NODE SEAM (read side) WIRED: wrpcCall transport + refreshBalance reconcile
+   ----------------------------------------------------------------------------
+   Replaces the refreshBalance stub. Both halves it depends on are proven:
+     - in-browser P2SH derivation (bitphoque_p2sh.js, template splice)
+     - JSON wRPC over WebSocket to the synced TN10 node (port 18210)
+   This function RECONCILES already-tracked parcels against the live UTXO set.
+   It does NOT discover new holdings (amount-derived P2SH cannot be enumerated
+   blind); discovery is receive/import's job. Here we confirm + prune + sum.
+   ============================================================================ */
+
+// Node JSON wRPC endpoint. Matches start-testnet10.bat --rpclisten-json=0.0.0.0:18210.
+// One place to change for mainnet / a remote node.
+const WRPC_URL = "ws://127.0.0.1:18210";
+
+// --- reusable transport: one JSON wRPC request over a fresh WebSocket ---------
+// method e.g. "getUtxosByAddresses"; params e.g. {addresses:[...]}.
+// Resolves with the parsed message. Rejects on socket error or timeout so a
+// dead node fails loud instead of hanging the UI. Reused by receive/import/write.
+function wrpcCall(method, params, timeoutMs){
+  return new Promise((resolve, reject)=>{
+    let ws, done=false;
+    const finish=(fn,arg)=>{ if(done) return; done=true; try{ws&&ws.close();}catch(e){} fn(arg); };
+    const timer=setTimeout(()=>finish(reject,new Error("wRPC timeout ("+method+")")), timeoutMs||8000);
+    try { ws = new WebSocket(WRPC_URL); }
+    catch(e){ clearTimeout(timer); return reject(e); }
+    ws.onopen   = ()=>ws.send(JSON.stringify({ id:1, method, params: params||{} }));
+    ws.onerror  = ()=>{ clearTimeout(timer); finish(reject,new Error("wRPC socket error (node reachable on "+WRPC_URL+"?)")); };
+    ws.onmessage= (ev)=>{ clearTimeout(timer);
+      let msg; try{ msg=JSON.parse(ev.data); }catch(e){ return finish(reject,new Error("wRPC bad JSON")); }
+      if(msg.error) return finish(reject,new Error("wRPC error: "+(msg.error.message||JSON.stringify(msg.error))));
+      finish(resolve,msg);
+    };
+  });
 }
+
+// Normalize a stored owner pubkey to the 32-byte x-only hex the covenant uses.
+// derive() yields pubHex; if it is 33-byte compressed (66 hex, 02/03 prefix),
+// drop the prefix byte. If already 64 hex (x-only), pass through.
+function xonly(ownerHex){
+  const h=(ownerHex||"").toLowerCase();
+  if(h.length===66 && (h.startsWith("02")||h.startsWith("03"))) return h.slice(2);
+  if(h.length===64) return h;
+  throw new Error("owner pubkey not 32B x-only or 33B compressed: len "+h.length);
+}
+
+// --- the real refreshBalance: derive -> getUtxosByAddresses -> reconcile ------
+// For each tracked parcel: re-derive its P2SH from (owner, covenant_amount,
+// forSale, price), query the node for that address's UTXOs, and keep the parcel
+// only if a returned entry's covenantId matches our token AND the outpoint is
+// live. Retries on address-index lag (the node's by-address index trails
+// confirmation by a few seconds, per the status doc). Prunes spent parcels.
+async function refreshBalance(){
+  const btn=document.getElementById('refreshBtn'), label=btn?btn.textContent:'';
+  const setBtn=(s)=>{ if(btn) btn.textContent=s; };
+
+  if(parcels.length===0){ renderBalance(); return; }   // nothing tracked, nothing to query
+
+  setBtn('Checking node...');
+
+  // 1) derive each tracked parcel's address (covenant_amount, NOT amount_pups)
+  let derived;
+  try {
+    derived = parcels.map(p=>({
+      p,
+      addr: window.KASPA.deriveP2SHAddress(
+        xonly(p.owner),
+        BigInt(p.covenant_amount),
+        !!p.forSale,
+        BigInt(p.price||0),
+        (window.KASPA && window.KASPA.network) || 'kaspatest'
+      )
+    }));
+  } catch(e){
+    setBtn('Bad parcel data');
+    console.error('[refreshBalance] derive failed:', e);
+    setTimeout(()=>setBtn(label), 1400);
+    return;
+  }
+
+  const addresses = [...new Set(derived.map(d=>d.addr))];
+
+  // 2) query the node, retrying on index lag (3 attempts, 3s apart)
+  let entries=null, lastErr=null;
+  for(let attempt=1; attempt<=3; attempt++){
+    try {
+      const msg = await wrpcCall("getUtxosByAddresses", { addresses });
+      // wRPC convention: results under params.entries[], not result
+      entries = (msg.params && msg.params.entries) || msg.entries || [];
+      if(entries.length>0 || attempt===3) break;
+      setBtn('Indexing... ('+attempt+'/3)');
+      await new Promise(r=>setTimeout(r, 3000));
+    } catch(e){
+      lastErr=e;
+      if(attempt===3) break;
+      await new Promise(r=>setTimeout(r, 3000));
+    }
+  }
+
+  if(entries===null){
+    setBtn('Node unreachable');
+    console.error('[refreshBalance] node call failed:', lastErr);
+    setTimeout(()=>setBtn(label), 1600);
+    return;
+  }
+
+  // 3) index live covenant entries by outpoint. Keep only OUR token
+  //    (covenantId prefix match); plain KAS (covenantId null) is fee money,
+  //    not a phoque parcel, so it is skipped here.
+  const live=new Map();
+  for(const e of entries){
+    const ue=e.utxoEntry||{}, op=e.outpoint||{};
+    const cid=ue.covenantId||"";
+    if(!cid || !cid.startsWith(COVENANT_ID)) continue;   // skip plain KAS / wrong token
+    // key on the outpoint alone (txid:index is globally unique; no address echo assumed)
+    live.set(op.transactionId+":"+op.index, { amount: ue.amount, cid });
+  }
+
+  // 4) reconcile: keep tracked parcels still present on-chain, prune the rest.
+  //    A parcel matches if its stored outpoint is in the live set.
+  const kept=[];
+  for(const {p} of derived){
+    if(live.has(p.outpoint)) kept.push(p);   // outpoint stored as "txid:index"
+  }
+  parcels = kept;
+
+  renderBalance();
+  setBtn(label);
+}
+
 
 function lockWallet(){
   // prototype: seed is in-memory only; "lock" returns to welcome without wiping
