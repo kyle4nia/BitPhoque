@@ -844,3 +844,10 @@ reminder. Expect to fix `claim`/`list`/etc. on their next real run against the n
 specific decisions, the launch-script flags, the `--utxoindex` single-vs-two-phase note, the
 diag-reads-zero-during-segment-download quirk, and the open threads (confirm `28a90bc9...`
 claim mined; SMS Twilio monitor started-not-built).
+
+**SMS node-monitor (Twilio) - height-read listener now EXISTS.** The deferred monitor's
+open question was how a lightweight 2-min cron reads block height without the heavy Rust
+diag. RESOLVED in passing: the wallet work added a JSON wRPC listener to the node launch
+(`--rpclisten-json=0.0.0.0:18210` on start-testnet10.bat). PowerShell can `Invoke-RestMethod`
+/ websocket `getInfo` against 18210 for a cheap height + isSynced read. Monitor itself still
+deferred until post-new-box topology settles, but the listener it needs is live.

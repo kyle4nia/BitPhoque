@@ -257,3 +257,14 @@ engine source (`crypto/txscript/src/lib.rs:80-81,143` + `data\_stack.rs:331`):
 * CONSEQUENCE: NO contract surgery, NO regenesis, NO chunked reveal. Verify-before-gutting paid off hard —
 we nearly regenesis'd a leaner contract to beat a non-limit. (Abandoned shrink experiments: git 961959b.)
 
+
+---
+
+### CLI claim - confirmed mined (2026-06-25)
+- **tx** `28a90bc9a5ae922837e05f10952be500be289709cca8cf55461d6fd6ed5fec35`
+- First claim broadcast through `bitphoque_cli claim` (prior claims were standalone harnesses).
+- buyer2 paid 100M sompi to buyer1 (seller `8c02c20a...`), claimed 5000 phoques from the
+  for-sale parcel `4b0c8187...:0`; fee 900k; change ~99.8 TKAS.
+- Status: node-ACCEPTED 2026-06-24 (TN10 mid-IBD, unconfirmed at the time); CONFIRMED MINED
+  2026-06-25 on the Big Daddy node once synced. Parcel `4b0c8187...:0` flipped to spent,
+  buyer2's new 5000 not-for-sale parcel present. Local VM verify passed before broadcast.
