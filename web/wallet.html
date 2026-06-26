@@ -883,6 +883,7 @@ const PANELS = {
       } catch(e){ return {err:'Build failed: '+(e.message||e)}; }
       // store for submit step
       window._pendingSendTx = result.txJson;
+      const sb=document.getElementById('submitBtn'); if(sb) sb.style.display='block';
       const whole = (amt===iamt);
       return {out: `[send] BUILT + SIGNED (not yet submitted)\n  sighash: ${result.sigHashHex}\n  sigscript: ${result.sigscriptLen} bytes\n  outputs: ${whole?'1 (whole)':'2 (partial+change)'}\n  values: ${result.outputValues.map(v=>(v/1e8).toFixed(8)+' TKAS').join(' + ')}\n  fee: 0.007 TKAS\n\nClick "Submit to node" to broadcast.`};
     }
@@ -902,7 +903,7 @@ const PANELS = {
       if(!d) return {err:"Paste a descriptor first."};
       // NODE SEAM: real impl = base58check decode → version byte → covenant_id
       // match (refuse wrong token) → recompute P2SH (WASM) → gRPC confirm → record.
-      const sb=document.getElementById('submitBtn'); if(sb) sb.style.display='block';
+      
       return {out:
         `decode(descriptor)\n  • version gate ……… OK (prototype)\n  • covenant_id ……… expect ${COVENANT_ID}…\n  • P2SH recompute … NODE SEAM (needs WASM compiler)\n  • confirm on-chain  NODE SEAM (needs synced node)\n\nReal 'receive' recomputes the P2SH locally — the chain is authority,\nthe descriptor is only a hint — then records the parcel in wallet.json.`};
     }
