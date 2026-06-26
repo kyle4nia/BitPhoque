@@ -951,20 +951,21 @@ const PANELS = {
 
   receive: {
     title: "Receive phoques",
-    lede: "Your wallet address is below — share it to receive KAS for fees. To receive phoques, paste a parcel descriptor someone sent you. Mirrors the proven CLI <code>receive</code> — it decodes, version-gates, checks the covenant_id, recomputes the P2SH locally, and confirms against the chain.",
+    lede: "Your wallet address is below — share it to receive KAS for fees. To receive phoques, paste a parcel descriptor someone sent you. It decodes the descriptor, checks the covenant_id, derives the amount-bound address, and confirms the parcel is live on-chain before tracking it — the descriptor is a claim, the chain is the truth.",
     addrField: true,
     fields: [
       {id:"desc", label:"Parcel descriptor (base58check)", ph:"paste descriptor…", textarea:true},
     ],
     cta: "Decode & confirm",
-    run: (v)=>{
-      const d=(v.desc||"").trim();
-      if(!d) return {err:"Paste a descriptor first."};
-      // NODE SEAM: real impl = base58check decode → version byte → covenant_id
-      // match (refuse wrong token) → recompute P2SH (WASM) → gRPC confirm → record.
-      
+    run: async (v)=>{
+      const desc=(v.desc||"").trim();
+      if(!desc) return {err:"Paste a descriptor first."};
+      let p;
+      try {
+        p = await receiveParcel(desc);
+      } catch(e){ return {err: e.message || String(e)}; }
       return {out:
-        `decode(descriptor)\n  • version gate ……… OK (prototype)\n  • covenant_id ……… expect ${COVENANT_ID}…\n  • P2SH recompute … NODE SEAM (needs WASM compiler)\n  • confirm on-chain  NODE SEAM (needs synced node)\n\nReal 'receive' recomputes the P2SH locally — the chain is authority,\nthe descriptor is only a hint — then records the parcel in wallet.json.`};
+        `[receive] PARCEL CONFIRMED + TRACKED\n  amount: ${p.covenant_amount} phoques\n  owner:  ${p.owner.slice(0,16)}…\n  outpoint: ${p.outpoint}\n  forSale: ${p.forSale}${p.forSale ? ` @ ${p.price} sompi` : ''}\n\nIt now appears in your balance. Refresh to see it.`};
     }
   },
   claim: {
