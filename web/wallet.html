@@ -840,16 +840,55 @@ function lockWallet(){
 const PANELS = {
   send: {
     title: "Send phoques",
-    lede: "Transfer to another wallet. Mirrors the proven CLI <code>send</code> — owner-signed, leader ABI. Out0 is owned by the recipient; any change returns to you.",
+    lede: "Transfer phoques to another wallet. Builds, signs, and submits in-browser — key never leaves the device.",
     fields: [
-      {id:"to",   label:"Recipient owner pubkey (hex)", ph:"02ab… (33-byte compressed)"},
-      {id:"amt",  label:"Amount (phoques)", ph:"e.g. 1000", type:"number"},
+      {id:"to",    label:"Recipient pubkey (64-hex, x-only)", ph:"abcd…"},
+      {id:"amt",   label:"Amount to send (phoques)", ph:"e.g. 1000", type:"number"},
+      {id:"txid",  label:"Input parcel txid", ph:"28a90bc9…"},
+      {id:"idx",   label:"Input parcel index", ph:"0", type:"number"},
+      {id:"iamt",  label:"Input parcel phoques", ph:"e.g. 5000", type:"number"},
     ],
-    cta: "Build send",
-    run: (v)=>seamTx("send",
-      `bitphoque send --to ${v.to||"<pubkey>"} --amount ${v.amt||"<n>"} --go`,
-      "On --go the node accepts the tx and the wallet emits a base58check descriptor for the recipient's out0 (exactly what their `receive` consumes). Round-trip already proven on-chain (tx e45d9c2b..).")
+    cta: "Build & sign",
+    run: async (v)=>{
+      const to=(v.to||'').trim(), amt=parseInt(v.amt||'0',10), txid=(v.txid||'').trim();
+      const idx=parseInt(v.idx||'0',10), iamt=parseInt(v.iamt||'0',10);
+      if(!to||to.length!==64) return {err:'Recipient must be 64-hex x-only pubkey.'};
+      if(!amt||amt<=0) return {err:'Enter a positive phoque amount.'};
+      if(!txid||txid.length!==64) return {err:'Enter the input parcel txid (64 hex).'};
+      if(!iamt||iamt<=0) return {err:'Enter the input parcel phoque amount.'};
+      if(amt>iamt) return {err:'Send amount exceeds input parcel ('+iamt+').'};
+      if(!myKey) return {err:'Wallet not unlocked — re-enter first.'};
+      // query node for UTXO value
+      
+      const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js');
+      const inputAddr = deriveP2SHAddress(xonly(myKey.pubHex), BigInt(iamt), false, 0n, 'kaspatest');
+      let inputValue;
+      try {
+        const msg = await wrpcCall("getUtxosByAddresses", {addresses:[inputAddr]});
+        const entries = (msg.params&&msg.params.entries)||[];
+        const match = entries.find(e=>e.outpoint&&e.outpoint.transactionId===txid&&e.outpoint.index===idx);
+        if(!match) return {err:'Parcel not found on-chain at '+txid.slice(0,8)+'…:'+idx+' (address '+inputAddr.slice(0,20)+'…). Check txid/index/amount.'};
+        inputValue = BigInt(match.utxoEntry.amount);
+      } catch(e){ return {err:'Node query failed: '+(e.message||e)}; }
+      // build + sign
+      const {buildSendTx} = await import('./bitphoque_tx.js');
+      let result;
+      try {
+        result = buildSendTx({
+          inputTxId: txid, inputIndex: idx, inputValue,
+          inputOwner: xonly(myKey.pubHex), inputAmount: BigInt(iamt),
+          recipientPubkey: xonly(to), sendAmount: BigInt(amt),
+          privkeyHex: myKey.privHex,
+        });
+      } catch(e){ return {err:'Build failed: '+(e.message||e)}; }
+      // store for submit step
+      window._pendingSendTx = result.txJson;
+      const whole = (amt===iamt);
+      return {out: `[send] BUILT + SIGNED (not yet submitted)\n  sighash: ${result.sigHashHex}\n  sigscript: ${result.sigscriptLen} bytes\n  outputs: ${whole?'1 (whole)':'2 (partial+change)'}\n  values: ${result.outputValues.map(v=>(v/1e8).toFixed(8)+' TKAS').join(' + ')}\n  fee: 0.007 TKAS\n\nClick "Submit to node" to broadcast.`};
+    }
   },
+  
+
   receive: {
     title: "Receive phoques",
     lede: "Your wallet address is below — share it to receive KAS for fees. To receive phoques, paste a parcel descriptor someone sent you. Mirrors the proven CLI <code>receive</code> — it decodes, version-gates, checks the covenant_id, recomputes the P2SH locally, and confirms against the chain.",
@@ -863,6 +902,7 @@ const PANELS = {
       if(!d) return {err:"Paste a descriptor first."};
       // NODE SEAM: real impl = base58check decode → version byte → covenant_id
       // match (refuse wrong token) → recompute P2SH (WASM) → gRPC confirm → record.
+      const sb=document.getElementById('submitBtn'); if(sb) sb.style.display='block';
       return {out:
         `decode(descriptor)\n  • version gate ……… OK (prototype)\n  • covenant_id ……… expect ${COVENANT_ID}…\n  • P2SH recompute … NODE SEAM (needs WASM compiler)\n  • confirm on-chain  NODE SEAM (needs synced node)\n\nReal 'receive' recomputes the P2SH locally — the chain is authority,\nthe descriptor is only a hint — then records the parcel in wallet.json.`};
     }
@@ -954,7 +994,19 @@ function seamTx(kind, cli, note){
   return { out:
     `# ${kind} — would run (NODE SEAM, not broadcast):\n${cli}\n\n# ${note}\n\n# The web build constructs + signs this tx in-browser (key never leaves\n# the device) and submits via gRPC. Blocked here on: WASM P2SH compiler\n# + a synced TN10 node.` };
 }
-
+async function submitPendingTx(){
+  const out=document.getElementById('panelOut');
+  if(!window._pendingSendTx){ out.textContent='! No pending tx. Build first.'; return; }
+  out.textContent='Submitting…';
+  try {
+    const msg = await wrpcCall("submitTransaction", window._pendingSendTx);
+    const txid = (msg.params&&msg.params.transactionId)||(msg.transactionId)||'(see response)';
+    window._pendingSendTx=null;
+    out.textContent='ACCEPTED. txid: '+txid+'\n\nThe parcel is in the mempool. Refresh balance to confirm.';
+  } catch(e){
+    out.textContent='! REJECTED: '+(e.message||e)+'\n\nThe tx was not accepted. Check the error above.';
+  }
+}
 let activePanel=null;
 function openPanel(key){
   const p=PANELS[key]; if(!p) return;
@@ -978,17 +1030,22 @@ function openPanel(key){
     ${fields}
     <div class="seam"><span class="ic">&#9888;</span><span>Prototype — node-free. This builds the call and shows what would run; nothing is broadcast. Live action is gated on the WASM P2SH compiler and a synced TN10 node.</span></div>
     <button class="btn" style="margin-top:14px" onclick="runPanel()">${p.cta}</button>
+    <button class="btn" style="margin-top:8px;background:var(--ink);color:var(--paper);display:none" id="submitBtn" onclick="submitPendingTx()">Submit to node</button>
     <pre class="out" id="panelOut"></pre>`;
   document.getElementById('panelBack').classList.add('open');
 }
 function closePanel(){ document.getElementById('panelBack').classList.remove('open'); activePanel=null; }
-function runPanel(){
+async function runPanel(){
   const p=PANELS[activePanel]; if(!p) return;
   const v={}; p.fields.forEach(f=>{ v[f.id]=document.getElementById('f_'+f.id).value; });
-  const res=p.run(v);
   const out=document.getElementById('panelOut');
-  out.textContent = res.err ? `! ${res.err}` : res.out;
   out.classList.add('show');
+  try {
+    const res = await Promise.resolve(p.run(v));
+    out.textContent = res.err ? `! ${res.err}` : res.out;
+  } catch(e) {
+    out.textContent = '! Error: ' + (e.message||e);
+  }
 }
 
 function resetAll(){ seed=[]; verifyBlanks=[]; parcels=[]; myKey=null; closePanel(); show('welcome'); }
