@@ -72,6 +72,7 @@
   import { wordlist } from '@scure/bip39/wordlists/english.js';
   import { HDKey } from '@scure/bip32';
   import { schnorr } from '@noble/curves/secp256k1.js';
+  import { decodeDescriptor } from './bitphoque_descriptor.js';
   window.BIP39 = {
     ready: true,
     wordlist,
@@ -828,7 +829,65 @@ async function refreshBalance(){
   renderBalance();
   setBtn(label);
 }
+// ---- RECEIVE: descriptor string -> trustless confirm -> tracked parcel ----
+// Same scope/helpers as refreshBalance (wrpcCall, parcels, renderBalance,
+// COVENANT_ID, xonly) + window.KASPA.deriveP2SHAddress. decodeDescriptor imported above.
+// The descriptor is a CLAIM; the node is TRUTH. P2SH is amount-derived, so a UTXO
+// at the derived address cryptographically proves the amount — sender's number isn't trusted.
+async function receiveParcel(descriptorString){
+  // 1) decode — throws loud on bad checksum / foreign covenant_id / bad length
+  const {decodeDescriptor} = await import('./bitphoque_descriptor.js');
+  const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js');
+  const d = decodeDescriptor(descriptorString.trim());
 
+  // 2) derive the amount-bound P2SH (logical values, as proven)
+  const addr = deriveP2SHAddress(
+    xonly(d.ownerPubkey), d.amount, d.forSale, d.price,
+    'kaspatest'
+  );
+  const wantOutpoint = d.txid + ":" + d.outputIndex;
+
+  if (parcels.some(p => p.outpoint === wantOutpoint))
+    throw new Error('parcel already tracked: ' + wantOutpoint);
+
+  // 3) confirm on-chain — query derived address, retry on index lag (3x, 3s)
+  let entries = null, lastErr = null;
+  for (let attempt = 1; attempt <= 3; attempt++){
+    try {
+      const msg = await wrpcCall("getUtxosByAddresses", { addresses: [addr] });
+      entries = (msg.params && msg.params.entries) || msg.entries || [];
+      if (entries.length > 0 || attempt === 3) break;
+      await new Promise(r => setTimeout(r, 3000));
+    } catch(e){ lastErr = e; if (attempt === 3) break; await new Promise(r => setTimeout(r, 3000)); }
+  }
+  if (entries === null) throw new Error('node unreachable: ' + (lastErr && lastErr.message));
+
+  // find the exact outpoint and confirm it's OUR token
+  let found = false;
+  for (const e of entries){
+    const ue = e.utxoEntry || {}, op = e.outpoint || {};
+    if (op.transactionId + ":" + op.index !== wantOutpoint) continue;
+    const cid = ue.covenantId || "";
+    if (!cid || !cid.startsWith(COVENANT_ID))
+      throw new Error('outpoint exists but is not a BitPhoque covenant UTXO');
+    found = true; break;
+  }
+  if (!found)
+    throw new Error('parcel not found at ' + addr + ' (outpoint ' + wantOutpoint + '). If the tx is fresh, wait for the address index and retry.');
+
+  // 4) record — fund-safety fields match the refreshBalance reconcile contract exactly
+  const parcel = {
+    owner:           d.ownerPubkey,                       // x-only hex; xonly() normalizes at derive
+    covenant_amount: d.amount.toString(),                 // whole units (BigInt-safe string)
+    amount_pups:     (d.amount * 100000000n).toString(),  // 1 phoque = 1e8 pups (DISPLAY only — see note)
+    forSale:         d.forSale,
+    price:           d.price.toString(),
+    outpoint:        wantOutpoint,
+  };
+  parcels.push(parcel);
+  renderBalance();
+  return parcel;
+}
 
 function lockWallet(){
   // prototype: seed is in-memory only; "lock" returns to welcome without wiping
@@ -1012,6 +1071,7 @@ const PANELS = {
       return {out: `[partial-list] BUILT + SIGNED\n  listed: ${amt} phoques at ${price} sompi (out0)\n  change: ${iamt-amt} phoques, not-for-sale (out1)\n  values: ${result.outputValues.map(v=>(v/1e8).toFixed(8)+' TKAS').join(' + ')}\n  fee: 0.007 TKAS\n\nClick "Submit to node" to broadcast.`};
     }
   },
+    
   split: {
     title: "Split a parcel",
     lede: "Break one parcel into two (e.g. to send a round amount). Conservation enforced by the covenant.",
