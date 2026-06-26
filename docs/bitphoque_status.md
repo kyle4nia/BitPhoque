@@ -32,6 +32,24 @@ truth and live on TN10:
   closed. R1 (F-2 genesis derivation) retired by design (genesis uses route-1 whole-compiled-script,
   parcels use route-2 splice — intentionally different, see below).
 
+### TOOLCHAIN SPLIT — blocks live send→receive green-path test (2026-06-26)
+
+The send→receive loop is BUILT on both ends but never run live, because seeding a
+fresh parcel needs the CLI, and the CLI won't compile against the current build clone:
+
+- Canonical `bitphoque_cli.rs` uses three-field `EngineFlags { covenants_enabled,
+  zk_hardening_enabled, sigop_script_units }`.
+- Build clone `C:\kaspa-tn12\silverscript` (HEAD `2c46231`) has the OLDER two-field
+  `EngineFlags { covenants_enabled, sigop_script_units }` — no `zk_hardening_enabled`.
+  `git log --all` in the clone shows NO zk_hardening commit. The engine canonical
+  targets is NOT in this clone.
+- ACTION next session: locate the newer silverscript checkout where canonical last
+  built on-chain (the "proven on-chain" engine), or pull the clone to the zk_hardening
+  era. Then rebuild CLI and run the green-path: CLI `send` buyer1→web-wallet pubkey
+  `b016a47bf515652457d4d5c67feadde3ee64daa1eafe39d362a7c54fef293e8b`, paste emitted
+  descriptor into the web Receive panel → expect first green PARCEL CONFIRMED.
+- Also (moot until engine fixed): canonical CLI node addr is correct at `127.0.0.1:16210`;
+  a stale `192.168.0.104` was found only in a now-deleted untracked clone copy.
 ### Genesis vs parcel P2SH (net-new finding, 2026-06-26)
 
 Genesis uses **route-1**: `blake2b(entire compiled script)` → P2SH. Parcels use **route-2**:
@@ -41,7 +59,8 @@ expect `deriveP2SHAddress(genesis operands)` to match the genesis UTXO on-chain.
 
 ### What's next
 
-- **Receive flow** — descriptor decode → P2SH recompute → confirm on-chain → record parcel.
+- **Receive flow (PROVEN LIVE):** descriptor decode (`bitphoque_descriptor.js`, byte-identical to Rust codec, vendored `@scure/base` base58check) → amount-derived P2SH recompute (`bitphoque_p2sh.js`) → on-chain confirm (outpoint must exist with our covenant_id; amount self-certifies via amount-derived P2SH) → track. Wired into the Receive panel (`receiveParcel`). Trustless refusal of a spent parcel proven live on TN10 from both console and UI. The descriptor is a CLAIM; the chain is TRUTH.
+- **Descriptor emit (BUILT, UNTESTED LIVE):** send-submit assembles the recipient descriptor from `_pendingDesc` (recipientPubkey + sendAmount, stashed at build) + the submit-returned txid, via `encodeDescriptor`. Gated to send only (split/list/etc. don't set `_pendingDesc`). Code complete + committed; not yet run end-to-end (blocked on CLI toolchain, below).
 - **Parcel picker UX** — dropdown from tracked parcels instead of manual txid entry.
 - **Claim panel** — multi-input, payment-authorized (dummy sig + witness index). Different
   sigscript: covenant input unsigned, buyer's plain input signed at its own index.
