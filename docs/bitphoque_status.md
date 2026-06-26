@@ -1,152 +1,53 @@
 # BitPhoque — Status
 
-_**Read `operating_baseline.md` alongside this doc** — the same working discipline applies: one
-command at a time, single-line terminal commands, plain-English-before-code, source-of-truth files
-committed to git, dry-run before broadcast, verify-by-reading-source for anything that enforces,
-local VM verify before TN10. BitPhoque lives in its OWN tree (`C:\bitphoque`) and its OWN git repo —
-separate from oracle-protocol. The end-of-session git checkpoint ritual covers TWO trees._
+_Read `operating_baseline.md` alongside this doc. BitPhoque lives in its own tree (`C:\bitphoque`)
+and its own git repo — separate from oracle-protocol. End-of-session checkpoint covers both trees._
 
-_**The permanent record lives in `bitphoque_history.md`** (same `docs\` folder) — the on-chain tx ledger
-(every confirmed txid, sections 1–10) and solved war stories were moved there to keep THIS doc focused on
-session-startup: where we are, the live design, and what's next. Start a session from this doc; reach for the
-history file only to look up a specific past fact. Consensus rules / fee floors / node quirks were KEPT here
-(still actively consulted when building txs)._
-
-__Last updated: **2026-06-26 — WRITE SEAM LIVE: in-browser tx build+sign+submit, proven with mined tx `4f3d791f`.**
-Headline: the web wallet is now a SPENDING WALLET. The write seam — the last real engineering blocker — is cracked. **(1) SIGHASH** — `web/bitphoque_sighash.js`: Kaspa's `calc_schnorr_signature_hash` reimplemented in pure browser JS (keyed blake2b-256, domain separator `b"TransactionSigningHash"`). PROVEN byte-for-byte vs Rust unit-test vectors (v1-all-0 → `5b2657…f075`). **(2) SIGSCRIPT** — `web/bitphoque_sigscript.js`: covenant ABI sigscript builder. State[] is TRANSPOSED (each field across all states, concatenated as fixed-width blobs). Structure decoded from a CLI diagnostic hex dump (split dry-run, 177 bytes). PROVEN byte-for-byte vs CLI output. **(3) TX BUILDER** — `web/bitphoque_tx.js`: ties sighash + schnorr sign (@noble/curves) + sigscript + JSON serialization. Sighash CROSS-CHECKED vs CLI dry-run for a real covenant split (buyer2 5000→1000+4000, expected `aef9823c…` → PASS). **(4) LIVE MINED TX** — `4f3d791f32e34d94a44efed5ea678e52bf19bfc7bcf35cf1d37c2a3b28b80fc1`: the web wallet sent 1000 phoques (buyer2→wallet→buyer2 round-trip). Build, sign, and submit all in-browser; key never left the device; node accepted. **(5) SEND PANEL WIRED** — `wallet.html` send panel replaced `seamTx()` echo with real async build→sign→submit. Submit button (two-step: build first, then confirm submit). **(6) AUDIT R3+R5 CLOSED** — minter branch annotated (F-3), genesis node const repointed to `127.0.0.1` (F-4). **(7) NET-NEW FINDING (genesis vs parcel P2SH):** genesis uses route-1 (whole compiled script → blake2b → P2SH), parcels use route-2 (template splice). These are INTENTIONALLY different scripts with different P2SH addresses — do NOT expect `deriveP2SHAddress(genesis operands)` to match the genesis UTXO. Genesis is a one-time establishment artifact; the wallet only derives parcel addresses (route-2), which is correct. **SUBMIT FORMAT (discovered from source + live node):** `wrpcCall("submitTransaction", {transaction:{version:1, inputs:[{previousOutpoint:{transactionId,index}, signatureScript(hex), sequence:0, sigOpCount:0, computeBudget:24}], outputs:[{value, scriptPublicKey:"0000aa20<hash>87", covenant:{authorizingInput:0, covenantId(hex)}}], lockTime:0, subnetworkId:"00…00"(40 hex), gas:0, payload:"", mass:0}, allowOrphan:false})`. computeBudget=24 for 240k script units. **WHAT'S NEXT (no more engineering risk — fit-and-finish):** split/list/claim panel wiring (same pipeline, different newStates); parcel picker UX (dropdown from tracked parcels instead of manual txid); receive flow (descriptor decode → P2SH recompute → confirm → record); status doc update to retire stale headlines. **STILL OPEN:** SMS Twilio node-monitor (deferred until topology settles).
-_Prior — **2026-06-25 — NODE SEAM CRACKED: in-browser P2SH derivation (no WASM) + JSON wRPC transport, both proven against the live synced node. Whole-parcel send broadcast+mined. Derivation cross-checked vs KasWare.**
-Headline: the wallet's NODE SEAM — the long-standing "browser has no silverscript compiler + no way to reach the node" blocker — is BROKEN OPEN, and it turned out to need ZERO WASM. **(1) TRANSPORT — JSON wRPC over WebSocket.** The CLI talks gRPC (16210), which browsers can't speak. The node also exposes Borsh wRPC (17210), but Borsh in hand-rolled JS is a non-starter (binary, version-locked). FIX: added `--rpclisten-json=0.0.0.0:18210` to `start-testnet10.bat` — JSON wRPC is reachable from plain browser `WebSocket` with no library, no WASM. PROVEN in the wallet's own browser console: `getInfo` returned `isSynced:true isUtxoIndexed:true`, and `getUtxosByAddresses` returned real parcels. KEY PROTOCOL FACTS (confirmed from live responses): result comes back under `params.entries[]` (wRPC convention, NOT `result`); each entry has `outpoint.{transactionId,index}` + `utxoEntry.{amount,scriptPublicKey,covenantId}`; **`covenantId` is populated** for covenant parcels (e.g. `3baed5a3…` on the live 3000 parcel) and `null` for plain KAS — so the browser distinguishes phoque-parcels from fee-KAS straight from the node response. **(2) IN-BROWSER P2SH DERIVATION — Route B1 (template splice), no compiler.** The v3 covenant compiles to a FIXED 2793-byte script; a diff harness (`rust-examples/bitphoque_script_diff.rs`) compiled 4 param sets and proved every per-parcel operand sits at a FIXED offset, FIXED width (owner@2/32B, amount@37/8B-LE, forSale@48/1B, price@50/8B-LE) — no CScriptNum width drift, all 2793 bytes. So the browser builds the redeem script by SPLICING operands into a captured template, then `blake2b-256` (plain, no key — verified vs `Params::new().hash_length(32)` in standard.rs), wrap `aa20<hash>87`, bech32 via the wallet's proven `kasEncode` at **version 8 (ScriptHash)**. New module `web/bitphoque_p2sh.js`. CORRECTNESS GATES PASS in-browser: derived hash + address reproduce the LIVE on-chain parcel A byte-for-byte (`f8a010c4…` / `kaspatest:pru2qyxy…`). This closes what the doc called the hard blocker. SELF-ERECTING NOTE: the template is a build artifact pinned to `bitphoque_sale_v3.sil` + this compiler version; if either changes, re-capture via script_diff + re-verify the gate. Mainnet-grade alt = compile in-WASM; deferred (one fixed covenant doesn't need it). **(3) WHOLE-PARCEL SEND — LIVE, MINED, ROUND-TRIPPED.** The last untested transfer path (1-in/1-out, no change) fired: buyer1→buyer2, whole 16301 parcel, tx `b52e19c6c629655565f4fa98b016fdc36199841db515e55007cb6643f18435ba`. Confirmed mined by the `receive` round-trip (descriptor decoded → P2SH recomputed → confirmed in UTXO set). Send/receive surface now COMPLETE (partial + whole). **(4) DERIVATION CROSS-CHECK vs KasWare — PASS.** The prior session's open seam (seed→address never checked against an external wallet) is CLOSED: a fresh 12-word from the web wallet imported into KasWare (Kaspium/111111 path, TN10) produced the IDENTICAL address character-for-character. Encoder + `m/44'/111111'/0'/0/0` path verified against an independent production wallet. (NOT the deprecated KDX/972 path — that's non-BIP-32, intentionally out of scope.) **(5) NODE confirmed synced + relocated.** TN10 node now on Big Daddy at `127.0.0.1:16210`, `synced=true`, blocks ~1.44M; the `28a90bc9…` CLI claim from last session CONFIRMED MINED (parcel `4b0c8187…:0` + change spent). CLI/diag repointed `.104`→`127.0.0.1` (fix-on-use); `bitphoque_cli.rs` also needed the new `zk_hardening_enabled: true` EngineFlags field (8 sites) + deps re-added to the fresh clone (bs58/kaspa-hashes/kaspa-txscript-errors). Commit `e9c042f`. **NEXT (node-free now):** wire `refreshBalance()` to the real path — for each tracked parcel, `deriveP2SHAddress` → `getUtxosByAddresses` over JSON wRPC → confirm + sum. Then the write side (build/sign/submit txs in-browser) and publish. **STILL OPEN:** the write seam (tx construction in browser — derivation + transport are done, signing/serialization remain); SMS Twilio node-monitor (started, not built)._
-
-_Prior - **2026-06-24 — KEY DERIVATION WIRED (seed → Kaspa address, deterministic) + LIVE on-chain CLI CLAIM broadcast + SECRET SCRUB done (key out of git history).**
-Headline: three things closed. **(1) KEY DERIVATION — the missing wallet link.** The wallet now turns its BIP-39 seed into a real spendable Kaspa address: seed → BIP-32 derive `m/44'/111111'/0'/0/0` (documented Kaspa standard, coin type 111111) → secp256k1 x-only pubkey (`@noble/curves` schnorr) → `kaspatest:` address (custom Kaspa bech32, written in-file). DESIGN DECISION = **Option A**: wallet keys are SEED-DERIVED (HD), NOT the random `thread_rng()` scheme the harnesses use — so the 12 words actually recover the wallet. (Consequence: wallet addresses won't match the harness buyer1/2/3 keys; those were random testnet-practice keys, a different thing.) CORRECTNESS GATE PASSED: the Kaspa address encoder reproduces a REAL keygen vector byte-for-byte (`5d338aa5…` → `kaspatest:qpwn8z49…`), proving the custom bech32 against ground truth, not prose. PROVEN ON BIG DADDY: derived address shows in the Receive panel; restoring the SAME seed across sessions yields the IDENTICAL address (determinism confirmed). Vendored `@scure/bip32` + `@noble/curves` v2.2.0 (matches the bip39/hashes vendoring), import-map resolved, no CDN. Commit `b6f0c5e` (28 files). SEAMS (noted, testnet-acceptable): (a) the full seed→address chain is NOT yet cross-checked against an EXTERNAL Kaspa wallet (e.g. import the same mnemonic into KasWare, confirm same address) — encoder is proven vs our vector + path is the published standard, but add an external mnemonic→address vector before mainnet; (b) mainnet swap is ONE line: `network: 'kaspatest'` → `'kaspa'` (version byte stays 0). **(2) LIVE CLI CLAIM — first claim through the CLI (prior claims were standalone harnesses).** `bitphoque_cli claim` broadcast and node-ACCEPTED: tx `28a90bc9a5ae922837e05f10952be500be289709cca8cf55461d6fd6ed5fec35` — buyer2 paid 100M to buyer1 (seller `8c02c20a…`), claimed 5000 phoques from the for-sale parcel `4b0c8187…:0`, fee 900k, change ~99.8 TKAS. LOCAL VM VERIFY passed before broadcast; node returned ACCEPTED with the txid. HONEST STATUS: node **ACCEPTED** into mempool, but **NOT yet confirmed MINED** — TN10 still mid-IBD (`synced=false`, blocks ~825k/1.46M), so virtual-chain advance is limited. Re-verify it mined once synced (the 5000 parcel `4b0c8187…:0` should flip to NOT-FOUND, buyer2's new 5000 not-for-sale parcel should appear). **(3) SECRET SCRUB — done, pre-public.** The TN10 throwaway privkey `1c14a1de…536b9f` (only real private key in the repo) is rewritten out of ALL git history via `git-filter-repo --replace-text` → `[REDACTED-TN10-KEY]`; verified gone (`-S` search on the full key = silent across all 60 commits). Full-history sweep otherwise clean (pubkeys, gitignored-file refs, prose-about-keys only). NOTE: filter-repo rewrote ALL commit hashes (pre-scrub `1e17bfb` → `4c1e74d`, etc.) and removed `origin` (none was set); add the GitHub remote fresh when going public. Backup at `C:\bitphoque_backup_prescrub`. **NODE STATUS:** TestnetNode @ .104 still mid-IBD (bodies climbing). **STILL OPEN (node-gated, next session):** whole-parcel `send --go` (VM-proven, not broadcast); confirm the `28a90bc9…` claim mined once synced. **STILL OPEN (wallet):** the NODE SEAM (WASM P2SH compiler + synced node for real balance/tx); external derivation cross-check; then publish._
-
-_Prior — **WEB WALLET: HOME SCREEN BUILT + BIP-39 SEAM WIRED (real @scure mnemonic + AES-GCM persistence), proven in-browser + committed to git.**
-Headline: the web wallet at BitPhoque.org is now a TRACKED git project (was a loose prototype) with two real slices done. **(1) HOME screen** — the post-onboarding view, mirrors the proven CLI surface: a balance header + the everyday four (send/receive/claim/list) as primary actions, with split/merge/partial-list/import in a "More" drawer. Balance renders **"N phoques · M pups"** (1 phoque = 10^8 BitPups, BigInt math); on TN10 the pup remainder is always 0 (whole-unit token, no sub-unit headroom — the formatter is mainnet-forward-ready anyway). Every chain read/write is routed through an explicit **NODE SEAM** that PRINTS the CLI-equivalent call rather than faking chain truth — no fake balances, nothing broadcast (still needs the WASM P2SH compiler + a synced node). **(2) BIP-39 PRODUCTION SEAM — WIRED (was the HARD-RULE publish gate).** Swapped `Math.random()`/245-word stub for **vendored `@scure/bip39` v2.2.0** (real `crypto.getRandomValues` entropy, full 2048-word list, real checksum) + **WebCrypto AES-GCM persistence** under a PBKDF2 passphrase (250k iters; ciphertext-only in localStorage, passphrase never stored). NO bundler — native ES modules resolved by an import map; the audited libs live LOCALLY in `web/vendor/` (NOT a CDN — the seed-generating code is code we ship, fits self-erecting). Persistence is OPTIONAL (save-or-skip on the done screen); a saved wallet boots to an Unlock screen. PROVEN IN-BROWSER on Big Daddy: create → verify → set passphrase → save → refresh → Unlock → wrong-pass rejected (GCM auth tag) → right-pass → HOME, seed restored exact; restore-existing-phrase path also walked. Secret-swept clean (only param-name/wordlist false positives; `wallet.html` clean). Commits: `4006c59` (web tree: HOME + wired seam, 43 files incl. vendored @scure/@noble), `8501fd9` (remove stray `cd` paste-artifact). **SERVE-OVER-HTTP NOTE:** ES modules don't load from `file://` — the wallet must be served (local `python -m http.server`, or the https host); double-click won't load BIP-39. **STILL OPEN on the wallet track:** (a) the **NODE SEAM** — balance reads + tx builds need a WASM P2SH compiler (browser has no silverscript compiler) + a synced TN10 node; (b) **key derivation** — the wallet generates + securely stores a real BIP-39 seed but does NOT yet derive a Kaspa spending key from it (BIP-32/derivation-path step; belongs with the WASM layer, correct sequencing); (c) publish to the live cPanel host (the seam gate is now LIFTED, but defer until key-derivation + node seam land so it's a working wallet, not just an onboarding shell). NEXT (node-free): the pre-public **secret scrub** — the TN10 privkey `1c14a1de…` in this doc needs redaction + git-history rewrite before any public release._
-
-_Prior — **SEND/RECEIVE WIRED INTO THE CLI + PROVEN ON-CHAIN (the receive problem, solved end-to-end) + descriptor format fully verified.**
-Headline: the send/receive keystone is CLOSED. `receive` and `send` are both built into `bitphoque_cli.rs` and proven against
-the live node. **`receive` (committed earlier this session):** decodes a base58check descriptor → version gate → covenant_id
-match (refuses a descriptor for the wrong token) → recomputes the P2SH locally (chain is authority, descriptor is only a hint)
-→ confirms live → records in wallet.json. Proven on-chain: fed the descriptor for the live `4b0c8187..:0` parcel, CONFIRMED +
-recorded. **`send` (committed `d9e0bb9`):** a minimal diff off `cmd_split` — single-input, owner-signed, leader ABI — with
-out0 owned by the RECIPIENT (not the signer). TWO cases, BOTH proven: PARTIAL (2-out: recipient + signer change) and WHOLE
-(1-out, no change; the single-element `new_states` under v3 leader ABI confirmed by LOCAL VM VERIFY before broadcast). On
-`--go` ACCEPTED, send records the signer's CHANGE parcel and EMITS a base58check descriptor for the recipient's out0 — exactly
-what `receive` consumes. **FULL ROUND-TRIP PROVEN LIVE:** `send --go` (partial, 1000 phoques buyer1→buyer2, tx `e45d9c2b..`)
-emitted a descriptor; `receive` decoded it and confirmed a matching parcel on-chain. The loop closes: send produces what receive
-consumes. **Descriptor format FULLY VERIFIED this session** (beyond the codec's own selftest): hand-decoded the send-emitted
-descriptor and confirmed all 8 fields read back correct AND the txid byte-order is FORWARD (== `tx.id()` display order, NOT
-reversed) — mainnet-clean. **NODE/PORT FIX:** the CLI's `NODE` const was wrong at `16211` (that's P2P — `Unimplemented` gRPC
-error); corrected to `192.168.0.104:16210` (gRPC, all-ifaces per the live `--rpclisten=0.0.0.0:16210` launch). The "16210
-localhost-only" comment was stale/false. NODE STATUS: TestnetNode @ .104 mid-IBD all session (body download ~10 blocks/sec,
-I/O-bound on a 500GB SSD; root-caused NOT a bug — headers complete at 1,463,494, bodies filling ~481k→ climbing; disk at 100%,
-kaspad bursting-then-idle = waiting on disk). `receive` CONFIRMED both a deep-history parcel AND a tip-fresh one mid-IBD — the
-address index keeps up with new parcels even before full sync (the query only needs the parcel's block, not the tip). DECIDED
-NOT to swap testnet→.206 (weaker hardware makes I/O-bound IBD worse). OPEN: (1) live WHOLE-parcel `send --go` is VM-proven but
-not yet broadcast — needs the node synced (the 16301 change parcel reads NOT-confirmed mid-IBD, can't be spent yet); (2) the
-live `claim` dry-run still node-gated on IBD finishing; (3) note for mainnet: identical parcels (same owner+amount+forSale+price)
-share ONE amount-derived P2SH, so `receive`/`confirm_parcel` confirms "a matching parcel exists," not "this specific txid's
-parcel" — fungible-at-address, a design characteristic not a bug. Commits this session: `receive`, `d9e0bb9` (send). NEXT on
-the wallet track: the user-facing WEB WALLET at BitPhoque.org (first slice — UI shell + BIP-39 create/restore flow — prototyped
-node-free; see WEB WALLET note below)._
-
-_Prior — **DESCRIPTOR CODEC BUILT + PROVEN (the send/receive keystone) + int encoding pinned + format finalized (2026-06-23, earlier).**
-`bitphoque_descriptor_v1.rs` (committed `dedc62d`) — the parcel-descriptor codec built; `--selftest` PASSES three checks node-free:
-round-trip identity, base58check reject-on-corruption, on-chain assertion (derived P2SH == live `4b0c8187..:0`). Settled two design
-questions: (1) ctor `int` encoding PINNED to Kaspa minimal CScriptNum (NOT 8-byte LE — prior lean was wrong; verified against
-compiler→add_i64→serialize_i64 + test vectors); (2) descriptor format FINALIZED as Option B (fixed-width transport — amount/price
-u64-LE, output_index u32-LE, 118-byte payload, base58check-wrapped; CScriptNum lives ONLY at P2SH derivation). inspect_v3's NODE
-const fixed `.206→.104`. Commits: `3a4f809` (pin), `06806b8` (format), `dedc62d` (codec + inspect_v3 fix). NB the bs58 build dep
-lives in the disposable silverscript tree (`cargo add bs58 --features check -p silverscript-lang`) — a fresh clone must re-add it.
-NOW SUPERSEDED: the codec is wired into the CLI as send/receive and proven on-chain (see headline)._
-
-_**WEB WALLET — now a TRACKED PROJECT, HOME built + seam wired (2026-06-23; supersedes the "first slice / prototype" notes below).** The
-items below describe how the wallet STARTED (first slice, stubbed seed, no git tree). Current state has moved past all of that:
-the wallet lives at `C:\bitphoque\web\` (committed `4006c59`), has a working HOME screen, and the BIP-39 seam + AES-GCM persistence
-are WIRED and proven in-browser (full detail in this session's headline up top). The STUBBED-seed and "do NOT publish until the seam
-is wired" lines below are RESOLVED — the seam is wired; publish is still deferred for the node-seam + key-derivation reasons in the
-headline, not the entropy reason. The folder layout is now `web/{wallet.html, bitphoque.jpeg, vendor/}` and MUST be served over
-http(s) (ES modules don't load from `file://`). The WASM-P2SH architecture note below is STILL the open lean (NODE SEAM)._
-
-_**WEB WALLET — FIRST SLICE (2026-06-23, prototype only — HISTORICAL, see resolution above).** Started the user-facing wallet at BitPhoque.org.
-Decided: plain HTML/JS single file (matches the existing `index.html`, no build step), drops into `public_html`. Built the UI
-SHELL + BIP-39 create/restore FLOW (welcome → create/restore → seed display → verify → done), reconciled to the live landing-page
-aesthetic (real `bitphoque.jpeg` seal via `mix-blend-mode: multiply` on cream; exact tokens `--paper #FBFAF7` / `--ink #111110` /
-`--muted #6B6A64`; Inter body + Fraunces display; `color-scheme: light`). [RESOLVED] STUBBED: seed entropy uses `Math.random()` + a 245-word
-BIP-39 excerpt, NO checksum — flagged at a single "PRODUCTION SEAM" (swap to `@scure/bip39` `generateMnemonic`/`validateMnemonic` +
-encrypted WebCrypto storage). [RESOLVED] HARD RULE: do NOT publish at a guessable/linked path on the live cPanel host until the seam is wired —
-a `Math.random()` seed is not secure. Seal only renders if `wallet.html` sits in the SAME folder as `bitphoque.jpeg`. [RESOLVED] This slice is
-NOT in a git repo — it's a prototype file, not yet part of a tracked web project. [DONE] NEXT web slices: wallet HOME (balance/send/receive/
-claim mirroring the proven CLI), then wire the BIP-39 seam. ARCHITECTURE NOTE for the eventual real build (STILL OPEN — the NODE SEAM): the browser has no
-silverscript compiler — P2SH derivation needs WASM (keeps "browser = full trustless client", fits self-erecting) vs a backend
-(faster but reintroduces a coordinator) vs JS reimpl (re-specs the encoding — the thing the descriptor codec deliberately avoided).
-WASM is the lean; not yet decided._
-
-_Prior — **WALLET ARCHITECTURE DESIGN SESSION (2026-06-22, no code/commit yet — design only).** A working
-session spent on the USER-FACING wallet (the "thin marketplace app" successor), entirely while the TN10 node was
-mid-IBD so nothing on-chain could be tested. Decisions settled (full detail in the new "USER WALLET — ARCHITECTURE
-(2026-06-22)" section below): (a) FORM = a web app at BitPhoque.org — one codebase, all four platforms via browser
-now, Tauri (desktop) / Capacitor (mobile) wraps later; do NOT start with four native apps. (b) CUSTODY =
-non-custodial, standard BIP-39 12-word seed, key generated + held in-browser, never on a server; Guardian/Circle
-social recovery PARKED as a planned opt-in upgrade (preferentially covenant-layer key-rotation, NOT seed-Shamir).
-(c) The RECEIVE PROBLEM (a parcel's P2SH is amount-derived, so a fresh wallet can't discover holdings blind) is
-solved by a HYBRID: an off-chain signed PARCEL DESCRIPTOR (the trustless protocol truth) + an OPTIONAL indexer
-(convenience cache, anyone can run one), chain always the authority. Descriptor format specced (base58check
-transport). (d) The wallet MUST handle native KAS to pay fees — "gas-tank, not vault" posture (size for fees +
-headroom, steer savings to a main wallet) to keep the browser-key risk surface small. (e) ONE token mechanism:
-BitPhoque's own KCC-20-style COVENANT token (confirm the "KCC-20" name against `kcc20.sil` in-tree) — NOT KRC-20
-(different, indexer-based mechanism; PARKED as a separate later question, verify tooling before committing). (f)
-Build the narrow BitPhoque wallet but keep the KAS layer SEPARABLE ("send a funded Kaspa tx" as a clean primitive
-with parcel logic on top) so a general Kaspa wallet stays reachable without being built now. NB: this session
-produced NO files and NO commits — it is design captured into this doc only; nothing is git-protected beyond this
-doc edit. Engine status UNCHANGED from below: claim's live dry-run still gated on the node finishing IBD (node had
-just finished receiving the UTXO set and begun "Importing the UTXO set of the pruning point" at session end — past
-the chunk-download phase, not yet synced)._
-
-_Prior milestone — **CLI FEATURE-COMPLETE (claim committed) + TN10 NODE TOCCATA UPGRADE.** (1) CLI: **`claim` committed**
-(`78c14d9`) — CLI now has import / balance / list / split / merge / partial-list / **claim**; ALL subcommands built,
-compiling, committed. The harness-collapse phase is DONE in code. Remaining gate on claim: a LIVE dry-run VM-verify,
-blocked only on the TN10 node finishing IBD. (2) **TN10 node root-caused + rebuilt.** The TestnetNode kept wedging at
-the utxoindex/consensus-init step — root cause was a **mainnet-line kaspad 2.0.0 binary + a pre-Toccata datadir**
-(consensus store last written June 9; Toccata hit TN10 ~June 20). Fix: upgraded to **kaspad 2.0.1** (the post-Toccata
-floor per the Toccata guide), wiped to a fresh datadir (`datadir_pretoccata_old` set aside), launched clean —
-now IBD'ing healthily on the correct rules with gRPC reachable. (3) **gRPC fix:** the TN10 launch .bat was missing
-an external gRPC listener (only had `--rpclisten-borsh`), so the CLI (which uses GrpcClient) couldn't connect.
-Added `--rpclisten=0.0.0.0:16210`; confirmed `GRPC Server starting on: 0.0.0.0:16210` on launch. **CLI NODE const
-must be `192.168.0.104:16210`** (gRPC), NOT 16211 (that's P2P — the old "gRPC 16211" note was WRONG). After IBD:
-live claim dry-run → shared lib → thin marketplace app → mainnet checklist._
-
-_Prior milestone — **PARTIAL-BALANCE LISTING PROVEN ON-CHAIN.** One owner-signed tx now lists an arbitrary
-PART of a holding (`4b0c8187...`): 5000 of buyer1's 25301 merge parcel put up for sale @ 500000 sompi,
-20301 kept as not-for-sale change, same owner — collapsing the old two-step split-then-list into one tx.
-Harness `bitphoque_partial_list_v3.rs` (minimal diff off the proven self-split: out0 for-sale at a CLI
-price, both outputs same owner, proportional value split). LOCAL VM VERIFY confirmed the listing branch
-accepts a mixed-state 2-output fanout (one for-sale + one not-for-sale) on an owner-signed tx, exactly as
-checkSaleState reads. Remaining: wallet/CLI collapse, then mainnet checklist._
+_The on-chain tx ledger (every confirmed txid) and session-by-session history live in
+`bitphoque_history.md`. Start here; reach for history only to look up a past fact._
 
 ---
 
-## CURRENT STATE (at a glance)
+## WHERE WE ARE (2026-06-26)
 
-- **Original token (v1 contract, fungible):** LIVE. Genesis + transfer proven on-chain. Transfer reject-
-  tests prove the gate (accept valid, reject inflation + wrong-sig).
-- **Sale mechanism (v2 contract, per-UTXO forSale/price):** the trustless fixed-price sale. PROVEN at the
-  VM level (claim + listing, all cheats rejected) AND end-to-end ON-CHAIN (genesis -> list -> claim).
-- **Sale mechanism (v3 contract, fanout-safe F1 fix):** LIVE. Full lifecycle proven on-chain at 2×2 —
-  split → two listings → two independent claims by two distinct buyers; plus secondary-market resale.
-- **Two spend modes:** LISTING (owner-signed, flips a UTXO to forSale=true at a price) and CLAIM
-  (payment-authorized, NO owner sig — a buyer pays >= price to the seller and receives the phoques).
-- **Auction:** recorded as a separate FUTURE build (see swap design doc) — stateful/temporal, own architecture.
-- **Next:** the wallet/CLI is FEATURE-COMPLETE + the SEND/RECEIVE loop is CLOSED — `bitphoque_cli.rs` has import / balance /
-  list / split / merge / partial-list / claim / **send** / **receive**, all built + committed (`78c14d9` claim, `d9e0bb9` send;
-  receive committed same session). send/receive PROVEN ON-CHAIN end-to-end (round-trip: send emits a descriptor, receive consumes
-  it — tx `e45d9c2b..`). Descriptor format fully verified (incl. forward txid byte-order). The CLI proves every primitive the web
-  wallet needs to mirror. LIVE CLI `claim` now BROADCAST + node-ACCEPTED (tx `28a90bc9…`, buyer2←5000 from `4b0c8187…:0`; not yet
-  confirmed mined — IBD). The USER-FACING WEB WALLET at BitPhoque.org is a TRACKED git project (`web/`) with HOME + BIP-39 seam +
-  AES-GCM persistence + KEY DERIVATION (seed → `kaspatest:` address, deterministic, encoder verified vs vector) all WIRED, proven
-  in-browser, committed (`4006c59`, `b6f0c5e`). REMAINING on the wallet track: the NODE SEAM (WASM P2SH compiler + synced node for
-  real balance/tx), external derivation cross-check, then publish; node-gated next: whole-parcel `send --go` + confirm the claim
-  mined once synced. Design + open items live in `bitphoque_swap_covenant_design.md`.
+The web wallet is a **spending wallet**. Every layer of the write seam is proven against ground
+truth and live on TN10:
+
+- **Onboarding:** BIP-39 12-word, real entropy (`@scure/bip39`), AES-GCM encrypted persistence,
+  HD key derivation (`m/44'/111111'/0'/0/0` → secp256k1 x-only → Kaspa bech32), cross-checked vs
+  KasWare.
+- **Read side:** `refreshBalance()` wired — per-parcel P2SH derivation (template splice,
+  `bitphoque_p2sh.js`) → `getUtxosByAddresses` over JSON wRPC (`ws://127.0.0.1:18210`) → covenant
+  filter → reconcile + prune.
+- **Write side (PROVEN LIVE):** sighash (`bitphoque_sighash.js`, keyed blake2b, validated vs Rust
+  test vectors) → schnorr sign (`@noble/curves`) → ABI sigscript (`bitphoque_sigscript.js`,
+  transposed State[], validated vs CLI hex dump) → JSON submit via `wrpcCall("submitTransaction")`.
+  **Live mined tx `4f3d791f`** — wallet sent 1000 phoques, node accepted.
+- **Panels wired:** send, split, list, partial-list — all real build→sign→submit. Claim and merge
+  still stubs (multi-input, different signing patterns).
+- **CLI:** feature-complete — import / balance / list / split / merge / partial-list / claim / send /
+  receive. All proven on-chain.
+- **Audit:** `bitphoque_audit_2026-06-25.md` — history-blind source reconstruction, no fund-loss
+  or supply-break vector found. R3 (minter branch annotated) and R5 (genesis node const repointed)
+  closed. R1 (F-2 genesis derivation) retired by design (genesis uses route-1 whole-compiled-script,
+  parcels use route-2 splice — intentionally different, see below).
+
+### Genesis vs parcel P2SH (net-new finding, 2026-06-26)
+
+Genesis uses **route-1**: `blake2b(entire compiled script)` → P2SH. Parcels use **route-2**:
+template splice with fixed-width operands → `blake2b` → P2SH. These produce different scripts and
+different addresses. The wallet only derives parcel addresses (route-2), which is correct. Do NOT
+expect `deriveP2SHAddress(genesis operands)` to match the genesis UTXO on-chain.
+
+### What's next
+
+- **Receive flow** — descriptor decode → P2SH recompute → confirm on-chain → record parcel.
+- **Parcel picker UX** — dropdown from tracked parcels instead of manual txid entry.
+- **Claim panel** — multi-input, payment-authorized (dummy sig + witness index). Different
+  sigscript: covenant input unsigned, buyer's plain input signed at its own index.
+- **Merge panel** — multi-input, leader/delegate (two sigscripts, two 2793B script reveals).
+- **SMS Twilio node-monitor** — deferred until topology settles (listener at 18210 exists).
+- **Publish** — to the live cPanel host once receive + claim are wired.
 
 ---
 
@@ -156,700 +57,196 @@ BitPhoque is a covenant-based, native-Layer-1 fungible token on Kaspa TN10 — a
 mainnet launch — built on the SAME stack as the Oracle Protocol (silverscript covenants, the
 `binding=cov` N-to-M plumbing), deliberately NOT the indexer-based KRC-20 path. It is a principled
 novelty token: phonetic play on "out of f**ks to give," seal (phoque) mascot, fixed supply, no
-trusted coordinator. Site: https://www.outlawpolitics.org/BitPhoque/ — Family Guy S8E18
-"Quagmire's Dad" is the cultural reference (Chris's French homework: "phoque" = seal).
-
----
-
-## ON-CHAIN HISTORY (TN10) — moved to history
-The full blow-by-blow ledger of every live TN10 tx (sections 1–10: genesis, transfer, v2 sale lifecycle, v3
-genesis/split/2×2 sale/resale/transfer-split/combined-2×2-claim/merge, + the generalized inspect tool) now lives
-in `bitphoque_history.md` — confirmed txids are permanent record, consulted on demand, not read at session-start.
-Quick orientation of what's LIVE is in CURRENT STATE above; covenant_ids and key buyer pubkeys are in THE
-CONTRACTS / DESIGN sections below. Go to the history file for a specific txid or the per-tx detail.
-
----
-
-## CONSENSUS RULES LEARNED (the broadcast lessons — all handled in the harnesses)
-
-From the TRANSFER (spends a covenant UTXO, single input):
-1. v1/Toccata txs use ComputeBudget for input mass, NOT SigopCount (reject: SigopCountInV1). sign.rs uses
-   ComputeBudget(10) for v1.
-2. The v1 covenant spend costs 111,261 script units. Budget sized via the consensus helper
-   `ComputeBudget::checked_covering_script_units(ScriptUnits(N))` -> ComputeBudget(11). (const COVENANT_SCRIPT_UNITS.)
-3. Transfer fee floor ~378,600 (use 400,000) — much higher than genesis (~167k) because spending REVEALS the
-   1540-byte redeem script, inflating tx mass.
-
-From the CLAIM (2-input: covenant + plain buyer funding, 3 outputs):
-4. v1 needs ComputeBudget on EVERY input — including the plain P2PK buyer input (SigopCount rejected wholesale in v1).
-5. A plain P2PK input costs ~100,000 script units in a covenant tx (NOT cheap; budget with ComputeBudget(11)).
-6. KIP-9 STORAGE MASS penalizes dust outputs: storage mass = max(0, C*(|O|/H(O) - |I|/A(I))); the harmonic term
-   divides C by output amount, so a tiny payment output (500k sompi) spiked it to 2,000,000 (limit 500,000).
-   FIX: pay a non-dust amount. The covenant checks `payment >= price`, so we paid 100M (>> 500k listed price)
-   to dodge the dust penalty WITHOUT re-listing. (calc_storage_mass: consensus/core/src/mass/mod.rs:437.)
-7. Claim fee floor ~654,600 (use 700,000) for the bigger 2-input, script-revealing tx (v2).
-
-NOTE: genesis spends a PLAIN funding input as a rothschild bin and used SigopCount(1) successfully — the
-ComputeBudget-on-all-inputs rule (#4) bit the CLAIM (a v1 covenant tx built via silverscript-lang), not genesis.
-
-From the v3 SALE (list, split, and the 2-input claim — all on a real node):
-8. **v3 listing/split fee floor ~659k (use 700k).** The 2793-byte v3 script raises tx mass vs v2's
-   1969B floors. A single-input, single-output listing or a 1→2 split clears at 700k.
-9. **v3 2-INPUT CLAIM fee floor = 857,000 (use 900k).** The claim is the HEAVIEST tx in the lifecycle:
-   it reveals the 2793B script AND carries a second (buyer funding) input AND three outputs. The node
-   rejected 700k with the exact required figure: `required amount of 857000 for compute mass 8570`.
-   Bumping the harness FEE const to 900k cleared it. (List harness stays at 700k — it's lighter.)
-10. **PAYMENT must dodge KIP-9 dust** (carried from v2 #6): pay 100M (>> the 500k/750k price) so the
-    seller payment output isn't dust. Contract only requires payment >= price, so overpaying is fine.
-### MULTI-COVENANT-INPUT ABI (leader / delegate) — the combined-claim finding
-For a tx with N>1 covenant inputs, the covenant ABI is leader/delegate (confirmed against the proven
-merge pattern in `silverscript-lang/tests/kcc20_tests.rs` lines 289–304):
-- **Input 0 = LEADER:** `build_sig_script_for_covenant_decl("transfer", vec![newStates, sigs, witnesses],
-  { is_leader: true })`. It carries the COMPLETE arrays for ALL covenant inputs/outputs —
-  newStates (one per covenant OUTPUT), sigs (one per covenant INPUT), witnesses (a FLAT byte[],
-  one byte per covenant input).
-- **Every other covenant input = DELEGATE:** `build_sig_script_for_covenant_decl("transfer", vec![],
-  { is_leader: false })` — EMPTY args. The delegate still pushes its own redeem script.
-- The contract reads `witnesses[i]`, `prevStates[i]`, `newStates[i]` from the LEADER's arrays. If you
-  (wrongly) make every input a leader with its own single-element arrays, the contract slices past the
-  end of the short per-input array and fails `OutOfBoundsSubstring(1, 2, 1)` (it tried to read
-  witnesses[1] from a 1-byte blob). This was the exact bug hit + fixed building the 2×2 claim.
-- witnesses encoding: a single byte[] blob, e.g. `Expr::bytes(vec![2u8, 3u8])` — NOT a 2-element array
-  of separate byte pushes. The contract does `int(witnesses[i])` to read each index.
-- **SIGNED multi-covenant-input (the merge finding):** when the covenant inputs are owner-SIGNED (not
-  payment-authorized — i.e. not-for-sale inputs taking checkAuth's checkSig branch), EVERY input's
-  signature is computed against the LEADER input's sighash (INDEX 0), NOT against each input's own
-  index. The covenant verifies all sigs from the leader's position. Signing input 1's sig against
-  input 1's sighash → VerifyError. Confirmed against the proven kcc20_tests.rs merge pattern, which
-  signs BOTH inputs at index 0 and passes witness_array [0,1]. The 2×2 claim did not expose this — its
-  covenant inputs were UNSIGNED (dummy sigs; auth came from payment outputs). Merge is the first
-  two-signed-covenant-input tx. RULE for the CLI/wallet: any owner-signed multi-covenant-input tx signs
-  every covenant input at the leader index (0).
-
-### Fee floor (add to the list)
-- v3 COMBINED 2×2 claim (4 inputs: 2 covenant + 2 plain; 6 outputs; TWO script reveals) cleared at
-  fee 1,500,000 on the first try. Floor is somewhere below 1.5M; this is the heaviest tx in the
-  lifecycle. (Single 2-input claim floor was 857k/use 900k; the second covenant input + script reveal
-  is the jump.)
-- v3 MERGE 2→1 (2 covenant inputs, TWO 2793B script reveals, 1 output): node-confirmed floor
-  **1,244,500** (compute mass 12445); use **1.3M**. HEAVIER than the single 2-input claim (857k)
-  because the 2nd input is a FULL script reveal, not a cheap plain input — two 2793B reveals dominate
-  the mass. Lighter than the 2×2 claim (1.5M) because no plain funding inputs / extra outputs.
-
-### NODE / INDEXING QUIRKS
-- **Address-index LAGS the tx-index by a few seconds after confirmation** (observed on the OLD PsychoNode
-  hardware, now retired; the new more-capable TestnetNode @ .104 may lag less, but treat the retry as still
-  required until re-confirmed). A claim run
-  immediately after a listing confirmed returned "no for-sale covenant UTXO found" against the CORRECT
-  P2SH (verified on the explorer that the listing output WAS there). Re-running the same command a
-  moment later found it. The compiled P2SH was right the whole time — the node's by-address UTXO
-  lookup simply hadn't caught up.
-- **CORRECTION (verified against rusty-kaspa RpcApi source this session):** there is NO by-outpoint
-  UTXO query on the RpcApi trait — `get_utxos_by_addresses` is the ONLY UTXO lookup. An earlier note
-  here suggested "query by outpoint (tx-index, no lag)"; that RPC does not exist for this client. The
-  ONLY available mitigation for the lag is RETRY on the by-address lookup (optionally filtering the
-  returned set to a specific outpoint CLIENT-SIDE). `bitphoque_inspect_v3.rs` implements this: a retry
-  loop (`--retries N`, 3s between attempts) plus an optional `--outpoint` client-side filter. Confirmed
-  working this session — after the merge, inspect_v3 took 2 retries before the address index showed the
-  old parcels as spent. The future wallet/inspect generalization must poll/retry, not assume a
-  by-outpoint shortcut.
-- **LOADED-NODE LAG SCARE (2026-06-20) + the diagnostic that settled it.** During the CLI thin-slice
-  proof, a freshly-created partial-list's outputs (`8dff6df4...:0/:1`) read as NOT FOUND from both
-  `balance` and `inspect_v3`, even after retries — looked like the tx had misbuilt or the outputs landed
-  at the wrong P2SH. It had NOT. `bitphoque_node_diag.rs` (read-only health + old-vs-new probe, same
-  connection) showed: node synced=true, utxo_indexed=true, BUT mempool ~62,757 (very heavy load) — and
-  on a settled query ALL parcels (old 5000, new 3000, new 17301) were FOUND, the spent input (20301)
-  correctly absent. Conclusion: the misses were pure address-index lag under mempool load, not a bug. The
-  P2SH compute was correct the whole time (diag computed the SAME addresses inspect/CLI did — proven by
-  the 20301 address matching byte-for-byte). LESSON: when a fresh parcel "vanishes," probe node health +
-  a known-OLD parcel before suspecting the tx. `bitphoque_node_diag.rs` is the keep-around tool for this.
-
----
-
-## THE 520-BYTE WALL — SOLVED (a builder default, not a consensus rule)
-Moved to `bitphoque_history.md` (solved war story — the `ElementExceedsMaxSize(1540, 520)` redeem-script push;
-fixed one-line with `ScriptBuilder::with_flags(covenants_enabled:true)`; element cap is 1,000,000, not 520).
+trusted coordinator. Site: https://www.outlawpolitics.org/BitPhoque/
 
 ---
 
 ## DESIGN — SETTLED
 
-- **Architecture:** per-UTXO balance (real token, not a single-UTXO ledger). Transfers spend N token UTXOs and
-  create M, conservation-enforced.
-- **Ownership:** OWNED via per-UTXO signature. Three modes in the contract (`IDENTIFIER_PUBKEY=0x00`,
-  `IDENTIFIER_SCRIPT_HASH=0x01`, `IDENTIFIER_COVENANT_ID=0x02`). BitPhoque uses 0x00 (pubkey-owned) — plain
-  checkSig, no CSFS needed.
-- **Supply:** FIXED at genesis, NO minter. 42,069 phoques (TN10 placeholder; just a genesis ctor arg). Whole
-  supply minted once; only split/merge/transfer, never increased.
-- **Subdivision — BitPups (DECIDED IN PRINCIPLE; bake in at MAINNET GENESIS).** A phoque subdivides into a named
-  base unit, the **BitPup** (seal-pup; mirrors BTC→satoshi, KAS→sompi). Convention: **1 phoque = 100,000,000
-  BitPups (8 decimal places)**, matching BTC/KAS. APPROACH = pure denomination, NO contract change ("option 1"):
-  the contract already tracks `amount` as an integer and enforces conservation on whole integer units, so we simply
-  declare the integer unit to BE the BitPup. "1 phoque" becomes a display-layer label for 10^8 BitPups — exactly
-  how Bitcoin only ever moves satoshis and "BTC" is the human label. The contract is UNIT-AGNOSTIC: it can already
-  send any whole BitPup amount (e.g. amount=50,000,000 = half a phoque), conservation holds, no fractional logic
-  needed. CONSEQUENCE: at mainnet genesis the supply integer becomes 42,069 × 10^8 = **4,206,900,000,000,000
-  BitPups** (well within i64's ~9.2e18 ceiling — checked, no overflow). CONSTRAINT: this is a GENESIS decision,
-  permanent and unchangeable after mint, and it CANNOT be retrofitted to the live TN10 token (minted as 42,069 whole
-  units with no sub-unit headroom — would need re-genesis). Decide once, correctly, at mainnet day one. Wallet/CLI
-  display divides by 10^8 to show phoques; no covenant work required.
-- **Self-erecting property:** with NO minter covenant deployed and every UTXO genesis'd `isMinter=false`,
-  conservation is ALWAYS enforced and supply is mathematically fixed. PROVEN, not asserted (reject-tests).
-- **Sale model (v2/v3):** per-UTXO `forSale` (bool) + `price` (int) state. Listing is owner-signed; claiming is
-  payment-authorized. checkSaleState allows for-sale OUTPUTS only when NO input is for-sale (a listing);
-  forbids them when ANY input is for-sale (a claim — anti-double-claim). v3 adds the strict-increasing
-  payment-output rule (F1 fix). DECIDED: per-UTXO (fungible), NOT per-phoque ids (which would make it an NFT
-  collection). Full design + open items: `bitphoque_swap_covenant_design.md`.
-
-### Why covenant token, not KRC-20
-KRC-20 is inscription-based, interpreted by a trusted off-chain indexer (Kasplex) — token truth depends on a
-coordinator. A covenant token enforces semantics (conservation, ownership) at the SCRIPT layer with no
-coordinator. NOT blocked on CSFS: an OWNED transfer uses plain OpCheckSig over the spending tx, which works.
+- **Architecture:** per-UTXO balance (real token, not a single-UTXO ledger). Transfers spend N
+  token UTXOs and create M, conservation-enforced.
+- **Ownership:** per-UTXO signature, mode `IDENTIFIER_PUBKEY=0x00` (plain checkSig).
+- **Supply:** FIXED at genesis, NO minter. 42,069 phoques. `genesisIsMinter=false`, conservation
+  always enforced. PROVEN, not asserted (reject-tests).
+- **Subdivision — BitPups.** 1 phoque = 100,000,000 BitPups (8 dp). Pure denomination, no contract
+  change. Mainnet genesis supply = 42,069 × 10^8 = 4,206,900,000,000,000 BitPups (within i64).
+  TN10 token minted as whole units (no sub-unit headroom — needs re-genesis for mainnet).
+- **Sale model (v3):** per-UTXO `forSale` (bool) + `price` (int). Listing = owner-signed. Claim =
+  payment-authorized (no seller key needed). F1 double-claim fix: strict-increasing payment-output
+  indices. Proven on-chain at 2×2 + 3×3 at VM.
+- **Wallet custody:** non-custodial, BIP-39 12-word, key in-browser, never on server.
+- **Receive problem:** solved by off-chain signed parcel descriptor (trustless truth) + optional
+  indexer for UX. Descriptor: 118B fixed-width, base58check, Option-B format. Transport carries
+  logical values; CScriptNum encoding only at derivation.
+- **KAS handling:** "gas-tank, not vault." Fee floors: 700k list/split, 900k claim, 1.3M merge.
+- **Why covenant, not KRC-20:** KRC-20 is inscription-based, interpreted by a trusted off-chain
+  indexer. Covenant token enforces semantics at the script layer with no coordinator.
 
 ---
 
 ## THE CONTRACTS
 
-### Original token — `covenants/bitphoque.sil` (DEPLOYED, the live original)
-Copied VERBATIM from `kcc20.sil` (faithful-adopt, no fork). Self-identifies as `contract KCC20`.
-- Fixed-supply by config: `checkAmounts` (totalIn==totalOut) and `checkMintingTransfer` are gated `if(!isMinter)`;
-  genesis with isMinter=false and there is no path to increase supply. Minter contract never deployed.
-- Ctor (6 args): `KCC20(byte[32] genesisPk, int genesisAmount, byte genesisIdentifierType, bool genesisIsMinter, int maxCovIns, int maxCovOuts)`.
-- Per-UTXO state: ownerIdentifier(byte[32]) + identifierType(byte) + amount(int) + isMinter(bool). state_layout {start:1, len:46}.
-- ABI = leader/delegate: `__leader_transfer(newStates, sigs, witnesses)` + `__delegate_transfer()`. Conservation
-  auto-wired by the binding=cov macro (readInputState -> prevStates[] -> policy -> validateOutputState per output).
-- ctor JSON encodings: byte[32] = array of {"kind":"byte","data":N}; bare byte = {"kind":"byte","data":N};
-  bool = {"kind":"bool","data":false}; int = {"kind":"int","data":N}.
+### Original token — `covenants/bitphoque.sil` (DEPLOYED)
+Copied verbatim from `kcc20.sil`. Ctor (6 args): `KCC20(byte[32] genesisPk, int genesisAmount,
+byte genesisIdentifierType, bool genesisIsMinter, int maxCovIns, int maxCovOuts)`.
+State: ownerIdentifier(byte[32]) + identifierType(byte) + amount(int) + isMinter(bool).
+ABI: `__leader_transfer(newStates, sigs, witnesses)` + `__delegate_transfer()`.
 
-### Sale token — `covenants/bitphoque_sale_v2.sil` (DEPLOYED as the v2 sale token)
-Extends the token with per-UTXO forSale/price + the sale-claim path. Ctor (8 args): adds `bool genesisForSale,
-int genesisPrice` after isMinter. state_layout {start:1, len:57}. Script 1969 bytes.
-- `checkAuth`: per-input — not-for-sale needs owner sig; for-sale needs tx.outputs[witnesses[i]] to pay >= price
-  to the seller's P2PK lock (witnesses[i] = payment output index).
-- `checkSaleState`: if ANY input is for-sale (a claim), forbid for-sale outputs (anti-double-claim); else (a
-  listing) allow them. (v1's checkSaleReset was over-strict — forbade ALL for-sale outputs, making listing
-  impossible; v2 fixed it. History: bitphoque_sale_v1.sil kept as the superseded version.)
-- Compiled for genesis with the v2 owner pubkey: `covenants/bitphoque_sale_compiled.json` + `bitphoque_sale_genesis_ctor.json`.
+### Sale token v3 — `covenants/bitphoque_sale_v3.sil` (LIVE)
+Extends with forSale/price. Ctor (8 args): adds `bool genesisForSale, int genesisPrice`.
+Script 2793 bytes. covenant_id `3baed5a39ed95e6aa62a0d8d46aae39a8d832d4f900e5a6a351dca4fbc326458`.
+Caps 3/3 baked at genesis. F1 fix: strict-increasing payment-output indices.
 
-### Sale token v3 — `covenants/bitphoque_sale_v3.sil` (DEPLOYED as the live sale token)
-Same 8-arg ctor + state shape as v2; adds the F1 fix. Script 2793 bytes. covenant_id `3baed5a3...`.
-- F1 fix: for-sale inputs must use STRICTLY-INCREASING payment-output indices (lastSaleWitness accumulator
-  seeded at -1; each for-sale witness must exceed the previous). No two for-sale inputs share an output.
-- Caps 3/3 baked at genesis (must match across split/list/claim harnesses — amount/caps bake into the P2SH).
-
-### Compile command (from silverscript dir; source-of-truth .sil is in bitphoque)
+### Compile command
 ```
 cargo run --bin silverc -- C:\bitphoque\covenants\<file>.sil --ctor C:\bitphoque\covenants\<ctor>.json -c
 ```
-Capture clean JSON: append ` > <path>.json 2>nul`.
 
 ---
 
-## VM-LEVEL PROOFS (reject-tests — accept AND reject, no node needed)
+## CONSENSUS RULES (the broadcast lessons)
 
-- **Transfer gate** (`rust-examples/bitphoque_reject_tests.rs`): CONTROL passes; inflation FAILS; wrong-sig FAILS.
-  Enforcement is real (the checkDataSig no-op trap ruled out). KEY LESSON: the output's script_public_key MUST be
-  the RECIPIENT's compiled P2SH (encoding new owner + amount), not the genesis P2SH — else VerifyError.
-- **Sale + listing gate** (`rust-examples/bitphoque_sale_reject_tests.rs`, against v3): all green — 10× 1x1
-  (C-CONTROL..C6, L-CONTROL..L2) + 2x2 controls (claim, split-on-list) + 5 fanout cheats rejected (F1 double-claim,
-  F2 cross-wire, F3 inflate, F4 claim-leaves-listing, F5 mixed-auth) + 3x3 fanout (G-CTRL, G1..G4).
+1. v1/Toccata txs use ComputeBudget for input mass, NOT SigopCount.
+2. v1 covenant spend costs 111,261 script units → ComputeBudget(11). (const COVENANT_SCRIPT_UNITS.)
+3. Transfer fee floor ~378,600 (use 400k) — redeem script reveal inflates mass.
+4. v1 needs ComputeBudget on EVERY input including plain P2PK.
+5. Plain P2PK input costs ~100k script units in a covenant tx → ComputeBudget(11).
+6. KIP-9 dust penalty: pay non-dust amounts (≥100M sompi for claims) to dodge storage mass.
+7. v2 claim fee floor ~654,600 (use 700k).
+8. **v3 list/split fee floor ~659k (use 700k).** 2793B script.
+9. **v3 2-input claim fee floor = 857k (use 900k).** Heaviest single-covenant-input tx.
+10. **v3 merge 2→1 fee floor = 1,244,500 (use 1.3M).** Two 2793B script reveals.
+11. **v3 combined 2×2 claim cleared at 1.5M** (4 inputs, 6 outputs, two script reveals).
+
+### Leader/delegate ABI (multi-covenant-input txs)
+- **Input 0 = LEADER:** carries newStates[], sigs[], witnesses[] for ALL covenant inputs.
+- **Other inputs = DELEGATE:** empty args, push own redeem script only.
+- **Signed multi-input:** ALL sigs computed against leader input's sighash (index 0).
+  Signing at the delegate's own index → VerifyError.
+- witnesses: a single byte[] blob (e.g. `[0, 1]`), NOT separate pushes.
+
+### Sigscript structure (ABI — proven via CLI diagnostic hex dump)
+State[] is **transposed**: each field pushed separately as a concatenated fixed-width blob.
+Field order: ownerIdentifier(32B), identifierType(1B), amount(8B LE), isMinter(1B),
+forSale(1B), price(8B LE). Then sig[](65B each), byte[] witnesses, selector (OP_0=leader,
+OP_1=delegate), redeem script push (OP_PUSHDATA2 + u16le(2793) + 2793B).
+
+### submitTransaction JSON format
+```
+wrpcCall("submitTransaction", {
+  transaction: {
+    version: 1,
+    inputs: [{ previousOutpoint: {transactionId, index}, signatureScript (hex),
+               sequence: 0, sigOpCount: 0, computeBudget: 24 }],
+    outputs: [{ value, scriptPublicKey: "0000aa20<hash>87",
+                covenant: {authorizingInput: 0, covenantId (hex)} }],
+    lockTime: 0, subnetworkId: "00…00" (40 hex), gas: 0, payload: "", mass: 0
+  },
+  allowOrphan: false
+})
+```
+computeBudget=24 for 240k script units. scriptPublicKey = version(u16 hex) + script(hex).
+
+### Node / indexing quirks
+- **Address-index lags tx-index by a few seconds** after confirmation. Mitigation: retry
+  (3 attempts, 3s apart — implemented in `refreshBalance` and CLI inspect).
+- **No by-outpoint UTXO query exists** on the RpcApi. `get_utxos_by_addresses` is the ONLY
+  UTXO lookup; filter by outpoint client-side.
+- Under heavy mempool load (60k+), lag can extend. Probe node health + a known-old parcel
+  before suspecting a tx bug. `bitphoque_node_diag.rs` is the keep-around diagnostic.
 
 ---
 
-## HARNESSES & HOW THEY'RE BUILT
+## FILE TREE (`C:\bitphoque`)
 
-Networking harnesses (transfer, sale_list, sale_claim, reject-tests) are bins in the silverscript clone
-(`silverscript-lang\src\bin\`, DISPOSABLE copies; CANONICAL in `C:\bitphoque\rust-examples\`). They need BOTH the
-silverscript compiler API AND kaspa crates — only the silverscript workspace has both. The clone is upstream-tracked,
-so do NOT commit into it. Genesis-class harnesses (genesis_establish, sale_genesis, inspect, keygen) are rothschild
-bins (`C:\kaspa-tn12\rusty-kaspa\rothschild\src\bin\`). Every new .rs is canonical-saved to rust-examples IN ADDITION
-to the disposable build location.
-
-Rebuild recipe (from `C:\kaspa-tn12\silverscript`): `cargo add kaspa-grpc-client/notify/rpc-core/addresses/hashes
---git rusty-kaspa --branch tn12 -p silverscript-lang`; `cargo add tokio --features macros,rt-multi-thread`;
-copy the .rs into `silverscript-lang\src\bin\`; `cargo build/run -p silverscript-lang --bin <name>`.
-Genesis-class: `cargo build/run --release -p rothschild --bin <name>`.
-**For `bitphoque_descriptor_v1.rs` (descriptor codec), one extra dep:** `cargo add bs58 --features check -p silverscript-lang`
-(base58check; the `check` feature pulls `sha2` for the 4-byte checksum). This dep lives in the DISPOSABLE silverscript
-tree's Cargo.toml, NOT the bitphoque repo — so a fresh clone must re-run this `cargo add`.
-
-### Party-agnostic v3 harnesses (the seed of the planned CLI)
-- `bitphoque_sale_list_v3.rs` — CLI: `<amount> <price> <owner_keyfile> [--go]`. Owner KEYFILE is an arg
-  (listing is owner-signed — needs the key). Each amount → a different P2SH, so amount is required.
-- `bitphoque_sale_claim_v3.rs` — CLI: `<seller_pubkey_hex> <amount> <price> <buyer_keyfile> [--go]`. Seller is
-  identified by PUBKEY only (claiming is payment-authorized — no seller key needed). This is what lets any
-  holder resell with the same tool. FEE const = 900k (claim floor 857k).
-
----
-
-## File tree (`C:\bitphoque`)
 ```
 C:\bitphoque\
-  .gitignore                           <- ignores *.key (all key files) + wallet.json (local CLI state)
-  bitphoque_owner.key                  <- original token owner / v2 FUNDING signer (GITIGNORED)
-  bitphoque_v2_owner.key               <- v2/v3 sale token owner = SELLER 50a1... (GITIGNORED)
-  bitphoque_buyer.key                  <- buyer0 261cbf44... (GITIGNORED)
-  bitphoque_buyer1.key                 <- buyer1 8c02c20a... (GITIGNORED)
-  bitphoque_buyer2.key                 <- buyer2 5d338aa5... (GITIGNORED)
-  bitphoque_buyer3.key                 <- buyer3 267496ce... (GITIGNORED)
-  rust-examples\
-    bitphoque_split_transfer_v3.rs     <- TWO-OWNER transfer-split (CLI: in_amount, signer_keyfile,
-                                          out0_amount, out0_pubkey, out1_amount, out1_pubkey)
-    bitphoque_sale_claim_2x2_v3.rs     <- COMBINED 2×2 claim — the on-chain F1 proof (hardcoded consts)
+  .gitignore                           <- *.key + wallet.json
+  bitphoque_owner.key                  <- original/funding signer (GITIGNORED)
+  bitphoque_buyer1.key                 <- buyer1 8c02c20a… (GITIGNORED)
+  bitphoque_buyer2.key                 <- buyer2 5d338aa5… (GITIGNORED)
+  bitphoque_buyer3.key                 <- buyer3 267496ce… (GITIGNORED)
+  wallet.json                          <- CLI parcel state (GITIGNORED)
   covenants\
-    bitphoque.sil                      <- original token contract (KCC20 verbatim, DEPLOYED)
-    bitphoque_ctor.json / _ctor_real.json / _compiled_*.json  <- original ctors + compiled
-    bitphoque_sale_v1.sil              <- sale contract v1 (SUPERSEDED — listing was impossible)
-    bitphoque_sale_v2.sil              <- sale contract v2 (DEPLOYED as the v2 sale token)
-    bitphoque_sale_v3.sil              <- sale contract v3 (DEPLOYED as the live sale token; F1 fix)
-    bitphoque_sale_ctor.json           <- v2 sale ctor (test/8-arg shape)
-    bitphoque_sale_genesis_ctor.json   <- v2 genesis ctor (real owner pubkey baked in)
-    bitphoque_sale_compiled.json       <- v2 compiled (sale_genesis harness reads script from here)
-    bitphoque_sale_compiled_v3.json    <- v3 compiled (genesis_v3 harness reads script from here)
-    (abandoned 520-investigation experiments: bitphoque_slim.sil, *_1x1.json — kept as evidence)
+    bitphoque_sale_v3.sil              <- LIVE covenant source (F1 fix)
+    bitphoque_compiled_real.json       <- compiled contract + genesis ctor args
+    (v1, v2, ctors, slim experiments — kept for reference)
   rust-examples\
-    bitphoque_keygen.rs                <- keypair generator
-    bitphoque_genesis_establish.rs     <- original genesis harness
-    bitphoque_transfer.rs              <- transfer/handoff harness (LIVE transfer)
-    bitphoque_reject_tests.rs          <- original transfer gate proof
-    bitphoque_inspect.rs               <- read-only on-chain confirm tool
-    bitphoque_sale_reject_tests.rs     <- sale+listing gate proof (claim + listing, all cheats; v3)
-    bitphoque_sale_genesis.rs          <- v2 genesis harness (LIVE v2 genesis)
-    bitphoque_sale_genesis_v3.rs       <- v3 genesis harness (LIVE v3 genesis)
-    bitphoque_sale_split_v3.rs         <- v3 split harness (1->2; LIVE split)
-    bitphoque_sale_list.rs             <- v2 LISTING harness (LIVE v2 listing)
-    bitphoque_sale_claim.rs            <- v2 CLAIM harness (LIVE v2 claim)
-    bitphoque_sale_list_v3.rs          <- v3 LISTING harness, PARTY-AGNOSTIC (LIVE v3 listings + resale)
-    bitphoque_sale_claim_v3.rs         <- v3 CLAIM harness, PARTY-AGNOSTIC (LIVE v3 claims + resale)
-    bitphoque_inspect_v3.rs            <- GENERALIZED inspect (compiles any v3 P2SH from params; retry
-                                          loop for index lag; read-only, pubkey-only). committed 46e4568
-    bitphoque_sale_merge_v3.rs         <- MERGE 2→1 harness (LIVE merge 519063be...). committed 46e4568
-    bitphoque_partial_list_v3.rs       <- PARTIAL-LIST harness (LIVE 4b0c8187...): lists PART of a
-                                          balance in one owner-signed tx (out0 for-sale + out1 change)
-    bitphoque_cli.rs                   <- WALLET CLI: import / balance / list / split / merge / partial-list /
-                                          claim / send / receive — feature-complete + send/receive loop CLOSED.
-                                          Option-C track-forward (reads/writes wallet.json). Copies the frozen
-                                          descriptor codec (from descriptor_v1) for send/receive. NODE=...:16210 (gRPC).
-    bitphoque_node_diag.rs             <- read-only node health + index-lag probe (old-vs-new parcel)
-    bitphoque_descriptor_v1.rs         <- PARCEL DESCRIPTOR CODEC v1 (send/receive keystone): encode/decode
-                                          (118B fixed-width, base58check) + derive_p2sh (canonical builder path).
-                                          --selftest PROVEN: round-trip + checksum-reject + on-chain-matching P2SH
-                                          (derives 4b0c8187..:0's address). Node-free. committed dedc62d. Needs bs58.
+    bitphoque_cli.rs                   <- CLI: all 9 subcommands, feature-complete
+    bitphoque_genesis_establish.rs     <- genesis harness (NODE const = 127.0.0.1)
+    bitphoque_descriptor_v1.rs         <- parcel descriptor codec
+    bitphoque_node_diag.rs             <- node health probe
+    bitphoque_inspect_v3.rs            <- generalized on-chain inspect (retry, pubkey-only)
+    (+ reject tests, sale harnesses, keygen, merge, split-transfer — all canonical)
+  web\
+    wallet.html                        <- the wallet (onboarding + HOME + action panels)
+    bitphoque_p2sh.js                  <- in-browser P2SH derivation (template splice)
+    bitphoque_sighash.js               <- sighash (keyed blake2b, proven vs Rust vectors)
+    bitphoque_sigscript.js             <- ABI sigscript builder (proven vs CLI hex dump)
+    bitphoque_tx.js                    <- tx builder (sighash + sign + sigscript + JSON)
+    vendor/                            <- @scure/bip39, @scure/bip32, @noble/curves,
+                                          @noble/hashes — all v2.2.0, vendored locally
   docs\
     bitphoque_status.md                <- this file
-    bitphoque_history.md               <- PERMANENT record: on-chain tx ledger (txids, sections 1–10) +
-                                          solved war stories (520-byte wall). Consulted on demand, not at start.
-    bitphoque_swap_covenant_design.md  <- sale/swap design + auction future-build + open items
-    bitphoque_mainnet_checklist.md     <- the pre-mainnet GATE
-    operating_baseline.md              <- shared portable baseline (copy in oracle tree)
-      
+    bitphoque_history.md               <- on-chain tx ledger + session history
+    bitphoque_audit_2026-06-25.md      <- security audit
+    bitphoque_swap_covenant_design.md  <- sale/swap design + auction future-build
+    bitphoque_mainnet_checklist.md     <- pre-mainnet gate
+    operating_baseline.md              <- shared portable baseline
 ```
-Own git repo (branch `master`). NOT yet pushed to GitHub — later deliberate "make it public" pass
-(clean repo name + README + secret-sweep first).
+
+Own git repo (branch `master`). Not yet pushed to GitHub.
 
 ---
 
-## WALLET / CLI — DECISION & DIRECTION (2026-06-19)
+## TN10 GROUND FACTS
 
-The end-goal framing Kyle set this session (keep these three goals in view for all BitPhoque work):
-1. **Fund the ongoing Oracle Protocol / related work by selling phoques over time.**
-2. **Master covenants + post-Toccata Kaspa.**
-3. **Help drive Kaspa adoption.**
-
-Wallet/CLI sequencing DECIDED (engine before chassis):
-- **Engine first** — finish proving the sale lifecycle on-chain (done for separate claims + resale;
-  combined 2×2 still open). Don't divert to UI before the claim path is proven repeatable.
-- **Then collapse harnesses → one party-agnostic CLI** (`bitphoque list/claim/balance …`). The two
-  party-agnostic harnesses are the seed; the refactor is mostly argument plumbing + a shared lib.
-- **Then a thin BitPhoque wallet APP** over that lib — start with the ONE screen that matters: a
-  marketplace view ("here are listings, click to buy"). A CLI is fine for Kyle (minting/listing his
-  supply); a real buyer reselling needs a button, not `cargo run`. The wallet is what makes
-  peer-to-peer real for non-technical holders.
-- **General covenant-token wallet** = its own (later) project; arguably THE product if covenant tokens
-  take off on Kaspa. Not now.
-- **The indexing problem is the wallet's hard part** (and overlaps the inspect-generalization item):
-  each (owner, amount, forSale, price, caps) tuple is a DIFFERENT P2SH, so a wallet can't watch one
-  address per key — it must enumerate candidate P2SHes or index covenant UTXOs by covenant_id. The
-  harnesses dodge this because they always KNOW the amount and compile the exact P2SH. Design this
-  before building the app (and mind the address-index lag quirk above).
-
-### WALLET CLI — THIN SLICE BUILT (2026-06-20), Option-C model
-The indexing problem above is SOLVED for the near-term wallet via **Option C: track-forward**. The
-wallet does NOT scan the DAG — it maintains its OWN parcel set in a local `wallet.json` (project root,
-GITIGNORED, NEVER holds private keys — owner is a pubkey; signing reads a `*.key` by PATH; safe on
-stream). Each record carries exactly the ctor args that determine the P2SH (owner, amount, forSale,
-price, caps) + outpoint + value + status, so the wallet can always RECOMPUTE the P2SH and confirm the
-parcel live — it never has to GUESS an amount. A parcel enters the wallet three ways: you created it
-(CLI records the outputs as it broadcasts), you received it (the tx names the amount), or you `import`
-it (the bootstrap + rescan-by-hint recovery path). Honest limit: a parcel arriving via a tx the wallet
-DIDN'T build won't be known until `import`. Full Option-C upgrade path = a real DAG indexer (deferred,
-"its own project").
-
-`bitphoque_cli.rs` — single-file thin slice, three subcommands, same safety spine as every harness
-(dry-run default, `--go`, LOCAL VM VERIFY gates broadcast; tx-build code lifted verbatim from the
-proven partial-list harness):
-- `import  <owner_pk_hex> <amount> <forSale 0|1> <price>` — confirm a parcel on-chain (retry through
-  index lag) and record it. Overwrites an existing record (so it doubles as the repair path).
-- `balance <owner_pk_hex>` — read wallet.json, recompute each live parcel's P2SH, confirm against the
-  node, print holdings (total + per-parcel, for-sale flagged). PURE READ — NEVER writes status on a
-  lookup miss (a miss is ambiguous: index lag vs spend), just flags "not confirmed". Filters status=spent.
-- `partial-list <owner_keyfile> <in_amount> <list_amount> <price> [--go]` — the proven partial-list, and
-  on ACCEPTED it records FORWARD: input marked spent, out0 (for-sale) + out1 (change) recorded live.
-
-PROVEN on-chain via the CLI: partial-list tx `8dff6df4fa58e6efa72998d4914a7b387c8b0bacddccb1a1e61ebfc4c96f7a48`
-— 3000 of buyer1's 20301 listed @ 500000 (out0) + 17301 change (out1). balance then showed all three of
-buyer1's live parcels (5000 + 3000 for-sale + 17301 held = 25301).
-
-BUGS FOUND + FIXED this slice (both real, both in `bitphoque_cli.rs` now):
-1. **wallet.json parser separator.** `save_wallet` joins records with `},\n {` (comma + whitespace), but
-   the reader split on bare `},{` and missed the comma — saw the file as ONE record, dropped the rest.
-   Fix: the reader skips comma AND whitespace at the `}`→`{` boundary. (Lesson: debug from the ACTUAL
-   on-disk bytes — `type wallet.json` — not an assumed format. First fix attempt missed the comma.)
-2. **balance auto-marked-spent on a lookup miss.** Under heavy mempool load the address index lagged, a
-   fresh parcel read as NOT FOUND, and balance WRONGLY wrote status=spent — corrupting wallet.json. Fix:
-   balance is now non-destructive; a miss is reported, never written. (See the LOADED-NODE LAG SCARE in
-   NODE/INDEXING QUIRKS — `bitphoque_node_diag.rs` proved the parcels were fine, just lagging.)
-
-DELIBERATE SHORTCUT (noted so it doesn't become the design): the wallet.json parser is hand-rolled (reads
-only its own flat output), to avoid a serde dep in the thin slice. When the shared lib is extracted for the
-full CLI, swap in serde_json.
-
-CLI SUBCOMMANDS COMPLETE: **claim is PORTED + COMMITTED** (`78c14d9`) — joining list/split/merge/partial-list
-(`9847e00` merge, `2211f09` split). CLI = import / balance / partial-list / list / split / merge / claim, all
-compiling + committed. claim's port notes: arg order is `<buyer_keyfile> <seller_pubkey_hex> <amount> <price>`
-(keyfile-first, matching list/split/merge convention); single covenant input so NO leader/delegate quirk (buyer's
-plain input signs its own index 1); local CLAIM_FEE=900k / CLAIM_SCRIPT_UNITS=300k / PAYMENT=100M consts scoped in
-the fn (like merge) so they don't disturb the shared 700k/240k calibration; forward-records the claimed parcel to
-wallet.json. REMAINING on claim: a LIVE dry-run VM-verify on-chain (every other subcommand got one; claim's was
-blocked on the node). Then extract the shared lib; then the thin marketplace app.
+- **Node:** Big Daddy (`127.0.0.1:16210` gRPC, `18210` JSON wRPC). kaspad 2.0.1.
+  Launch: `kaspad.exe v2.0.1 --testnet --netsuffix=10 --appdir=C:\kaspa-testnet10\datadir
+  --utxoindex --disable-upnp --rpclisten=0.0.0.0:16210 --rpclisten-borsh=0.0.0.0:17210
+  --rpclisten-json=0.0.0.0:18210`. Mainnet stays on .206, untouched.
+- **Build clones:** rusty-kaspa `C:\kaspa-tn12\rusty-kaspa`; silverscript `C:\kaspa-tn12\silverscript`.
+- **Fee floors:** genesis 200k; transfer 400k; list/split 700k; claim 900k; merge 1.3M; 2×2 claim 1.5M.
+- **Key pubkeys:** buyer1 `8c02c20a…`, buyer2 `5d338aa5…`, buyer3 `267496ce…`.
+- **Faucet:** min 1000 TKAS/request, 24h cap 100k.
+- **Isolation lesson:** one box, one node, one datadir, one launch script. .206 runs mainnet
+  flawlessly because it runs nothing else. Apply this discipline to every node.
 
 ---
 
-## USER WALLET — ARCHITECTURE (2026-06-22, DESIGN ONLY — no code, no commit)
+## REFERENCE (adapted sources)
 
-This is the design for the END-USER wallet — the successor to the "thin marketplace app" in the sequencing
-section above, aimed at NON-TECHNICAL holders (a buyer reselling phoques needs a button, not `cargo run`). The
-whole session ran while the TN10 node was mid-IBD, so this is pure design — NOTHING here is built or tested
-on-chain yet. The `bitphoque_cli.rs` thin slice (above) is the proven ENGINE this wallet wraps; this section is
-the CHASSIS design that sits on top of it.
-
-### Form factor — DECIDED: web app at BitPhoque.org
-- A single web app, served from BitPhoque.org, IS the wallet (no install, no app-store gate, no `cargo build` for
-  the user). Runs on Windows / Mac / Android / iOS today via the browser — ONE codebase.
-- Native wraps come LATER off the same codebase: Tauri (or Electron) for desktop binaries, Capacitor for the
-  Android/iOS store apps. Explicitly DO NOT start by building four native apps — that's the top of the difficulty
-  ladder (iOS especially: paid dev account, app review, crypto-app scrutiny), not the start of it.
-- HONEST ORDER-OF-MAGNITUDE (difficulty ladder, cheapest→dearest): CLI (done) → local web app talking to the node
-  → hosted web app with client-side (WASM) tx-building → desktop wrap → mobile wrap → iOS store. Each rung is a
-  real jump, not packaging.
-- The site is a DELIVERY mechanism for the app, NOT a trust root. The running wallet verifies against the CHAIN;
-  the site serving it must never become the thing that TELLS the wallet what it owns (that would rebuild the
-  coordinator the whole project avoids).
-
-### Custody — DECIDED: non-custodial, BIP-39 12-word, key in-browser
-- Standard BIP-39 12-word seed. Universal, proven, mature Rust tooling, built-in checksum, WASM-friendly. Chosen
-  deliberately over a novel scheme (don't reinvent crypto; smallest diff from proven). Key generated and held
-  CLIENT-SIDE (browser), never on a server. Anthropic/BitPhoque.org never holds keys.
-- v1 STANCE (chosen, not drifted-into): the user owns their backup exactly as in any standard wallet — back it up
-  or be out of phoques. Acceptable for a TN10 novelty token; the seed-reveal screen makes the backup step
-  deliberately un-skippable (write-down + confirm) because that's where non-technical users get hurt (silent,
-  delayed failure).
-- GUARDIAN / CIRCLE social recovery = a PLANNED OPT-IN UPGRADE, not v1. Explored this session: Shamir/SLIP-39
-  splitting of the seed works but (i) dedicated SLIP-39 Rust crates are weak/WIP/deprecated, (ii) SLIP-39 is
-  SatoshiLabs-controlled + not BIP-39 round-trip compatible, (iii) plain Shamir loses the checksum/typo-detection
-  you'd then have to rebuild. CONCLUSION: the on-brand ("Everyone is an Oracle") recovery lives at the COVENANT
-  layer — guardians authorize an on-chain key-rotation under a quorum, so the key is NEVER reassembled in plaintext
-  (avoids Shamir's reconstruction-exposure window) — but that is UNPROVEN on this stack (depends what the
-  silverscript covenant can verify; CSFS is in the Oracle work). Park as the ambitious-but-unverified upgrade;
-  do NOT block v1 on it. HARD RULE confirmed: never derive a key from anything the user MEMORIZES (brain wallets
-  are catastrophic — humans don't generate 256 bits).
-
-### The receive problem + the descriptor (the keystone)
-The defining constraint (already known, see "indexing problem is the wallet's hard part" above): a parcel's P2SH
-is derived from its CONTENTS (owner pubkey, amount, forSale, price). To find a UTXO you must already know the
-amount. So "someone sent me phoques" is NOT self-evident to a fresh wallet the way an incoming KAS payment is.
-DECIDED solution = HYBRID (the only one that serves non-technical users AND the self-erecting lens):
-- **Parcel descriptor (the trustless protocol truth).** An off-chain "receipt" the sender hands the receiver,
-  carrying exactly what's needed to FIND and VERIFY the parcel. It is essentially the `inspect_v3` input args made
-  portable. **FORMAT FINALIZED (2026-06-23, Option B — fixed-width transport, CScriptNum only at derivation).** The
-  descriptor carries LOGICAL values in a flat fixed-offset struct; the variable-length CScriptNum encoding (see the
-  PINNED note above) lives ONLY in P2SH derivation, NEVER in transport — conflating the two was the trap. v1 payload
-  (118 bytes, FIXED, no length prefixes needed):
-  `version(1B) ‖ covenant_id(32B) ‖ owner_pubkey x-only(32B) ‖ amount u64-LE(8B) ‖ forSale(1B) ‖ price u64-LE(8B) ‖
-  txid(32B) ‖ output_index u32-LE(4B)` = 118 B. Then base58check-encode the whole 118 B (version-prefix byte for
-  base58check is separate from the in-payload format-version; pick a distinct app version byte). DERIVATION RULE (the
-  one place that MUST match the chain): to rebuild the P2SH, feed amount/price/forSale as INTEGERS into the SAME
-  canonical `add_i64`/script-builder path the harnesses use — do NOT re-encode from the transport bytes by hand. The
-  fixed-u64 transport and the CScriptNum derivation are deliberately decoupled: transport stays a dead-simple flat
-  struct, byte-identity to the chain comes from reusing the builder. CAVEAT (note so a future field doesn't silently
-  break it): fixed u64/u32 transport is correct ONLY because amount/price/output_index are all NON-NEGATIVE and fit
-  u64/u32 (Kaspa values are u64 sompi, indices small). A future negative or >u64 ctor-arg field would need a framing
-  rethink. forSale is the byte {0,1} as-is (it funnels through add_i64's 0/1 fast-path at derivation).
-- **Transport = base58check** (the Bitcoin-address alphabet — no confusable 0/O/I/l — WITH a checksum baked into
-  the standard, so a hand-transcribed receipt fails LOUDLY instead of computing a wrong P2SH silently). This
-  SUPERSEDES the earlier "add a separate checksum field" idea — base58check IS the checksum, one fewer thing to own.
-  QR and a `bitphoque:` URI are trivial wrappers over the same base58 string, deferrable.
-- **Optional indexer (convenience cache, NOT authority).** Watches the chain, decodes BitPhoque parcels, answers
-  "parcels for pubkey X." The marketplace app's job. A wallet works FULLY on descriptors alone (trustless,
-  coordinator-free); pointed at ANY indexer it works PLEASANTLY (balances just appear). Because the chain is always
-  the final verifier, a malicious indexer can lie about what EXISTS but can never forge a parcel you don't control
-  (Electrum-server trust model). This is what keeps the convenience layer from becoming a control point.
-- A descriptor is a SNAPSHOT, not a permanent address: the instant a parcel is spent (list/claim/split/merge) its
-  outpoint dies and its P2SH may move. Wallet rule: re-derive live state against the chain on open; treat the
-  descriptor as a hint to VERIFY, never a cached account number.
-- PINNED (2026-06-23, verified against source + test vectors — the earlier "leaning 8-byte LE" guess was WRONG):
-  ctor `int` args (amount, price, output_index) are serialized as **Kaspa minimal script-number encoding
-  (CScriptNum)** — variable-length little-endian with a sign bit — NOT fixed 8-byte LE. Fixed 8-byte LE would have
-  computed the WRONG P2SH for almost every value (this is exactly the read-the-source-not-infer trap). Trace:
-  silverscript `compiler/mod.rs:342` lowers `ExprKind::Int` via `builder.add_i64(value)`; `add_i64`
-  (`crypto/txscript/src/script_builder.rs:261`) is THREE branches — `0`→`Op0` (one opcode, ZERO data bytes);
-  `-1` and `1..=16`→a single `OP_1NEGATE`/`OP_1..OP_16` opcode (NO data push); everything else→
-  `OpcodeData::<i64>::serialize` then `add_data`. The serialize impl is `serialize_i64`
-  (`crypto/txscript/src/data_stack.rs:153`): minimal LE magnitude bytes, sign carried in the high bit of the top
-  byte, with an extra `0x00`/`0x80` byte appended only when the magnitude's MSB would otherwise collide with the
-  sign bit. Confirmed by the in-tree test vectors: `0`→`[]`, `1`→`01`, `-1`→`81`, `127`→`7f`, `128`→`8000`,
-  `-128`→`8080`, `255`→`ff00`, `256`→`0001`. (bool ctor args funnel through the same `add_i64` path as `0`/`1`.)
-  CONSEQUENCE for the descriptor + wallet: the descriptor commits to the LOGICAL integer values (amount/price/
-  output_index), and the wallet derives the P2SH by running the SAME canonical `add_i64`/script-builder path the
-  harnesses use — it must NOT reimplement integer encoding from a fixed-width spec, because small values (0, 1..16)
-  and zero are OPCODES not data pushes and the byte length is value-dependent. Byte-identity to the on-chain script
-  is guaranteed by reusing the builder, not by re-specifying it. (Self-erecting-lens fit: transport logical values,
-  re-derive against the canonical builder/chain — never transport pre-encoded P2SH bytes that could drift.) This
-  CLOSES the descriptor's last open item; format is finalizable.
-
-### Native KAS handling — REQUIRED, "gas-tank not vault"
-- The wallet MUST hold + spend native KAS: every phoque action is a Kaspa tx that costs KAS (fee floors: ~700k
-  list/split, ~900k claim, ~1.3M merge), and a buyer's claim PAYS KAS to the seller. Phoques don't move without
-  KAS moving. This is forced, not optional.
-- POSTURE (not a protocol-enforceable limit — Kaspa has no per-address cap): treat the wallet's KAS as a GAS TANK,
-  sized for fees + headroom, presented as "top up for fees," with savings steered to the user's MAIN Kaspa wallet.
-  RATIONALE is risk-surface: a browser key WILL sometimes be lost; a lost gas tank is annoying, a lost vault is
-  ruinous. Same hold-your-own-keys logic applied to sizing.
-
-### One token mechanism, KAS layer kept separable — DECIDED
-- The wallet speaks exactly ONE token type: BitPhoque's own COVENANT token (the KCC-20-style native-L1 pattern —
-  built from `kcc20.sil`, copied verbatim as `bitphoque.sil`; CONFIRM the "KCC-20" name against that file in-tree,
-  this was recalled mid-session, not re-verified). It is NOT KRC-20 (a different, indexer/inscription-based
-  mechanism the project deliberately avoids). Supporting KRC-20 too = a SECOND token stack = PARKED as a separate
-  later question; verify current KRC-20 wallet tooling before ever committing (don't decide by assumption).
-- BUILD the narrow BitPhoque wallet (route to a FUNCTIONAL system), but architect the KAS layer as a clean,
-  SEPARABLE primitive ("send a funded Kaspa tx") with parcel logic sitting ON TOP rather than tangled in. The
-  gas-tank BitPhoque wallet and a full general Kaspa wallet share ~80% of their plumbing — keeping them separable
-  means a general wallet stays REACHABLE later without being built now (and without foreclosing it). A general
-  covenant-token wallet remains "its own later project, arguably THE product" per the sequencing section above.
-
-### Screen flow (wireframed this session)
-Seven screens: (1) Landing — seal/joke + two buttons (Create / Restore) + the honest "you hold your own keys"
-line. (2) Create → seed reveal → confirm (un-skippable). (3) RESTORE — the cliff: the seed restores the KEY but
-NOT knowledge of which parcels exist, so it must immediately pivot to "reconnect your parcels," offering BOTH "find
-my parcels (indexer)" and "import receipts manually" (Option-D made literal). (4) Home/balance — total + per-parcel
-(held / for-sale), re-verified on-chain each open (why the relay matters). (5) RECEIVE — inverted from a normal
-wallet: top half = "my identity (share to receive)," bottom half = "import a receipt (paste/scan)"; the parcel only
-becomes real on import. (6) SEND — not done at tx-confirm but at receipt-handoff: surfaces the descriptor as "now
-deliver this to the recipient." (7) Sell/list — set price → owner-signed listing (claim/buy likely lives in the
-marketplace app, a seam between the two apps).
-- KEY INSIGHT the wireframe made obvious: the three HARD screens (Restore, Receive, Send) are hard for the SAME
-  structural reason — the amount-derived P2SH leaks through — not from bad design. The INDEXER is exactly what turns
-  those three back into normal-feeling screens. Descriptor path = correct + self-erecting; indexer = usable by
-  non-technical people. Both needed for the stated target.
-
-### Two real unlocks underneath all the UI (both eventually NEED a synced node to test)
-1. **A thin read/broadcast RELAY** so a browser can reach the chain over HTTPS (a browser can't run kaspad / speak
-   the CLI's gRPC). Allowed without breaking the lens IFF it only RELAYS (reads public chain state, rebroadcasts
-   signed txs) and never holds keys or decides truth — a postal service, not a bank. On the critical path for ANY
-   browser wallet.
-2. **Tx-building ported CLIENT-SIDE (Rust→WASM)** so signing happens in the browser, never on a server. The engine
-   is proven Rust BUT proven as CLI harnesses calling a gRPC client, not as browser-side signing — porting it
-   byte-identical is real work and the place an ABI/stale-file bug would hurt most. "Prove the smallest piece
-   first": get ONE tx type building + signing in WASM and verifying against the chain before porting the rest.
-
-### Build order implied (all the design above is node-INDEPENDENT and is now captured; the rest is gated on the node)
-Descriptor format (keystone) → CLI gains `send`/`receive` (emit/import + verify a descriptor) on top of the proven
-engine → marketplace as the optional indexer → web app UI pointed at node/indexer → native wraps. The relay +
-client-side signing are the true unlock that everything visual sits on. NEXT NODE-GATED STEP is still the claim
-live dry-run (see resume point) — none of this wallet design changes that gate.
-
-**PROGRESS (2026-06-23): descriptor codec BUILT + PROVEN** (`bitphoque_descriptor_v1.rs`, committed `dedc62d`).
-encode/decode (118B fixed-width Option-B layout, base58check) + `derive_p2sh` (lifts inspect_v3's canonical
-ctor_args→compile_contract→pay_to_script_hash_script→address path verbatim). `--selftest` PASSES all three:
-round-trip identity, checksum-reject on a flipped char, AND the on-chain assertion — derived P2SH ==
-`kaspatest:pp6yju0m..rkwdkj`, the live `4b0c8187..:0` parcel's address as computed by the proven inspect_v3. This
-confirms the fixed-width-transport / CScriptNum-at-derivation decoupling produces chain-correct addresses. NEXT on
-this track: wire `encode`/`decode`/`derive_p2sh` into the CLI as `send` (emit a descriptor for an owned parcel) and
-`receive`/`import` (decode + verify a pasted descriptor, confirm live on the node) — these reuse the proven codec
-as a lib. (Still node-independent to BUILD; the `receive` on-chain-confirm step wants a synced node to TEST.)
+- `kcc20.sil` — token contract. `kcc20-minter.sil` — deliberately NOT used.
+- `covenant_escrow.sil` / `covenant_mecenas.sil` — output-payment-inspection patterns.
+- `kcc20_tests.rs` + `common.rs` — leader/delegate sigscript, local-test pattern.
+- `crypto/txscript/src/lib.rs` + `script_builder.rs` — element cap + with_flags.
+- `consensus/core/src/mass/mod.rs` — calc_storage_mass, ComputeBudget, script-units.
+- `consensus/core/src/hashing/sighash.rs` — calc_schnorr_signature_hash (reimplemented in JS).
+- `consensus/core/src/hashing/hashers.rs` — TransactionSigningHash key = `b"TransactionSigningHash"`.
+- `silverscript-lang/src/compiler/mod.rs` — build_sig_script_for_covenant_decl.
 
 ---
 
-## TN10 ground facts
-- Node: **TestnetNode at 192.168.0.104** — release **kaspad 2.0.1** (post-Toccata; the Toccata guide's recommended
-  floor is 2.0.1+). gRPC **16210** all-ifaces (this is what the CLI's GrpcClient uses — `--rpclisten=0.0.0.0:16210`),
-  wRPC borsh **17210** all-ifaces (`--rpclisten-borsh=0.0.0.0:17210`). **CORRECTION (do not repeat the old error):
-  16211 is the P2P port, NOT gRPC.** An earlier note here said "gRPC 16211" — WRONG; the CLI pointing at 16211 got
-  `Unimplemented` (P2P answering a gRPC request). gRPC default on testnet is 16210; the launch .bat MUST include
-  `--rpclisten=0.0.0.0:16210` or gRPC falls back to 127.0.0.1-only (unreachable off-box). Launch .bat:
-  `C:\kaspatestnet10\start-tn10.bat`; datadir under user **`Karrrl Kaspa Node`** at
-  `...\AppData\Local\rusty-kaspa\kaspa-testnet-10\datadir`. The old PsychoNode @ 192.168.0.206 is RETIRED for
-  testnet — that hardware now runs MainnetNode (public p2p 16111 forwarded; separate infra, out of scope for TN10).
-  **TOCCATA NODE REBUILD (2026-06-22):** the TN10 node kept wedging at utxoindex/consensus-init — root cause was a
-  mainnet-line **kaspad 2.0.0** binary running on a **pre-Toccata datadir** (consensus store last written June 9;
-  Toccata activated on TN10 ~June 20). Both .104 and .206 had pre-Toccata datadirs (both useless now). Fix: kaspad
-  2.0.0→**2.0.1**, wiped to a FRESH datadir (old one moved to `datadir_pretoccata_old`), clean post-Toccata IBD.
-  LESSON: a wedge at the index step on a node that "was synced" can be a stale/incompatible DATABASE, not a code or
-  index bug — check the binary version and the consensus-store date against the last hardfork before fighting it.
-  kaspad must always be stopped with Ctrl+C and allowed to FLUSH (watch for clean exit); a force-kill mid-flush
-  corrupts the utxoindex (rename-and-rebuild recovery).
-- Funding addr (reused for both genesis runs): `kaspatest:qrwzyuc8lkvdsxgww53n7rsjetsqhh6p9hmy8vrvqpdun5r7ysevufmglhgl4`
-  (key in bitphoque_owner.key; re-faucet-funded 100k TKAS for the v2 genesis).
-- rusty-kaspa clone: C:\kaspa-tn12\rusty-kaspa (tag tn10-toc3); silverscript: C:\kaspa-tn12\silverscript.
-- Faucet: min 1000 TKAS per request, 24h cap 100k. Fund wallets 1000 at a time so the cap is never a constraint.
-- Fee floors learned: genesis ~167k (use 200k); transfer ~378,600 (use 400k); v2 claim ~654,600 (use 700k);
-  v3 list/split ~659k (use 700k); v3 2-input claim 857,000 (use 900k). v3 PARTIAL-LIST (1-in/2-out
-  owner-signed) clears at 700k like the split (one script reveal, two outputs).
+## PARKED DESIGN — see `bitphoque_swap_covenant_design.md`
+
+- **#1 Gas-tank fee sizing** (buyer 900k/claim, lister 700k/listing).
+- **#2 Wallet sends pups + dust** (derive dust floor from KIP-9 before hardcoding).
+- **#3 Marketing audience** (Kaspa-native / meme-culture / self-erecting-thesis).
+- **#4 "Boques"** = colloquial for phoques; completes phoque/pup/boque denomination story.
+- **#5 Price-escalating emission** = step bonding curve; design fork A/B/Hybrid.
+- **#6 Wallet clarity** (KAS vs phoque disambiguation, unit-confusion audit, "how to acquire KAS").
 
 ---
 
-## RESUME POINT — CLI feature-complete (claim committed); next is claim's LIVE dry-run once TN10 IBD finishes
+## OPEN ITEMS
 
-**Immediate next action (when the TN10 node @ .104 finishes its fresh post-Toccata IBD):** fix the CLI `NODE` const
-to `192.168.0.104:16210` (gRPC — NOT 16211), rebuild (copy canonical → `C:\kaspa-tn12\silverscript\silverscript-lang\src\bin\`,
-`cargo build --bin bitphoque_cli`), then run `balance` against buyer1 (`8c02c20a...`) to confirm the node serves a
-live by-address lookup. Then the headline: a LIVE `claim` dry-run (it VM-verifies the covenant input against a real
-for-sale parcel — the one proof claim hasn't yet gotten). If PASS, claim is fully validated end-to-end like the
-other subcommands. Then: extract shared lib → thin marketplace app → mainnet checklist.
-
-Fixed-price sale PROVEN end-to-end on-chain: 1x1 on v2, and on v3 at 2×2 as TWO SEPARATE CLAIMS plus a
-SECONDARY-MARKET RESALE. 2x2 AND 3x3 fanout proven AT THE VM on v3 — the work that found and fixed the F1 bug.
-
-**What 2x2 testing found (and v3 fixes):** at fanout, checkAuth let two for-sale inputs from the
-SAME seller name the SAME payment output (witnesses=[2,2], one payment) — a buyer could claim TWO
-listings for ONE payment (the "F1 double-claim" hole). v2's per-input "pay this input's seller"
-check did NOT enforce that for-sale inputs map to DISTINCT outputs. Cross-seller (F2) was already
-rejected by the wrong-payee check; same-seller was the hole.
-
-**The v3 fix (`covenants/bitphoque_sale_v3.sil`):** for-sale inputs must use STRICTLY-INCREASING
-payment-output indices (lastSaleWitness accumulator seeded at -1; each for-sale witness must exceed
-the previous). No two for-sale inputs can share an output. Smallest provable fix. MAINNET-GRADE
-generalization deferred + noted in-contract (option B: per-output price accounting, so one big
-output could cover several inputs). v2 stays on disk as the as-deployed/holed version (like v1).
-
-Remaining, in order:
-- [x] **Re-prove list+claim ON-CHAIN at 2×2 (two SEPARATE claims)** — DONE. Two listings
-      (cebf75b5, 55542a99), two independent claims by two distinct buyers (3265e063 buyer0/21034,
-      9ffe84b8 buyer1/21035). The "sell over time to successive buyers" use case is live.
-- [x] **Secondary-market RESALE proven** — DONE. buyer0 listed bought phoques (d24437b8) and buyer1
-      claimed them (1635fd28); Kyle not a party. Token circulation confirmed on-chain.
-- [x] **List + claim harnesses made PARTY-AGNOSTIC** — DONE. Both take party identity at the CLI
-      (list: owner KEYFILE since listing is owner-signed; claim: seller PUBKEY since claiming is
-      payment-authorized and needs no seller key). This is the seed of the planned CLI/wallet.
-- [x] **3x3 fanout PROVEN at VM** (G-CTRL claim/split, G1 triple-share, G2 mid-collision, G3 out-of-order,
-      G4 non-contiguous all behave). NxM inferred (accumulator is N-agnostic) but only 2 and 3 tested.
-      NOTE: strict-increasing rejects DISTINCT-but-UNORDERED witnesses (G3) — safe but stricter than
-      minimal; per-output-accounting mainnet version would relax it.
-- [x] **COMBINED 2×2 claim tx (the on-chain F1-fix proof)** — DONE. tx `40cbf865...`: two same-seller
-      for-sale inputs forced onto strictly-increasing payment outputs (witnesses=[2,3]), two buyers
-      each funding their own input. F1 double-claim is now structurally impossible AND proven on-chain.
-- [x] **Two-owner transfer-split** — DONE (`bitphoque_split_transfer_v3.rs`). Seeded a realistic
-      3-holder distribution (buyer1/2/3). Split-to-different-owner verified as a normal transfer.
-- [x] **Split/merge generalization for the sale** (MERGE N→1) — DONE on-chain (`519063be...`). Two
-      not-for-sale same-owner parcels (20033+5268) → one 25301 parcel, owner-signed, leader/delegate
-      ABI, conservation enforced, both inputs confirmed spent. The two-signed-covenant-input finding
-      (both sigs at leader index 0) is recorded above. (Partial-balance listing — the sale-specific
-      split/merge — now also DONE on-chain, `4b0c8187...`, see below.)
-- [x] **Generalized inspect tool** — DONE (`bitphoque_inspect_v3.rs`). Compiles any v3 parcel P2SH from
-      CLI params, queries with retry for the index lag, optional outpoint filter. Read-only, pubkey-only
-      (stream-safe). Supersedes the hardcoded rothschild inspect for v3.
-- [x] **wallet/CLI build** — DONE in code. `bitphoque_cli.rs` feature-complete (import / balance / partial-list /
-      list / split / merge / claim), all built + committed (claim `78c14d9`). Option-C track-forward wallet.json.
-      ONLY remaining: claim's LIVE on-chain dry-run (blocked on TN10 IBD — see resume point). Still open beyond
-      that: extract shared lib → thin marketplace app; original-token owner quirk; AUCTION future build; mainnet
-      checklist; make public.
-- [x] **Split/merge for the sale (list a PARTIAL balance)** — DONE on-chain (`4b0c8187...`). One owner-
-      signed tx lists 5000 of buyer1's 25301 merge parcel @ 500000 sompi (out0, for-sale) + keeps 20301
-      (out1, not-for-sale change), same owner — collapses the old two-step split-then-list into one tx.
-      Harness `rust-examples/bitphoque_partial_list_v3.rs`. Confirmed: input 519063be...:0 spent;
-      for-sale parcel live at 4b0c8187...:0 (163036283150 sompi). checkSaleState allows it (no input
-      for-sale -> for-sale OUTPUT permitted); proportional value split, out1 absorbs remainder, dust-
-      floor guard.
-- [ ] **Inspect tool**: generalize to take an address/contract so it can confirm arbitrary P2SH balances on-chain.
-- [ ] **Original-token owner quirk** (observed, not blocking): the ORIGINAL genesis ctor used a 32-ZERO pubkey as
-      genesisPk; how the original transfer satisfied checkSig against a zero owner is unresolved. Does NOT affect
-      v2/v3 (real fresh pubkey). Worth understanding later.
-- [ ] **AUCTION** — separate future build (stateful/temporal: bid ratchet, escrow, locktime, refunds). Own
-      architecture; see the swap design doc's auction section. Fixed-price first (done), auction separately.
-- [ ] **Mainnet**: clear EVERY item in `bitphoque_mainnet_checklist.md` (air-gapped key, V1 compiler, detached
-      signing, full reject-tests, second review), on v3 (or the per-output-accounting successor). TN10 keys
-      NEVER become mainnet keys.
-- [ ] **Make BitPhoque public** on GitHub (clean repo name + README explaining the phoque joke + fixed-supply/
-      no-coordinator design). Secret-sweep first.
-      **FINDING (2026-06-22 secret sweep):** an actual 64-char hex TN10 privkey is committed in `docs/bitphoque_status.md`
-      (the original-token recipient key, `1c14a1de...`, in the section-2 transfer note). It is a TESTNET throwaway
-      (no value, quarantined to TN10), so not an emergency — but per the baseline "private keys never belong in a
-      tracked file." Before going public: scrub the hex from the doc (redact like the other key entries) AND rewrite
-      it out of git history (git-filter-repo / BFG), since history is permanent. Do this as a deliberate pre-public
-      step, not casually. The rest of the sweep was clean (only docs/comments ABOUT keys).
-
----
-
-## Reference (the things we adapted)
-- `kcc20.sil` — token contract (copied verbatim as bitphoque.sil). `kcc20-minter.sil` — deliberately NOT used.
-- `covenant_escrow.sil` / `covenant_mecenas.sil` — the output-payment-inspection patterns the sale claim adopts
-  (tx.outputs[i].value / .scriptPubKey, new ScriptPubKeyP2PK(party)).
-- `kcc20_tests.rs` + `common.rs` — leader/delegate sigscript construction, owner signing, the fabricated-UTXO
-  local-test pattern, execute_input_with_covenants (the model for local_vm_verify).
-- `crypto/txscript/src/lib.rs` + `script_builder.rs` — the 520-vs-1,000,000 element cap + with_flags.
-- `consensus/core/src/mass/mod.rs` — calc_storage_mass (KIP-9, line 437); the ComputeBudget / script-units rules.
-- `silverscript-lang/src/compiler/mod.rs` — compile_contract, struct_object, CompileOptions,
-  CovenantDeclCallOptions, build_sig_script_for_covenant_decl.
-- OracleRep `oracle_genesis_establish.rs` — the genesis harness model.
-
----
-
-## PARKED DESIGN — see `bitphoque_swap_covenant_design.md` (full reasoning there)
-
-Future design decisions captured 2026-06-24 (notes session during TN10 IBD). Titles only —
-read the design doc for the A/B/hybrid forks and detail:
-- **#1 — Wallet "gas tank" fee sizing** (buyer 900k/claim, lister 700k/listing; seed ~0.1–0.2 KAS headroom).
-- **#2 — Wallet sends pups (sub-unit) + dust** (OPEN: derive per-UTXO KAS dust floor from `calc_storage_mass` / KIP-9 before hard-coding).
-- **#3 — Marketing audience** (3 angles: Kaspa-native / meme-culture / self-erecting-thesis).
-- **#4 — "Boques"** = colloquial for phoques (like "bucks"); completes phoque/pup/boque denomination story.
-- **#5 — Price-escalating emission schedule** = step bonding curve; DESIGN FORK (A primary-mint / B secondary-market / Hybrid launch-only minter). Decide model before any curve math.
-- **#6 — Wallet clarity** (a: receive page must disambiguate KAS vs phoque parcel; b: pre-publish unit-confusion audit across all surfaces; c: "how to acquire KAS" tutorial — verify exchanges LIVE at write-time).
-
----
-
-## INFRASTRUCTURE UPDATE (2026-06-24): TN10 node relocated to Big Daddy
-
-**TN10 node moved off TestnetNode (.104) to Big Daddy (192.168.0.118).** The .104 node
-would not sync after 3 days (reached tip, slid back to header mode -- pruning-point
-thrashing). Judged to be configuration cruft from too many node instances on one box, NOT
-hardware (.104 was the stronger box but the sicker node; .206 runs mainnet flawlessly on
-the same v2.0.1). Rebuilt fresh on Big Daddy (Ryzen 5900 12c/24t, 128GB, fresh NVMe) with
-hard isolation. A dedicated NVMe node box arrives ~2026-06-26; Big Daddy may be interim.
-
-**LESSON (worth keeping): isolation beats horsepower.** One box, one node, one datadir, one
-launch script -- undisturbed -- is what made .206 reliable and what .104 lost. The rebuild
-applies exactly that: isolated tree `C:\kaspa-testnet10\`, own v2.0.1 binary, datadir pinned
-via `--appdir`, single launch script, pinned ports (gRPC 16210 / P2P 16211 / wRPC 17210).
-
-**Result:** fresh sync cleared the pruning-point proof cleanly (the stage .104 kept failing)
-and ran healthy. Node endpoint is now `127.0.0.1:16210` for Big-Daddy-local clients (was
-.104 / .206). Mainnet node stays on .206, untouched.
-
-**Client IP updates: fix-on-use, not bulk.** 17 `.rs` clients in `rust-examples\` had stale
-`const NODE` endpoints (.104 / .206). Only `bitphoque_node_diag.rs` was repointed to
-`127.0.0.1:16210` this session (rebuilt, confirmed). The other 16 are deliberately left to
-fail-loud on first use and get fixed one at a time then -- the connection error is the
-reminder. Expect to fix `claim`/`list`/etc. on their next real run against the new node.
-
-**Detailed session handoff:** see `SESSION_HANDOFF_2026-06-24.md` (one-timer) for the
-specific decisions, the launch-script flags, the `--utxoindex` single-vs-two-phase note, the
-diag-reads-zero-during-segment-download quirk, and the open threads (confirm `28a90bc9...`
-claim mined; SMS Twilio monitor started-not-built).
-
-**SMS node-monitor (Twilio) - height-read listener now EXISTS.** The deferred monitor's
-open question was how a lightweight 2-min cron reads block height without the heavy Rust
-diag. RESOLVED in passing: the wallet work added a JSON wRPC listener to the node launch
-(`--rpclisten-json=0.0.0.0:18210` on start-testnet10.bat). PowerShell can `Invoke-RestMethod`
-/ websocket `getInfo` against 18210 for a cheap height + isSynced read. Monitor itself still
-deferred until post-new-box topology settles, but the listener it needs is live.
+- [ ] Receive flow (descriptor decode → confirm → record)
+- [ ] Claim panel (multi-input, payment-authorized)
+- [ ] Merge panel (multi-input, leader/delegate)
+- [ ] Parcel picker UX (dropdown from tracked parcels)
+- [ ] SMS Twilio node-monitor
+- [ ] Publish to live host
+- [ ] Original-token zero-pubkey owner quirk (observed, not blocking)
+- [ ] Auction — separate future build (stateful/temporal)
+- [ ] Mainnet: clear `bitphoque_mainnet_checklist.md`
+- [ ] Make public on GitHub (clean repo name + README + secret-sweep)
