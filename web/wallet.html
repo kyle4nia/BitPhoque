@@ -942,6 +942,7 @@ const PANELS = {
       } catch(e){ return {err:'Build failed: '+(e.message||e)}; }
       // store for submit step
       window._pendingSendTx = result.txJson;
+      window._pendingDesc = { recipientPubkey: xonly(to), sendAmount: BigInt(amt), outputIndex: 0 };
       const sb=document.getElementById('submitBtn'); if(sb) sb.style.display='block';
       const whole = (amt===iamt);
       return {out: `[send] BUILT + SIGNED (not yet submitted)\n  sighash: ${result.sigHashHex}\n  sigscript: ${result.sigscriptLen} bytes\n  outputs: ${whole?'1 (whole)':'2 (partial+change)'}\n  values: ${result.outputValues.map(v=>(v/1e8).toFixed(8)+' TKAS').join(' + ')}\n  fee: 0.007 TKAS\n\nClick "Submit to node" to broadcast.`};
@@ -1159,7 +1160,26 @@ async function submitPendingTx(){
     const msg = await wrpcCall("submitTransaction", window._pendingSendTx);
     const txid = (msg.params&&msg.params.transactionId)||(msg.transactionId)||'(see response)';
     window._pendingSendTx=null;
-    out.textContent='ACCEPTED. txid: '+txid+'\n\nThe parcel is in the mempool. Refresh balance to confirm.';
+    let extra='';
+    if(window._pendingDesc && txid!=='(see response)'){
+      try {
+        const {encodeDescriptor} = await import('./bitphoque_descriptor.js');
+        const {COVENANT_ID_HEX} = await import('./bitphoque_tx.js');
+        const pd=window._pendingDesc;
+        const desc = encodeDescriptor({
+          covenantId: COVENANT_ID_HEX,
+          ownerPubkey: pd.recipientPubkey,
+          amount: pd.sendAmount,
+          forSale: false,
+          price: 0n,
+          txid: txid,
+          outputIndex: pd.outputIndex,
+        });
+        extra = '\n\nGIVE THIS DESCRIPTOR TO THE RECIPIENT (they paste it into Receive):\n'+desc;
+      } catch(e){ extra='\n\n[descriptor emit failed: '+(e.message||e)+' — recipient can still receive once they have txid:0]'; }
+    }
+    window._pendingDesc=null;
+    out.textContent='ACCEPTED. txid: '+txid+'\n\nThe parcel is in the mempool. Refresh balance to confirm.'+extra;
   } catch(e){
     out.textContent='! REJECTED: '+(e.message||e)+'\n\nThe tx was not accepted. Check the error above.';
   }
