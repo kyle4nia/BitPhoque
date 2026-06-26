@@ -923,40 +923,135 @@ const PANELS = {
   },
   list: {
     title: "List for sale",
-    lede: "Flip one of your parcels to for-sale at a price. Mirrors the CLI <code>list</code> — owner-signed; the covenant allows a for-sale OUTPUT only when no input is for-sale.",
+    lede: "Flip a parcel to for-sale at a price. Owner-signed; the covenant allows a for-sale output only when no input is for-sale.",
     fields: [
-      {id:"out",   label:"Parcel outpoint", ph:"txid:index"},
+      {id:"txid",  label:"Parcel txid", ph:"28a90bc9\u2026"},
+      {id:"idx",   label:"Parcel index", ph:"0", type:"number"},
+      {id:"iamt",  label:"Parcel phoques", ph:"e.g. 5000", type:"number"},
       {id:"price", label:"Price (sompi)", ph:"e.g. 500000", type:"number"},
     ],
-    cta: "Build listing",
-    run: (v)=>seamTx("list",
-      `bitphoque list --outpoint ${v.out||"<txid:idx>"} --price ${v.price||"<sompi>"} --go`,
-      "Single-input/single-output listing clears at the 700k v3 fee floor.")
+    cta: "Build & sign",
+    run: async (v)=>{
+      const txid=(v.txid||'').trim(), idx=parseInt(v.idx||'0',10);
+      const iamt=parseInt(v.iamt||'0',10), price=parseInt(v.price||'0',10);
+      if(!txid||txid.length!==64) return {err:'Enter the parcel txid (64 hex).'};
+      if(!iamt||iamt<=0) return {err:'Enter the parcel phoque amount.'};
+      if(!price||price<=0) return {err:'Enter a positive price in sompi.'};
+      if(!myKey) return {err:'Wallet not unlocked.'};
+      const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js');
+      const inputAddr = deriveP2SHAddress(xonly(myKey.pubHex), BigInt(iamt), false, 0n, 'kaspatest');
+      let inputValue;
+      try {
+        const msg = await wrpcCall("getUtxosByAddresses", {addresses:[inputAddr]});
+        const entries = (msg.params&&msg.params.entries)||[];
+        const match = entries.find(e=>e.outpoint&&e.outpoint.transactionId===txid&&e.outpoint.index===idx);
+        if(!match) return {err:'Parcel not found on-chain. Check txid/index/amount.'};
+        inputValue = BigInt(match.utxoEntry.amount);
+      } catch(e){ return {err:'Node query failed: '+(e.message||e)}; }
+      const {buildListTx} = await import('./bitphoque_tx.js');
+      let result;
+      try {
+        result = buildListTx({
+          inputTxId: txid, inputIndex: idx, inputValue,
+          inputOwner: xonly(myKey.pubHex), inputAmount: BigInt(iamt),
+          listPrice: BigInt(price), privkeyHex: myKey.privHex,
+        });
+      } catch(e){ return {err:'Build failed: '+(e.message||e)}; }
+      window._pendingSendTx = result.txJson;
+      const sb=document.getElementById('submitBtn'); if(sb) sb.style.display='block';
+      return {out: `[list] BUILT + SIGNED\n  sighash: ${result.sigHashHex}\n  listed: ${iamt} phoques at ${price} sompi\n  value: ${(result.outputValues[0]/1e8).toFixed(8)} TKAS\n  fee: 0.007 TKAS\n\nClick "Submit to node" to broadcast.`};
+    }
   },
   partial: {
     title: "Partial-list",
-    lede: "List PART of a parcel and keep the rest as not-for-sale change, in one owner-signed tx. Mirrors the CLI <code>partial-list</code> (proven on-chain, tx 4b0c8187..).",
+    lede: "List PART of a parcel and keep the rest as not-for-sale change, in one owner-signed tx.",
     fields: [
-      {id:"out",   label:"Parcel outpoint", ph:"txid:index"},
-      {id:"amt",   label:"Amount to list (phoques)", ph:"e.g. 5000", type:"number"},
+      {id:"txid",  label:"Parcel txid", ph:"28a90bc9\u2026"},
+      {id:"idx",   label:"Parcel index", ph:"0", type:"number"},
+      {id:"iamt",  label:"Parcel phoques", ph:"e.g. 5000", type:"number"},
+      {id:"amt",   label:"Amount to list (phoques)", ph:"e.g. 3000", type:"number"},
       {id:"price", label:"Price (sompi)", ph:"e.g. 500000", type:"number"},
     ],
-    cta: "Build partial-list",
-    run: (v)=>seamTx("partial-list",
-      `bitphoque partial-list --outpoint ${v.out||"<txid:idx>"} --amount ${v.amt||"<n>"} --price ${v.price||"<sompi>"} --go`,
-      "Out0 = for-sale slice; out1 = not-for-sale change to the same owner. Proportional value split, dust-floor guard on the change.")
+    cta: "Build & sign",
+    run: async (v)=>{
+      const txid=(v.txid||'').trim(), idx=parseInt(v.idx||'0',10);
+      const iamt=parseInt(v.iamt||'0',10), amt=parseInt(v.amt||'0',10);
+      const price=parseInt(v.price||'0',10);
+      if(!txid||txid.length!==64) return {err:'Enter the parcel txid (64 hex).'};
+      if(!iamt||iamt<=0) return {err:'Enter the parcel phoque amount.'};
+      if(!amt||amt<=0||amt>=iamt) return {err:'List amount must be between 1 and '+(iamt-1)+'.'};
+      if(!price||price<=0) return {err:'Enter a positive price in sompi.'};
+      if(!myKey) return {err:'Wallet not unlocked.'};
+      const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js');
+      const inputAddr = deriveP2SHAddress(xonly(myKey.pubHex), BigInt(iamt), false, 0n, 'kaspatest');
+      let inputValue;
+      try {
+        const msg = await wrpcCall("getUtxosByAddresses", {addresses:[inputAddr]});
+        const entries = (msg.params&&msg.params.entries)||[];
+        const match = entries.find(e=>e.outpoint&&e.outpoint.transactionId===txid&&e.outpoint.index===idx);
+        if(!match) return {err:'Parcel not found on-chain. Check txid/index/amount.'};
+        inputValue = BigInt(match.utxoEntry.amount);
+      } catch(e){ return {err:'Node query failed: '+(e.message||e)}; }
+      const {buildOwnerSignedTx} = await import('./bitphoque_tx.js');
+      const owner = xonly(myKey.pubHex);
+      let result;
+      try {
+        result = buildOwnerSignedTx({
+          inputTxId: txid, inputIndex: idx, inputValue,
+          inputOwner: owner, inputAmount: BigInt(iamt),
+          inputForSale: false, inputPrice: 0n,
+          newStates: [
+            {owner, amount: BigInt(amt), forSale: true, price: BigInt(price)},
+            {owner, amount: BigInt(iamt-amt), forSale: false, price: 0n},
+          ],
+          privkeyHex: myKey.privHex,
+        });
+      } catch(e){ return {err:'Build failed: '+(e.message||e)}; }
+      window._pendingSendTx = result.txJson;
+      const sb=document.getElementById('submitBtn'); if(sb) sb.style.display='block';
+      return {out: `[partial-list] BUILT + SIGNED\n  listed: ${amt} phoques at ${price} sompi (out0)\n  change: ${iamt-amt} phoques, not-for-sale (out1)\n  values: ${result.outputValues.map(v=>(v/1e8).toFixed(8)+' TKAS').join(' + ')}\n  fee: 0.007 TKAS\n\nClick "Submit to node" to broadcast.`};
+    }
   },
   split: {
     title: "Split a parcel",
-    lede: "Break one parcel into two (e.g. to send a round amount). Mirrors the CLI <code>split</code>. Conservation is enforced by the covenant.",
+    lede: "Break one parcel into two (e.g. to send a round amount). Conservation enforced by the covenant.",
     fields: [
-      {id:"out", label:"Parcel outpoint", ph:"txid:index"},
-      {id:"amt", label:"First piece (phoques)", ph:"remainder stays as the second", type:"number"},
+      {id:"txid", label:"Parcel txid", ph:"28a90bc9\u2026"},
+      {id:"idx",  label:"Parcel index", ph:"0", type:"number"},
+      {id:"iamt", label:"Parcel phoques", ph:"e.g. 5000", type:"number"},
+      {id:"amt",  label:"First piece (phoques)", ph:"remainder is the second", type:"number"},
     ],
-    cta: "Build split",
-    run: (v)=>seamTx("split",
-      `bitphoque split --outpoint ${v.out||"<txid:idx>"} --amount ${v.amt||"<n>"} --go`,
-      "1→2 split clears at the 700k v3 fee floor.")
+    cta: "Build & sign",
+    run: async (v)=>{
+      const txid=(v.txid||'').trim(), idx=parseInt(v.idx||'0',10);
+      const iamt=parseInt(v.iamt||'0',10), amt=parseInt(v.amt||'0',10);
+      if(!txid||txid.length!==64) return {err:'Enter the parcel txid (64 hex).'};
+      if(!iamt||iamt<=0) return {err:'Enter the parcel phoque amount.'};
+      if(!amt||amt<=0||amt>=iamt) return {err:'Split amount must be between 1 and '+(iamt-1)+'.'};
+      if(!myKey) return {err:'Wallet not unlocked.'};
+      const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js');
+      const inputAddr = deriveP2SHAddress(xonly(myKey.pubHex), BigInt(iamt), false, 0n, 'kaspatest');
+      let inputValue;
+      try {
+        const msg = await wrpcCall("getUtxosByAddresses", {addresses:[inputAddr]});
+        const entries = (msg.params&&msg.params.entries)||[];
+        const match = entries.find(e=>e.outpoint&&e.outpoint.transactionId===txid&&e.outpoint.index===idx);
+        if(!match) return {err:'Parcel not found on-chain. Check txid/index/amount.'};
+        inputValue = BigInt(match.utxoEntry.amount);
+      } catch(e){ return {err:'Node query failed: '+(e.message||e)}; }
+      const {buildSplitTx} = await import('./bitphoque_tx.js');
+      let result;
+      try {
+        result = buildSplitTx({
+          inputTxId: txid, inputIndex: idx, inputValue,
+          inputOwner: xonly(myKey.pubHex), inputAmount: BigInt(iamt),
+          splitAmount: BigInt(amt), privkeyHex: myKey.privHex,
+        });
+      } catch(e){ return {err:'Build failed: '+(e.message||e)}; }
+      window._pendingSendTx = result.txJson;
+      const sb=document.getElementById('submitBtn'); if(sb) sb.style.display='block';
+      return {out: `[split] BUILT + SIGNED\n  out0: ${amt} phoques (${(result.outputValues[0]/1e8).toFixed(8)} TKAS)\n  out1: ${iamt-amt} phoques (${(result.outputValues[1]/1e8).toFixed(8)} TKAS)\n  fee: 0.007 TKAS\n\nClick "Submit to node" to broadcast.`};
+    }
   },
   merge: {
     title: "Merge parcels",
