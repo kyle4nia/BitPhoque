@@ -3,6 +3,9 @@ contract KCC20(byte[32] genesisPk, int genesisAmount, byte genesisIdentifierType
     byte[32] ownerIdentifier = genesisPk;
     byte identifierType = genesisIdentifierType;
     int amount = genesisAmount;
+    // SAFETY: for fixed-supply tokens, genesisIsMinter MUST be false at genesis.
+    // The isMinter branch (checkAmounts/checkMintingTransfer) is unbounded —
+    // if enabled, supply conservation silently evaporates. See audit F-3.
     bool isMinter = genesisIsMinter;
     bool forSale = genesisForSale;
     int price = genesisPrice;
