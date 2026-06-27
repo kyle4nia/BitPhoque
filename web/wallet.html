@@ -971,16 +971,74 @@ const PANELS = {
   },
   claim: {
     title: "Claim a listing",
-    lede: "Pay a listing at or above its price and receive the phoques. Mirrors the proven CLI <code>claim</code> — payment-authorized, NO owner signature; the covenant input is unsigned with a dummy sig, you sign the funding input.",
+    lede: "Pay a listing and receive the phoques. Payment-authorized — no seller signature needed. The covenant input is unsigned; you sign only your KAS funding input. Fee: 900k sompi. Payment: 100M sompi (1 TKAS, KIP-9-safe).",
     fields: [
-      {id:"seller", label:"Seller pubkey (hex)", ph:"02ab…"},
-      {id:"out",    label:"Listing outpoint", ph:"txid:index"},
-      {id:"pay",    label:"Payment (sompi)", ph:"≥ listed price", type:"number"},
+      {id:"seller", label:"Seller pubkey (64-hex, x-only)", ph:"8c02c20a…"},
+      {id:"txid",   label:"Listing txid", ph:"8dff6df4…"},
+      {id:"idx",    label:"Listing index", ph:"0", type:"number"},
+      {id:"amt",    label:"Parcel phoques", ph:"e.g. 3000", type:"number"},
+      {id:"price",  label:"Listed price (sompi)", ph:"e.g. 500000", type:"number"},
     ],
-    cta: "Build claim",
-    run: (v)=>seamTx("claim",
-      `bitphoque claim --seller ${v.seller||"<pubkey>"} --outpoint ${v.out||"<txid:idx>"} --pay ${v.pay||"<sompi>"} --go`,
-      "Claim is the heaviest tx (2-in/3-out, reveals the 2793B script). Fee floor 857k → use 900k; pay ≥ price AND ≥ 100M to dodge the KIP-9 dust penalty. Still node-gated on TN10 IBD for the live dry-run.")
+    cta: "Build & sign",
+    run: async (v)=>{
+      const seller=(v.seller||'').trim(), txid=(v.txid||'').trim();
+      const idx=parseInt(v.idx||'0',10), amt=parseInt(v.amt||'0',10);
+      const price=parseInt(v.price||'0',10);
+      if(!seller||seller.length!==64) return {err:'Seller must be 64-hex x-only pubkey.'};
+      if(!txid||txid.length!==64) return {err:'Enter the listing txid (64 hex).'};
+      if(!amt||amt<=0) return {err:'Enter the parcel phoque amount.'};
+      if(!price||price<=0) return {err:'Enter the listed price in sompi.'};
+      if(!myKey) return {err:'Wallet not unlocked — re-enter first.'};
+      // 1) confirm the for-sale covenant UTXO on-chain
+      const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js');
+      const covAddr = deriveP2SHAddress(xonly(seller), BigInt(amt), true, BigInt(price), 'kaspatest');
+      let covValue;
+      try {
+        const msg = await wrpcCall("getUtxosByAddresses", {addresses:[covAddr]});
+        const entries = (msg.params&&msg.params.entries)||[];
+        const match = entries.find(e=>e.outpoint&&e.outpoint.transactionId===txid&&e.outpoint.index===idx);
+        if(!match) return {err:'Listing not found on-chain at '+txid.slice(0,8)+'…:'+idx+' (P2SH '+covAddr.slice(0,24)+'…). Already claimed or wrong details.'};
+        covValue = BigInt(match.utxoEntry.amount);
+      } catch(e){ return {err:'Node query (listing): '+(e.message||e)}; }
+      // 2) auto-pick a funding UTXO from buyer's plain P2PK address
+      const {CLAIM_FEE, CLAIM_PAYMENT} = await import('./bitphoque_tx.js');
+      const minFund = CLAIM_PAYMENT + CLAIM_FEE;
+      let fundTxId, fundIndex, fundValue;
+      try {
+        const msg = await wrpcCall("getUtxosByAddresses", {addresses:[myKey.address]});
+        const entries = (msg.params&&msg.params.entries)||[];
+        const suitable = entries
+          .filter(e=>BigInt(e.utxoEntry.amount)>minFund)
+          .sort((a,b)=>{ const av=BigInt(a.utxoEntry.amount), bv=BigInt(b.utxoEntry.amount); return av<bv?-1:av>bv?1:0; });
+        if(!suitable.length) return {err:'No KAS UTXO at '+myKey.address.slice(0,24)+'… large enough for payment+fee ('+minFund+' sompi). Fund your wallet with KAS first.'};
+        const pick=suitable[0];
+        fundTxId=pick.outpoint.transactionId; fundIndex=pick.outpoint.index; fundValue=BigInt(pick.utxoEntry.amount);
+      } catch(e){ return {err:'Node query (funding): '+(e.message||e)}; }
+      // 3) build + sign
+      const {buildClaimTx} = await import('./bitphoque_tx.js');
+      let result;
+      try {
+        result = buildClaimTx({
+          covTxId: txid, covIndex: idx, covValue,
+          sellerPubkey: xonly(seller), buyerPubkey: xonly(myKey.pubHex),
+          amount: BigInt(amt), price: BigInt(price),
+          fundTxId, fundIndex, fundValue,
+          buyerPrivkeyHex: myKey.privHex,
+        });
+      } catch(e){ return {err:'Build failed: '+(e.message||e)}; }
+      window._pendingSendTx = result.txJson;
+      window._pendingDesc = null;
+      const sb=document.getElementById('submitBtn'); if(sb) sb.style.display='block';
+      return {out:
+        `[claim] BUILT + SIGNED (not yet submitted)\n`+
+        `  parcel: ${amt} phoques from ${seller.slice(0,8)}…\n`+
+        `  payment: ${result.paymentValue} sompi → seller\n`+
+        `  change:  ${result.changeValue} sompi → you\n`+
+        `  funding: ${fundTxId.slice(0,8)}…:${fundIndex} (${fundValue} sompi)\n`+
+        `  in0 sigscript: ${result.sigscriptLen} bytes (covenant ABI + redeem)\n`+
+        `  buyer sighash: ${result.sigHashHex}\n`+
+        `  fee: 0.009 TKAS\n\nClick "Submit to node" to broadcast.`};
+    }
   },
   list: {
     title: "List for sale",
