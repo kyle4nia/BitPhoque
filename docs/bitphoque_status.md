@@ -26,7 +26,7 @@ truth and live on TN10:
 - **Panels wired:** send, split, list, partial-list, claim — all real build→sign→submit.
   Claim panel wired + proven live (commit `70e9f96`): auto-funding-UTXO picker, 2-input
   payment-authorized build, three live txs (`d941a074`, `a8bc5081`, `77d595d8`).
-  Merge still a stub.
+  Merge panel wired + proven live (commit `b04c041`).
 - **CLI:** feature-complete — import / balance / list / split / merge / partial-list / claim / send /
   receive. All proven on-chain.
 - **Audit:** `bitphoque_audit_2026-06-25.md` — history-blind source reconstruction, no fund-loss
@@ -93,6 +93,33 @@ belong in documentation (this doc's TN10 GROUND FACTS), never compiled into a ha
 src\bin\`) still carry old IPs until recopied+rebuilt. Proven live: `inspect_v3` connected
 to `.104` on first run after the sweep because the build clone hadn't been updated; recopy
 fixed it. **Discipline: recopy canonical→clone before running any harness from the D: tree.**
+
+### Merge — PANEL WIRED + PROVEN LIVE (2026-06-27)
+
+`buildMergeTx` in `bitphoque_tx.js` (commit `25deb04`). 2-input leader/delegate merge —
+same-owner, not-for-sale parcels combined into one:
+
+- **Input 0 (leader):** covenant UTXO, owner-signed at index 0. Full ABI sigscript
+  (newStates, sigs, witnesses) + 2793B redeem. Sigscript 2989 bytes. computeBudget 24.
+- **Input 1 (delegate):** covenant UTXO, owner-signed at index 0 (leader's sighash,
+  NOT its own). Empty-args ABI + 2793B redeem. Sigscript 2797 bytes. computeBudget 24.
+- **Output 0:** merged parcel → same owner, sum of both amounts, forSale=false.
+- **Fee:** 1.3M sompi (two 2793B script reveals, consensus #10).
+
+**Sighash crosscheck:** `mergeSelfTest()` rebuilds the exact merge tx from a CLI dry-run
+(buyer2 merging 4000 + 16301 phoques, inputs `b4ab26d2…:1` + `b52e19c6…:0`) and asserts
+leader sighash = `f8e741824120ad22ca334be7be3cf892412bdc449fd37b7e240b69afa4dc6e6e`.
+**PASS** — byte-identical to Rust engine.
+
+**CLI proven live:** tx `6d0ed811…` — buyer2 merged 4000 + 16301 → 20301 phoques. ACCEPTED.
+
+**Web wallet proven live (commit `b04c041`):** split 1000-phoque parcel into 500+500
+(tx `20641359…`), then merged back to 1000 (tx `128bb090…`). Full round-trip from UI.
+
+**Parcel persistence fix (same commit):** localStorage read/write at all 4 mutation
+sites (init load, refreshBalance prune, receiveParcel push, resetAll wipe). Also fixed
+`refreshBalance` to use dynamic `await import('./bitphoque_p2sh.js')` instead of
+`window.KASPA.deriveP2SHAddress` (which was never assigned on the KASPA object).
 
 ### Claim harness EngineFlags fix (2026-06-27)
 
@@ -164,9 +191,8 @@ expect `deriveP2SHAddress(genesis operands)` to match the genesis UTXO on-chain.
 - **Receive flow (PROVEN LIVE):** descriptor decode (`bitphoque_descriptor.js`, byte-identical to Rust codec, vendored `@scure/base` base58check) → amount-derived P2SH recompute (`bitphoque_p2sh.js`) → on-chain confirm (outpoint must exist with our covenant_id; amount self-certifies via amount-derived P2SH) → track. Wired into the Receive panel (`receiveParcel`). Trustless refusal of a spent parcel proven live on TN10 from both console and UI. The descriptor is a CLAIM; the chain is TRUTH.
 - **Descriptor emit (BUILT, UNTESTED LIVE):** send-submit assembles the recipient descriptor from `_pendingDesc` (recipientPubkey + sendAmount, stashed at build) + the submit-returned txid, via `encodeDescriptor`. Gated to send only (split/list/etc. don't set `_pendingDesc`). Code complete + committed; not yet run end-to-end (blocked on CLI toolchain, below).
 - **Parcel picker UX** — dropdown from tracked parcels instead of manual txid entry.
-- **Merge panel** — multi-input, leader/delegate (two sigscripts, two 2793B script reveals).
-- **Tracked-parcel persistence** — parcels are in-memory; page reload wipes them. At
-  publish time (live cPanel host = normal page), use localStorage or IndexedDB to persist.
+- **Merge panel (DONE):** wired + proven live — see §Merge below.
+- **Tracked-parcel persistence (DONE):** localStorage at all 4 mutation sites (commit `b04c041`).
 - **SMS Twilio node-monitor** — deferred until topology settles (listener at 18210 exists).
 
 ---
@@ -387,9 +413,9 @@ Own git repo (branch `master`). Not yet pushed to GitHub.
 - [x] Receive flow (descriptor decode → confirm → record) — PROVEN LIVE
 - [x] Claim panel — wired + proven live (d941a074, a8bc5081, 77d595d8), commit `70e9f96`
 - [x] Claim on-chain — three web-wallet txs, full lifecycle (claim→list→claim)
-- [ ] Merge panel (multi-input, leader/delegate)
+- [x] Merge panel — wired + proven live (split 206413…, merge 128bb090…), commit `b04c041`
 - [ ] Parcel picker UX (dropdown from tracked parcels)
-- [ ] Tracked-parcel persistence (in-memory wipes on reload; use localStorage at publish)
+- [x] Tracked-parcel persistence — localStorage, saveParcels() at all mutation sites (commit `b04c041`)
 - [ ] SMS Twilio node-monitor
 - [ ] Publish to live host (claim panel gate cleared)
 - [ ] Original-token zero-pubkey owner quirk (observed, not blocking)
