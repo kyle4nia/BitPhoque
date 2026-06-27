@@ -1175,17 +1175,70 @@ const PANELS = {
   },
   merge: {
     title: "Merge parcels",
-    lede: "Combine several same-owner parcels into one. Mirrors the CLI <code>merge</code> (N→1, proven on-chain tx 519063be..). Leader/delegate ABI — every covenant input signs at the leader index.",
+    lede: "Combine two same-owner, not-for-sale parcels into one. Leader/delegate ABI — both covenant inputs sign at the leader index. Fee: 1.3M sompi (two 2793B script reveals).",
     fields: [
-      {id:"outs", label:"Parcel outpoints (one per line)", ph:"txid:index\ntxid:index", textarea:true},
+      {id:"txid0", label:"Parcel 0 txid", ph:"28a90bc9…"},
+      {id:"idx0",  label:"Parcel 0 index", ph:"0", type:"number"},
+      {id:"amt0",  label:"Parcel 0 phoques", ph:"e.g. 1000", type:"number"},
+      {id:"txid1", label:"Parcel 1 txid", ph:"f8f13363…"},
+      {id:"idx1",  label:"Parcel 1 index", ph:"0", type:"number"},
+      {id:"amt1",  label:"Parcel 1 phoques", ph:"e.g. 4000", type:"number"},
     ],
-    cta: "Build merge",
-    run: (v)=>{
-      const lines=(v.outs||"").trim().split(/\n+/).filter(Boolean);
-      if(lines.length<2) return {err:"Merge needs at least two outpoints."};
-      return seamTx("merge",
-        `bitphoque merge ${lines.map(l=>`--outpoint ${l.trim()}`).join(" ")} --go`,
-        `${lines.length} inputs → 1. Two 2793B script reveals dominate the mass; node-confirmed floor 1,244,500 → use 1.3M.`);
+    cta: "Build & sign",
+    run: async (v)=>{
+      const txid0=(v.txid0||'').trim(), idx0=parseInt(v.idx0||'0',10), amt0=parseInt(v.amt0||'0',10);
+      const txid1=(v.txid1||'').trim(), idx1=parseInt(v.idx1||'0',10), amt1=parseInt(v.amt1||'0',10);
+      if(!txid0||txid0.length!==64) return {err:'Parcel 0: enter the txid (64 hex).'};
+      if(!amt0||amt0<=0) return {err:'Parcel 0: enter a positive phoque amount.'};
+      if(!txid1||txid1.length!==64) return {err:'Parcel 1: enter the txid (64 hex).'};
+      if(!amt1||amt1<=0) return {err:'Parcel 1: enter a positive phoque amount.'};
+      if(txid0===txid1&&idx0===idx1) return {err:'Both parcels point to the same outpoint.'};
+      if(!myKey) return {err:'Wallet not unlocked — re-enter first.'};
+      // 1) confirm parcel 0 on-chain (not-for-sale, owner = wallet key)
+      const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js');
+      const owner = xonly(myKey.pubHex);
+      const addr0 = deriveP2SHAddress(owner, BigInt(amt0), false, 0n, 'kaspatest');
+      let val0;
+      try {
+        const msg = await wrpcCall("getUtxosByAddresses", {addresses:[addr0]});
+        const entries = (msg.params&&msg.params.entries)||[];
+        const match = entries.find(e=>e.outpoint&&e.outpoint.transactionId===txid0&&e.outpoint.index===idx0);
+        if(!match) return {err:'Parcel 0 not found on-chain at '+txid0.slice(0,8)+'…:'+idx0+'. Check txid/index/amount.'};
+        val0 = BigInt(match.utxoEntry.amount);
+      } catch(e){ return {err:'Node query (parcel 0): '+(e.message||e)}; }
+      // 2) confirm parcel 1 on-chain
+      const addr1 = deriveP2SHAddress(owner, BigInt(amt1), false, 0n, 'kaspatest');
+      let val1;
+      try {
+        const msg = await wrpcCall("getUtxosByAddresses", {addresses:[addr1]});
+        const entries = (msg.params&&msg.params.entries)||[];
+        const match = entries.find(e=>e.outpoint&&e.outpoint.transactionId===txid1&&e.outpoint.index===idx1);
+        if(!match) return {err:'Parcel 1 not found on-chain at '+txid1.slice(0,8)+'…:'+idx1+'. Check txid/index/amount.'};
+        val1 = BigInt(match.utxoEntry.amount);
+      } catch(e){ return {err:'Node query (parcel 1): '+(e.message||e)}; }
+      // 3) build + sign
+      const {buildMergeTx} = await import('./bitphoque_tx.js');
+      let result;
+      try {
+        result = buildMergeTx({
+          in0TxId: txid0, in0Index: idx0, in0Value: val0, in0Amount: BigInt(amt0),
+          in1TxId: txid1, in1Index: idx1, in1Value: val1, in1Amount: BigInt(amt1),
+          ownerPubkey: owner, privkeyHex: myKey.privHex,
+        });
+      } catch(e){ return {err:'Build failed: '+(e.message||e)}; }
+      window._pendingSendTx = result.txJson;
+      window._pendingDesc = null;
+      const sb=document.getElementById('submitBtn'); if(sb) sb.style.display='block';
+      return {out:
+        `[merge] BUILT + SIGNED (not yet submitted)\n`+
+        `  parcel 0: ${amt0} phoques (${txid0.slice(0,8)}…:${idx0}, ${val0} sompi)\n`+
+        `  parcel 1: ${amt1} phoques (${txid1.slice(0,8)}…:${idx1}, ${val1} sompi)\n`+
+        `  → merged: ${amt0+amt1} phoques\n`+
+        `  output value: ${result.outputValue} sompi (${(result.outputValue/1e8).toFixed(8)} TKAS)\n`+
+        `  leader sighash: ${result.sigHashHex}\n`+
+        `  in0 sigscript: ${result.in0SigscriptLen} bytes (leader ABI + redeem)\n`+
+        `  in1 sigscript: ${result.in1SigscriptLen} bytes (delegate + redeem)\n`+
+        `  fee: 0.013 TKAS\n\nClick "Submit to node" to broadcast.`};
     }
   },
   import: {

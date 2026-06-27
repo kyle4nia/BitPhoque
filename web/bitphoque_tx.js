@@ -297,6 +297,10 @@ const CLAIM_FEE = 900_000n;          // v3 2-input claim floor 857k -> 900k head
 const CLAIM_PAYMENT = 100_000_000n;  // 1 TKAS — KIP-9-safe; tiny payment spikes storage mass
 const PAYMENT_OUTPUT_INDEX = 1;      // witness byte -> output 1 is the seller payment
 
+// merge constants (status doc consensus rule #10)
+const MERGE_FEE = 1_300_000n;         // v3 merge 2→1 floor ~1,244,500 → 1.3M margin
+const MERGE_COMPUTE_BUDGET = 30;      // 300k script units (two covenant reveals) → ceil(300000/10000)
+
 // Plain P2PK scriptPubKey: OP_DATA32 <xonly-pubkey> OP_CHECKSIG = 20<pubkey>ac
 // (Kaspa schnorr P2PK. NOT a covenant script — claim's funding input + payment
 //  + change outputs are all plain P2PK, which the covenant builders never emit.)
@@ -520,19 +524,222 @@ function claimSelfTest() {
   return ok;
 }
 
+/* ============================================================================
+   MERGE — 2-input leader/delegate, owner-signed (ported from cmd_merge in CLI)
+   ----------------------------------------------------------------------------
+   Merges two covenant parcels (same owner, both not-for-sale) into one.
+   This is the first MULTI-COVENANT-INPUT tx in the wallet.
+
+   Tx shape:
+     input  0: covenant UTXO (parcel A)   LEADER   owner-signed at sighash index 0
+     input  1: covenant UTXO (parcel B)   DELEGATE selector + redeem only
+     output 0: merged covenant UTXO       amount = A + B, same owner, forSale=false
+
+   KEY DIFFERENCES from single-input txs:
+     - 2 covenant inputs, each with its own redeem script (different amounts →
+       different P2SH → different redeem scripts).
+     - Leader ABI carries TWO sigs (one per covenant input), both computed
+       against sighash index 0. Same key + same sighash = identical bytes,
+       but the ABI expects one entry per covenant input.
+     - Witnesses = [0x00, 0x01] — dormant filler on the owner-signed branch;
+       the contract doesn't check them, but the ABI expects the blob.
+     - Delegate sigscript is JUST selector (OP_1) + redeem push — no ABI args.
+     - computeBudget = 30 (300k script units for two covenant reveals),
+       not 24 like single-covenant-input txs.
+     - No plain P2PK inputs or outputs. Fee comes from the covenant UTXOs' KAS.
+   ============================================================================ */
+
+// buildMergeTx(params)
+// params = {
+//   in0TxId:      string  — parcel 0 txid (64-hex)
+//   in0Index:     number  — parcel 0 output index
+//   in0Value:     BigInt  — parcel 0 sompi value
+//   in0Amount:    BigInt  — parcel 0 phoques
+//   in1TxId:      string  — parcel 1 txid (64-hex)
+//   in1Index:     number  — parcel 1 output index
+//   in1Value:     BigInt  — parcel 1 sompi value
+//   in1Amount:    BigInt  — parcel 1 phoques
+//   ownerPubkey:  string  — 64-hex x-only (same owner, both parcels)
+//   privkeyHex:   string  — 64-hex private key (signs both inputs)
+// }
+// Returns { txJson, sigHashHex, sigHex, in0SigscriptLen, in1SigscriptLen, outputValue }
+function mergeSelfTest() {
+  const REF = 'f8e741824120ad22ca334be7be3cf892412bdc449fd37b7e240b69afa4dc6e6e';
+  const dummyPriv = '0000000000000000000000000000000000000000000000000000000000000001';
+
+  let r;
+  try {
+    r = buildMergeTx({
+      in0TxId: 'b4ab26d26a6248a8ac465878f2bc91d81ea512647b0206e2afbc4a353d119eb4',
+      in0Index: 1,
+      in0Value: 130428466520n,
+      in0Amount: 4000n,
+      in1TxId: 'b52e19c6c629655565f4fa98b016fdc36199841db515e55007cb6643f18435ba',
+      in1Index: 0,
+      in1Value: 531528968714n,
+      in1Amount: 16301n,
+      ownerPubkey: '5d338aa54bcf4d955941ff8bcdd069b2f3aa1deb40234dc73ce5f4f581adf161',
+      privkeyHex: dummyPriv,
+    });
+  } catch (e) {
+    console.log('[merge selfTest] BUILD FAILED:', e.message);
+    return false;
+  }
+
+  const ok = r.sigHashHex === REF;
+  console.log('[merge selfTest] sighash-crosscheck', ok ? 'PASS' : 'FAIL',
+    ok ? '' : '\n  got: ' + r.sigHashHex + '\n  exp: ' + REF);
+  if (ok) {
+    console.log('[merge selfTest] outputValue', r.outputValue, r.outputValue === 661956135234 ? 'OK' : 'BAD');
+    console.log('[merge selfTest] in0 sigscript len', r.in0SigscriptLen, 'bytes');
+    console.log('[merge selfTest] in1 sigscript len', r.in1SigscriptLen, 'bytes');
+  }
+  return ok;
+}
+function buildMergeTx(params) {
+  const {
+    in0TxId, in0Index, in0Value, in0Amount,
+    in1TxId, in1Index, in1Value, in1Amount,
+    ownerPubkey, privkeyHex,
+  } = params;
+
+  const outAmount = BigInt(in0Amount) + BigInt(in1Amount);
+  const totalValue = BigInt(in0Value) + BigInt(in1Value);
+  if (totalValue <= MERGE_FEE)
+    throw new Error('combined value ' + totalValue + ' <= merge fee ' + MERGE_FEE);
+  const outValue = totalValue - MERGE_FEE;
+  if (outValue < MIN_OUT_VALUE)
+    throw new Error('output value ' + outValue + ' below MIN_OUT_VALUE');
+
+  // --- input scriptPubKeys (for sighash) — both not-for-sale, price 0 --------
+  const in0SpkHash = deriveScriptHashHex(ownerPubkey, BigInt(in0Amount), false, 0n);
+  const in0Spk = makeSpk(in0SpkHash);
+  const in1SpkHash = deriveScriptHashHex(ownerPubkey, BigInt(in1Amount), false, 0n);
+  const in1Spk = makeSpk(in1SpkHash);
+
+  // --- output scriptPubKey (merged parcel) -----------------------------------
+  const outSpkHash = deriveScriptHashHex(ownerPubkey, outAmount, false, 0n);
+  const outSpk = makeSpk(outSpkHash);
+
+  // --- single covenant output ------------------------------------------------
+  const outputs = [{
+    value: outValue,
+    scriptPubKeyVersion: 0,
+    scriptPubKey: outSpk,
+    covenant: { authorizingInput: 0, covenantId: COVENANT_ID_BYTES },
+  }];
+
+  // --- unsigned 2-input tx for sighash ---------------------------------------
+  const tx = {
+    version: 1,
+    inputs: [
+      { prevTxId: hexToBytes(in0TxId), prevIndex: in0Index, sequence: 0n },
+      { prevTxId: hexToBytes(in1TxId), prevIndex: in1Index, sequence: 0n },
+    ],
+    outputs,
+    lockTime: 0n,
+    subnetworkId: new Uint8Array(20),
+    gas: 0n,
+    payload: new Uint8Array(0),
+  };
+
+  const utxoEntries = [
+    { amount: BigInt(in0Value), scriptPubKeyVersion: 0, scriptPubKey: in0Spk },
+    { amount: BigInt(in1Value), scriptPubKeyVersion: 0, scriptPubKey: in1Spk },
+  ];
+
+  // --- sighash at INDEX 0 (leader) — BOTH sigs use this ----------------------
+  const sigHash = calcSchnorrSignatureHash(tx, 0, utxoEntries, SIG_HASH_ALL);
+  const sig = schnorr.sign(sigHash, hexToBytes(privkeyHex));
+  const sigWithType = new Uint8Array(65);
+  sigWithType.set(sig, 0);
+  sigWithType[64] = SIG_HASH_ALL;
+
+  // --- leader sigscript (input 0): full ABI ----------------------------------
+  // One new state: merged parcel (outAmount, same owner, not-for-sale)
+  const newState = {
+    owner: hexToBytes(ownerPubkey),
+    identifierType: 0,
+    amount: outAmount,
+    isMinter: false,
+    forSale: false,
+    price: 0n,
+  };
+  // Two sigs in the array (one per covenant input). Same key + same sighash =
+  // identical bytes, but the ABI expects one entry per covenant input.
+  const witnesses = new Uint8Array([0x00, 0x01]); // dormant filler, match-proven
+  const in0Redeem = deriveRedeemScript(ownerPubkey, BigInt(in0Amount), false, 0n);
+  const in0Sigscript = buildSigScript(
+    [newState], [sigWithType, sigWithType], witnesses, in0Redeem, true
+  );
+
+  // --- delegate sigscript (input 1): selector + redeem only ------------------
+  const in1Redeem = deriveRedeemScript(ownerPubkey, BigInt(in1Amount), false, 0n);
+  const in1Sigscript = buildSigScript(null, null, null, in1Redeem, false);
+
+  // --- JSON for submitTransaction (2 covenant inputs) ------------------------
+  const txJson = {
+    transaction: {
+      version: 1,
+      inputs: [
+        { // 0: leader covenant input
+          previousOutpoint: { transactionId: in0TxId, index: in0Index },
+          signatureScript: bytesToHex(in0Sigscript),
+          sequence: 0,
+          sigOpCount: 0,
+          computeBudget: MERGE_COMPUTE_BUDGET,
+        },
+        { // 1: delegate covenant input
+          previousOutpoint: { transactionId: in1TxId, index: in1Index },
+          signatureScript: bytesToHex(in1Sigscript),
+          sequence: 0,
+          sigOpCount: 0,
+          computeBudget: MERGE_COMPUTE_BUDGET,
+        },
+      ],
+      outputs: [{
+        value: Number(outValue),
+        scriptPublicKey: spkJsonHex(0, outSpk),
+        covenant: { authorizingInput: 0, covenantId: COVENANT_ID_HEX },
+        verboseData: null,
+      }],
+      lockTime: 0,
+      subnetworkId: SUBNETWORK_NATIVE_HEX,
+      gas: 0,
+      payload: '',
+      mass: 0,
+      verboseData: null,
+    },
+    allowOrphan: false,
+  };
+
+  return {
+    txJson,
+    sigHashHex: bytesToHex(sigHash),
+    sigHex: bytesToHex(sigWithType),
+    in0SigscriptLen: in0Sigscript.length,
+    in1SigscriptLen: in1Sigscript.length,
+    outputValue: Number(outValue),
+  };
+}
+
 // --- attach to wallet namespace if present -----------------------------------
 if (typeof window !== 'undefined' && window.KASPA) {
   window.KASPA.buildSendTx = buildSendTx;
   window.KASPA.buildSplitTx = buildSplitTx;
   window.KASPA.buildListTx = buildListTx;
   window.KASPA.buildClaimTx = buildClaimTx;
+  window.KASPA.buildMergeTx = buildMergeTx;
   window.KASPA.buildOwnerSignedTx = buildOwnerSignedTx;
   window.KASPA.txSelfTest = selfTest;
   window.KASPA.claimSelfTest = claimSelfTest;
+  window.KASPA.mergeSelfTest = mergeSelfTest;
 }
 
 export {
-  buildOwnerSignedTx, buildSendTx, buildSplitTx, buildListTx, buildClaimTx, selfTest, claimSelfTest,
+  buildOwnerSignedTx, buildSendTx, buildSplitTx, buildListTx, buildClaimTx, buildMergeTx,
+  selfTest, claimSelfTest, mergeSelfTest,
   FEE, COMPUTE_BUDGET, COVENANT_ID_HEX, MIN_OUT_VALUE,
   CLAIM_FEE, CLAIM_PAYMENT,
+  MERGE_FEE, MERGE_COMPUTE_BUDGET,
 };

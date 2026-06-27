@@ -919,6 +919,7 @@ async fn cmd_merge(args: &[&String], go: bool) {
 
     // CRITICAL (proven): both signatures are computed against the LEADER input (index 0).
     let sh0 = calc_schnorr_signature_hash(&mtx.as_verifiable(), 0, SIG_HASH_ALL, &reused);
+    println!("[merge] sighash (index 0): {}", faster_hex::hex_string(sh0.as_bytes().as_slice()));
     let msg0 = secp256k1::Message::from_digest_slice(sh0.as_bytes().as_slice()).expect("sighash0");
     let mut sig0 = signer.sign_schnorr(msg0).as_ref().to_vec();
     sig0.push(SIG_HASH_ALL.to_u8());
