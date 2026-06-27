@@ -23,9 +23,10 @@ truth and live on TN10:
   test vectors) → schnorr sign (`@noble/curves`) → ABI sigscript (`bitphoque_sigscript.js`,
   transposed State[], validated vs CLI hex dump) → JSON submit via `wrpcCall("submitTransaction")`.
   **Live mined tx `4f3d791f`** — wallet sent 1000 phoques, node accepted.
-- **Panels wired:** send, split, list, partial-list — all real build→sign→submit. Claim builder
-  proven at sighash layer (`buildClaimTx` + `claimSelfTest` PASS, commit `f107c80`); panel wiring
-  is next. Merge still a stub.
+- **Panels wired:** send, split, list, partial-list, claim — all real build→sign→submit.
+  Claim panel wired + proven live (commit `70e9f96`): auto-funding-UTXO picker, 2-input
+  payment-authorized build, three live txs (`d941a074`, `a8bc5081`, `77d595d8`).
+  Merge still a stub.
 - **CLI:** feature-complete — import / balance / list / split / merge / partial-list / claim / send /
   receive. All proven on-chain.
 - **Audit:** `bitphoque_audit_2026-06-25.md` — history-blind source reconstruction, no fund-loss
@@ -33,7 +34,7 @@ truth and live on TN10:
   closed. R1 (F-2 genesis derivation) retired by design (genesis uses route-1 whole-compiled-script,
   parcels use route-2 splice — intentionally different, see below).
 
-### Claim builder — PROVEN AT SIGHASH LAYER (2026-06-27)
+### Claim — PANEL WIRED + PROVEN LIVE (2026-06-27)
 
 `buildClaimTx` added to `bitphoque_tx.js` (commit `f107c80`). 2-input, payment-authorized
 claim — the structurally different tx type the wallet hadn't covered:
@@ -59,9 +60,18 @@ input-1 sighash = `de52d220051a7bc78426de553835b0ccd9aedf70a20341f721f423be70c1b
 `buildPlainSig(sig65)` wraps a schnorr sig for a plain input. Both are self-contained,
 don't touch the proven owner-signed path.
 
-**Still needed:** wire the Claim panel in `wallet.html` (seller-pubkey field, funding-UTXO
-picker, build→sign→submit). Then broadcast a real claim (harness `--go` first to isolate
-on-chain proof from panel wiring).
+**Panel wired (commit `70e9f96`):** 5 fields (seller pubkey, txid, index, parcel phoques,
+listed price). Auto-funding-UTXO picker queries the buyer's P2PK address, picks the smallest
+sufficient UTXO (must cover 100M payment + 900k fee). Build→sign→Submit, same pattern as
+send/list/split. No descriptor emit (buyer already has the token).
+
+**Proven live — full claim lifecycle from the web wallet:**
+- `d941a074` — claim 3000-phoque listing from buyer1 (`8c02c20a…`)
+- `a8bc5081` — list claimed parcel for sale at 500k sompi
+- `77d595d8` — self-claim (seller=buyer), proving round-trip
+
+Known limitation: payment hardcoded at `CLAIM_PAYMENT` (100M sompi). Listings priced above
+100M will fail at build time; fix is `max(price, CLAIM_PAYMENT)` in `buildClaimTx`.
 
 ### NODE ADDR SWEEP — DONE (2026-06-27)
 
@@ -149,10 +159,8 @@ expect `deriveP2SHAddress(genesis operands)` to match the genesis UTXO on-chain.
 
 ### What's next
 
-- **Claim panel wiring:** `buildClaimTx` is proven (see above). Wire the panel in `wallet.html`:
-  seller-pubkey field (pasted, not derived — party-agnostic), for-sale parcel txid/index/value,
-  price, buyer funding UTXO picker, build→sign→submit. Then broadcast a real claim —
-  harness `--go` first (isolates on-chain proof from panel wiring), then the web panel.
+- **Claim panel (DONE):** wired + proven live — see above.
+- **Publish:** claim panel was the gate; now unblocked. Deploy to the live cPanel host.
 - **Receive flow (PROVEN LIVE):** descriptor decode (`bitphoque_descriptor.js`, byte-identical to Rust codec, vendored `@scure/base` base58check) → amount-derived P2SH recompute (`bitphoque_p2sh.js`) → on-chain confirm (outpoint must exist with our covenant_id; amount self-certifies via amount-derived P2SH) → track. Wired into the Receive panel (`receiveParcel`). Trustless refusal of a spent parcel proven live on TN10 from both console and UI. The descriptor is a CLAIM; the chain is TRUTH.
 - **Descriptor emit (BUILT, UNTESTED LIVE):** send-submit assembles the recipient descriptor from `_pendingDesc` (recipientPubkey + sendAmount, stashed at build) + the submit-returned txid, via `encodeDescriptor`. Gated to send only (split/list/etc. don't set `_pendingDesc`). Code complete + committed; not yet run end-to-end (blocked on CLI toolchain, below).
 - **Parcel picker UX** — dropdown from tracked parcels instead of manual txid entry.
@@ -160,7 +168,6 @@ expect `deriveP2SHAddress(genesis operands)` to match the genesis UTXO on-chain.
 - **Tracked-parcel persistence** — parcels are in-memory; page reload wipes them. At
   publish time (live cPanel host = normal page), use localStorage or IndexedDB to persist.
 - **SMS Twilio node-monitor** — deferred until topology settles (listener at 18210 exists).
-- **Publish** — to the live cPanel host once claim panel is wired.
 
 ---
 
@@ -378,13 +385,13 @@ Own git repo (branch `master`). Not yet pushed to GitHub.
 ## OPEN ITEMS
 
 - [x] Receive flow (descriptor decode → confirm → record) — PROVEN LIVE
-- [ ] Claim panel — builder proven (`buildClaimTx` sighash PASS); panel wiring in `wallet.html` next
-- [ ] Claim on-chain — broadcast a real claim (harness `--go` first, then web panel)
+- [x] Claim panel — wired + proven live (d941a074, a8bc5081, 77d595d8), commit `70e9f96`
+- [x] Claim on-chain — three web-wallet txs, full lifecycle (claim→list→claim)
 - [ ] Merge panel (multi-input, leader/delegate)
 - [ ] Parcel picker UX (dropdown from tracked parcels)
 - [ ] Tracked-parcel persistence (in-memory wipes on reload; use localStorage at publish)
 - [ ] SMS Twilio node-monitor
-- [ ] Publish to live host
+- [ ] Publish to live host (claim panel gate cleared)
 - [ ] Original-token zero-pubkey owner quirk (observed, not blocking)
 - [ ] Auction — separate future build (stateful/temporal)
 - [ ] Mainnet: clear `bitphoque_mainnet_checklist.md`
