@@ -17,8 +17,8 @@ truth and live on TN10:
   HD key derivation (`m/44'/111111'/0'/0/0` → secp256k1 x-only → Kaspa bech32), cross-checked vs
   KasWare.
 - **Read side:** `refreshBalance()` wired — per-parcel P2SH derivation (template splice,
-  `bitphoque_p2sh.js`) → `getUtxosByAddresses` over JSON wRPC (`ws://127.0.0.1:18210`) → covenant
-  filter → reconcile + prune.
+  `bitphoque_p2sh.js`) → `getUtxosByAddresses` over JSON wRPC (`wss://node.outlawpolitics.org`) →
+  covenant filter → reconcile + prune.
 - **Write side (PROVEN LIVE):** sighash (`bitphoque_sighash.js`, keyed blake2b, validated vs Rust
   test vectors) → schnorr sign (`@noble/curves`) → ABI sigscript (`bitphoque_sigscript.js`,
   transposed State[], validated vs CLI hex dump) → JSON submit via `wrpcCall("submitTransaction")`.
@@ -33,6 +33,37 @@ truth and live on TN10:
   or supply-break vector found. R3 (minter branch annotated) and R5 (genesis node const repointed)
   closed. R1 (F-2 genesis derivation) retired by design (genesis uses route-1 whole-compiled-script,
   parcels use route-2 splice — intentionally different, see below).
+
+### VPS + PUBLIC DEPLOY — DONE (2026-06-27)
+
+**Hetzner VPS (CX22, Helsinki, Ubuntu 24.04)** provisioned as the public-facing TN10 node.
+
+- **kaspad v2.0.1** installed, running as systemd service (`/etc/systemd/system/kaspad.service`).
+  Flags: `--testnet --netsuffix=10 --utxoindex --rpclisten-json=0.0.0.0:18210`.
+- **Caddy reverse proxy** auto-provisions Let's Encrypt TLS.
+  `wss://node.outlawpolitics.org` (443) → `ws://127.0.0.1:18210` (local kaspad).
+- **DNS:** `node.outlawpolitics.org` A record → `89.167.32.239` (via cPanel Zone Editor).
+- **wallet.html WRPC_URL** changed from `ws://127.0.0.1:18210` to `wss://node.outlawpolitics.org`.
+- **Full site published to cPanel** — `public_html/BitPhoque/`: index.html, wallet.html,
+  favicon.ico, bitphoque-nowords.jpeg, phoque3.wav, all JS modules, vendor/.
+- **IBD in progress** at session end (downloading pruning-point chain segment). Wallet calls
+  will fail until `synced=true`. Check: `ssh root@89.167.32.239` then
+  `journalctl -u kaspad --no-pager -n 20`.
+
+Architecture:
+```
+  Browser (anywhere)
+    |  wss://node.outlawpolitics.org (port 443, TLS)
+    v
+  Caddy (VPS, TLS termination, Let's Encrypt auto-renew)
+    |  ws://127.0.0.1:18210 (local, plaintext)
+    v
+  kaspad (VPS, TN10, --utxoindex)
+```
+Wallet static files served by cPanel (outlawpolitics.org/BitPhoque/).
+Node RPC served by Hetzner VPS. Completely separate.
+
+Full VPS operational details in `vps_handoff.md`.
 
 ### Claim — PANEL WIRED + PROVEN LIVE (2026-06-27)
 
@@ -81,7 +112,7 @@ All 14 canonical `.rs` harnesses in `rust-examples\` had stale machine IPs baked
 All 14 repointed to `127.0.0.1:16210` in a single PowerShell sweep, verified clean via
 `findstr`, committed as `e3f6628`.
 
-Web wallet's `WRPC_URL` (`ws://127.0.0.1:18210`) was already correct — verified same session.
+Web wallet's `WRPC_URL` now `wss://node.outlawpolitics.org` (updated during VPS deploy).
 
 **Rule going forward:** every `.rs` `NODE` const = `127.0.0.1:16210`, no exceptions.
 Loopback is self-correcting: "this box's node," no addr to go stale, and if the node
@@ -186,14 +217,14 @@ expect `deriveP2SHAddress(genesis operands)` to match the genesis UTXO on-chain.
 
 ### What's next
 
-- **Claim panel (DONE):** wired + proven live — see above.
-- **Publish:** claim panel was the gate; now unblocked. Deploy to the live cPanel host.
+- **VPS node sync:** wait for IBD to complete (`synced=true`), then the live site is fully
+  operational — wallet can query balances and submit txs via `wss://node.outlawpolitics.org`.
+- **Multi-entity testing:** Entity1–4 set up (see TN10 GROUND FACTS). Test cross-entity
+  send, claim, and list flows from distinct devices/wallets.
+- **Parcel picker UX** — dropdown from tracked parcels instead of manual txid entry.
+- **SMS Twilio node-monitor** — deferred until topology settles (listener at 18210 exists).
 - **Receive flow (PROVEN LIVE):** descriptor decode (`bitphoque_descriptor.js`, byte-identical to Rust codec, vendored `@scure/base` base58check) → amount-derived P2SH recompute (`bitphoque_p2sh.js`) → on-chain confirm (outpoint must exist with our covenant_id; amount self-certifies via amount-derived P2SH) → track. Wired into the Receive panel (`receiveParcel`). Trustless refusal of a spent parcel proven live on TN10 from both console and UI. The descriptor is a CLAIM; the chain is TRUTH.
 - **Descriptor emit (BUILT, UNTESTED LIVE):** send-submit assembles the recipient descriptor from `_pendingDesc` (recipientPubkey + sendAmount, stashed at build) + the submit-returned txid, via `encodeDescriptor`. Gated to send only (split/list/etc. don't set `_pendingDesc`). Code complete + committed; not yet run end-to-end (blocked on CLI toolchain, below).
-- **Parcel picker UX** — dropdown from tracked parcels instead of manual txid entry.
-- **Merge panel (DONE):** wired + proven live — see §Merge below.
-- **Tracked-parcel persistence (DONE):** localStorage at all 4 mutation sites (commit `b04c041`).
-- **SMS Twilio node-monitor** — deferred until topology settles (listener at 18210 exists).
 
 ---
 
@@ -352,6 +383,7 @@ C:\bitphoque\
     bitphoque_audit_2026-06-25.md      <- security audit
     bitphoque_swap_covenant_design.md  <- sale/swap design + auction future-build
     bitphoque_mainnet_checklist.md     <- pre-mainnet gate
+    vps_handoff.md                     <- VPS setup + operational reference
     operating_baseline.md              <- shared portable baseline
 ```
 
@@ -361,17 +393,36 @@ Own git repo (branch `master`). Not yet pushed to GitHub.
 
 ## TN10 GROUND FACTS
 
-- **Node:** Big Daddy (`127.0.0.1:16210` gRPC, `18210` JSON wRPC). kaspad 2.0.1.
+- **Local node (Big Daddy):** `127.0.0.1:16210` gRPC, `18210` JSON wRPC. kaspad 2.0.1.
   Launch: `kaspad.exe v2.0.1 --testnet --netsuffix=10 --appdir=C:\kaspa-testnet10\datadir
   --utxoindex --disable-upnp --rpclisten=0.0.0.0:16210 --rpclisten-borsh=0.0.0.0:17210
   --rpclisten-json=0.0.0.0:18210`. Mainnet stays on .206, untouched.
+- **VPS node:** Hetzner CX22 (Helsinki), `89.167.32.239`. kaspad 2.0.1, systemd service.
+  Public endpoint: `wss://node.outlawpolitics.org` (Caddy TLS → `127.0.0.1:18210`).
+  SSH: `ssh root@89.167.32.239`. Operational details in `vps_handoff.md`.
 - **Build clone:** `D:\Tocatta_Projects\kaspa-tn12\silverscript` (the unified 3-field tree).
   `C:\kaspa-tn12` retired → `C:\_RETIRED_kaspa-tn12` (delete when file-handle releases).
   **Recopy canonical→clone before running any harness from D:**, because the sweep fixed
   canonical but cloned binaries may be stale (see NODE ADDR SWEEP above).
 - **Fee floors:** genesis 200k; transfer 400k; list/split 700k; claim 900k; merge 1.3M; 2×2 claim 1.5M.
-- **Key pubkeys:** buyer1 `8c02c20a…`, buyer2 `5d338aa5…`,
-  buyer3 `267496ce01f2a35653491c61b56b23e6b7dbe777a02b146286ac3635ff36ab61`.
+
+### Test entities (PUBLIC keys only — privkeys never in tracked files)
+
+| Entity | Label | Device | Address | Pubkey (hex) | TKAS |
+|--------|-------|--------|---------|-------------|------|
+| 1 | phoque | webapp | `kaspatest:qzcpdfrm752k2fzh6n2uvll2mh37uex65840uwwnv2nu2nl09ylgkx8ra2rcr` | `1602d48f7ea2aca48afa9ab8cffd5bbc7dcc9b543d5fc73a6c54f8a9fde527d1` | ~2,999 |
+| 2 | kasware | KasWare | same as Entity 1 (same seed) | same as Entity 1 | ~2,999 |
+| 3 | phonePhoques | phone | `kaspatest:qzhl95s2l85kxyflfm2kk3gx80ap9da0wcrt9ecndnwqu0vg9jeszusfgmz20` | `15fe5a415f3d2c6227e9daad68a0c77f4256f5eec0d65ce26d9b81c7b1059660` | 1,000 |
+| 4 | tabletphoques | tablet | `kaspatest:qpx2a6yxk6lg5shj6mv8tf4884ua0vyy550pg95q4wckkea092p4k38nn06lt` | `0995dd10d6d7d1485e5adb0eb4d4e7af3af61094a3c282d015762d6cf5e5506b` | 1,000 |
+
+Entity 1+2 share a seed — webapp and KasWare derive the same key, used to verify HD
+derivation cross-implementation. Entities 3+4 are genuinely separate keys for multi-party
+testing (send, claim, list between distinct holders on distinct devices).
+
+**Legacy key labels** (from CLI/harness development — still referenced in harness source and
+`.key` files): buyer1 `8c02c20a…`, buyer2 `5d338aa5…`,
+buyer3 `267496ce01f2a35653491c61b56b23e6b7dbe777a02b146286ac3635ff36ab61`.
+
 - **Faucet:** min 1000 TKAS/request, 24h cap 100k.
 - **Isolation lesson:** one box, one node, one datadir, one launch script. .206 runs mainnet
   flawlessly because it runs nothing else. Apply this discipline to every node.
@@ -402,9 +453,9 @@ Own git repo (branch `master`). Not yet pushed to GitHub.
 - **#4 "Boques"** = colloquial for phoques; completes phoque/pup/boque denomination story.
 - **#5 Price-escalating emission** = step bonding curve; design fork A/B/Hybrid.
 - **#6 Wallet clarity** (KAS vs phoque disambiguation, unit-confusion audit, "how to acquire KAS").
-- **#7 Key naming** — rename buyer1/buyer2/buyer3 to role-neutral labels (party_a, key_1, etc.)
-  since any holder can be seller or buyer. Touches keyfile names + harness references —
-  deliberate sweep for a quiet moment.
+- **#7 Key naming** — legacy buyer1/buyer2/buyer3 labels remain in harness source + `.key`
+  filenames. Entity1–4 labels are the current test-entity names (see GROUND FACTS). Full
+  rename sweep of harness references deferred for a quiet moment.
 
 ---
 
@@ -414,10 +465,14 @@ Own git repo (branch `master`). Not yet pushed to GitHub.
 - [x] Claim panel — wired + proven live (d941a074, a8bc5081, 77d595d8), commit `70e9f96`
 - [x] Claim on-chain — three web-wallet txs, full lifecycle (claim→list→claim)
 - [x] Merge panel — wired + proven live (split 206413…, merge 128bb090…), commit `b04c041`
-- [ ] Parcel picker UX (dropdown from tracked parcels)
 - [x] Tracked-parcel persistence — localStorage, saveParcels() at all mutation sites (commit `b04c041`)
+- [x] VPS node provisioned — Hetzner CX22, kaspad + Caddy, `wss://node.outlawpolitics.org`
+- [x] Site published to cPanel — `outlawpolitics.org/BitPhoque/`
+- [ ] VPS IBD completion — wait for `synced=true`, then live site is fully operational
+- [ ] Multi-entity testing (Entity1–4 cross-device send/claim/list)
+- [ ] Parcel picker UX (dropdown from tracked parcels)
+- [ ] `max(price, CLAIM_PAYMENT)` fix in `buildClaimTx`
 - [ ] SMS Twilio node-monitor
-- [ ] Publish to live host (claim panel gate cleared)
 - [ ] Original-token zero-pubkey owner quirk (observed, not blocking)
 - [ ] Auction — separate future build (stateful/temporal)
 - [ ] Mainnet: clear `bitphoque_mainnet_checklist.md`
