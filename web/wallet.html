@@ -671,6 +671,16 @@ const COVENANT_ID = "3baed5a3";                  // v3 covenant_id prefix (from 
 // wallet.json analogue: parcels the wallet tracks. Empty in the prototype —
 // populated by `receive`/`import`/`refreshBalance` against the NODE SEAM.
 let parcels = [];                                // [{outpoint, amount_pups, forSale, price, owner}]
+function saveParcels(){
+  try { localStorage.setItem('bitphoque_parcels', JSON.stringify(parcels)); }
+  catch(e){ console.warn('[parcels] save failed:', e); }
+}
+(function loadParcels(){
+  try {
+    const raw = localStorage.getItem('bitphoque_parcels');
+    if(raw) parcels = JSON.parse(raw);
+  } catch(e){ console.warn('[parcels] load failed:', e); }
+})();
 
 function fmtBalance(){
   const total = parcels.reduce((a,p)=>a + BigInt(p.amount_pups||0), 0n);
@@ -763,14 +773,16 @@ async function refreshBalance(){
   // 1) derive each tracked parcel's address (covenant_amount, NOT amount_pups)
   let derived;
   try {
+    const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js');
+    const net = (window.KASPA && window.KASPA.network) || 'kaspatest';
     derived = parcels.map(p=>({
       p,
-      addr: window.KASPA.deriveP2SHAddress(
+      addr: deriveP2SHAddress(
         xonly(p.owner),
         BigInt(p.covenant_amount),
         !!p.forSale,
         BigInt(p.price||0),
-        (window.KASPA && window.KASPA.network) || 'kaspatest'
+        net
       )
     }));
   } catch(e){
@@ -825,6 +837,7 @@ async function refreshBalance(){
     if(live.has(p.outpoint)) kept.push(p);   // outpoint stored as "txid:index"
   }
   parcels = kept;
+  saveParcels();
 
   renderBalance();
   setBtn(label);
@@ -885,6 +898,7 @@ async function receiveParcel(descriptorString){
     outpoint:        wantOutpoint,
   };
   parcels.push(parcel);
+  saveParcels();
   renderBalance();
   return parcel;
 }
@@ -1336,7 +1350,7 @@ async function runPanel(){
   }
 }
 
-function resetAll(){ seed=[]; verifyBlanks=[]; parcels=[]; myKey=null; closePanel(); show('welcome'); }
+function resetAll(){ seed=[]; verifyBlanks=[]; parcels=[]; saveParcels(); myKey=null; closePanel(); show('welcome'); }
 function copyAddr(){
   if(!myKey) return;
   navigator.clipboard?.writeText(myKey.address);
