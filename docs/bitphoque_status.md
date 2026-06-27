@@ -8,7 +8,7 @@ _The on-chain tx ledger (every confirmed txid) and session-by-session history li
 
 ---
 
-## WHERE WE ARE (2026-06-26)
+## WHERE WE ARE (2026-06-27)
 
 The web wallet is a **spending wallet**. Every layer of the write seam is proven against ground
 truth and live on TN10:
@@ -23,14 +23,75 @@ truth and live on TN10:
   test vectors) → schnorr sign (`@noble/curves`) → ABI sigscript (`bitphoque_sigscript.js`,
   transposed State[], validated vs CLI hex dump) → JSON submit via `wrpcCall("submitTransaction")`.
   **Live mined tx `4f3d791f`** — wallet sent 1000 phoques, node accepted.
-- **Panels wired:** send, split, list, partial-list — all real build→sign→submit. Claim and merge
-  still stubs (multi-input, different signing patterns).
+- **Panels wired:** send, split, list, partial-list — all real build→sign→submit. Claim builder
+  proven at sighash layer (`buildClaimTx` + `claimSelfTest` PASS, commit `f107c80`); panel wiring
+  is next. Merge still a stub.
 - **CLI:** feature-complete — import / balance / list / split / merge / partial-list / claim / send /
   receive. All proven on-chain.
 - **Audit:** `bitphoque_audit_2026-06-25.md` — history-blind source reconstruction, no fund-loss
   or supply-break vector found. R3 (minter branch annotated) and R5 (genesis node const repointed)
   closed. R1 (F-2 genesis derivation) retired by design (genesis uses route-1 whole-compiled-script,
   parcels use route-2 splice — intentionally different, see below).
+
+### Claim builder — PROVEN AT SIGHASH LAYER (2026-06-27)
+
+`buildClaimTx` added to `bitphoque_tx.js` (commit `f107c80`). 2-input, payment-authorized
+claim — the structurally different tx type the wallet hadn't covered:
+
+- **Input 0:** for-sale covenant UTXO, UNSIGNED (payment-authorized). Sigscript = leader ABI
+  with dummy 65-zero sig + witness byte `[1]` pointing at the payment output. Redeem push
+  (2793B). computeBudget 24.
+- **Input 1:** buyer's plain P2PK funding UTXO, buyer-SIGNED at index 1. computeBudget 11.
+- **Output 0:** token → buyer (covenant-bound, `authorizingInput: 0`, full parcel value,
+  forSale=false).
+- **Output 1:** payment → seller P2PK (100M sompi = 1 TKAS, KIP-9-safe; must be ≥ price).
+- **Output 2:** change → buyer P2PK.
+- **Fee:** 900k (consensus #9, 2-input claim floor 857k).
+
+**Sighash crosscheck:** `claimSelfTest()` rebuilds the exact claim tx from a
+`bitphoque_sale_claim_v3` dry-run (seller=buyer1 `8c02c20a…`, claimer=buyer3 `267496ce…`,
+3000 phoques, price 500000, cov UTXO `8dff6df4…:0`, funding `40cbf865…:5`) and asserts
+input-1 sighash = `de52d220051a7bc78426de553835b0ccd9aedf70a20341f721f423be70c1bae1`.
+**PASS** — byte-identical to the Rust engine. Payment/change math verified. Sigscript
+2922 bytes. The harness also ran LOCAL VM VERIFY: PASS on the covenant input.
+
+**New helpers:** `makeP2pk(pubkeyHex)` builds a plain P2PK scriptPubKey (`20<pubkey>ac`);
+`buildPlainSig(sig65)` wraps a schnorr sig for a plain input. Both are self-contained,
+don't touch the proven owner-signed path.
+
+**Still needed:** wire the Claim panel in `wallet.html` (seller-pubkey field, funding-UTXO
+picker, build→sign→submit). Then broadcast a real claim (harness `--go` first to isolate
+on-chain proof from panel wiring).
+
+### NODE ADDR SWEEP — DONE (2026-06-27)
+
+All 14 canonical `.rs` harnesses in `rust-examples\` had stale machine IPs baked into
+`const NODE` — 12 with `192.168.0.206` (MAINNET box, the dangerous ones) and 2 with
+`192.168.0.104`. These don't "fail loudly"; they SILENTLY connect to the wrong node.
+All 14 repointed to `127.0.0.1:16210` in a single PowerShell sweep, verified clean via
+`findstr`, committed as `e3f6628`.
+
+Web wallet's `WRPC_URL` (`ws://127.0.0.1:18210`) was already correct — verified same session.
+
+**Rule going forward:** every `.rs` `NODE` const = `127.0.0.1:16210`, no exceptions.
+Loopback is self-correcting: "this box's node," no addr to go stale, and if the node
+isn't running it fails loudly (connection refused). Machine IPs (`.206`/`.104`/`.118`)
+belong in documentation (this doc's TN10 GROUND FACTS), never compiled into a harness.
+
+**Stale-clone divergence gap (known, not yet swept):** the sweep fixed CANONICAL
+(`C:\bitphoque\rust-examples\`), but the D: build-clone binaries (`D:\…\silverscript\…\
+src\bin\`) still carry old IPs until recopied+rebuilt. Proven live: `inspect_v3` connected
+to `.104` on first run after the sweep because the build clone hadn't been updated; recopy
+fixed it. **Discipline: recopy canonical→clone before running any harness from the D: tree.**
+
+### Claim harness EngineFlags fix (2026-06-27)
+
+`bitphoque_sale_claim_v3.rs` was written against the 2-field `EngineFlags` and failed to
+compile on the unified 3-field engine. Fixed: added `zk_hardening_enabled: true` to both
+`EngineFlags` initializers (lines 111 and 224), matching the CLI (`bitphoque_cli.rs` sets
+`true` in all 8 call sites). Also added a diagnostic `println!` for the buyer sighash
+(used to capture the `de52d220…` reference for `claimSelfTest`). Fix applied to canonical
+and copied to D: clone. Harness compiles + dry-runs clean on the 3-field engine.
 
 ### TOOLCHAIN SPLIT — RESOLVED + GREEN-PATH PROVEN LIVE (2026-06-26)
 
@@ -42,6 +103,11 @@ pasted into the web Receive panel → **PARCEL CONFIRMED + TRACKED** (1000 phoqu
 `b016a47b…`, outpoint `f8f13363…:0`, forSale=false). First trustless send→receive on TN10,
 no coordinator: descriptor = claim, chain = truth, verified via amount-derived P2SH.
 The wallet is now a working spending wallet, both halves proven live.
+
+**1000-phoque parcel on-chain status:** confirmed live via `inspect_v3` (2026-06-27):
+FOUND at `f8f13363…:0`, value 824,998,025,000 sompi. Parcel "disappeared" from the wallet
+because tracked parcels are in-memory (page reload wipes them). The chain is fine; the
+wallet just needs to re-onboard + refreshBalance to re-discover.
 
 **Build clone is now `D:\Tocatta_Projects\kaspa-tn12\silverscript`** (C:\kaspa-tn12 retired —
 renamed `C:\_RETIRED_kaspa-tn12`, the stale 2-field tree). Engine source-of-truth:
@@ -68,15 +134,12 @@ rebuilt GREEN on the unified `1.2.1-toc.3` engine.
 97821666447 sompi. A FOUND is dispositive — can't accidentally derive a matching address for
 a live UTXO. Local P2SH derivation matches on-chain ground truth.
 
-**Stale node-addr trap (fixed):** build-tree `bitphoque_node_diag.rs` had `192.168.0.206`
-(MAINNET box!) baked in — recopied canonical (`127.0.0.1:16210`) over it. Watch for `.206`/
-`.104` in any build-clone binary; canonical is always `127.0.0.1:16210`.
-
 - GREEN-PATH: DONE (see above). Descriptor emit is now PROVEN LIVE, not just built.
 - Node synced at session end (`synced=true`, blocks=headers=1304873). Inspect NOT-FOUND
   results are now trustworthy (no index lag while synced).
 - DEFERRED cleanup: physically delete/move `C:\_RETIRED_kaspa-tn12` once its file handle
   releases (was Defender/indexer-locked; rename succeeded, cross-drive move didn't).
+
 ### Genesis vs parcel P2SH (net-new finding, 2026-06-26)
 
 Genesis uses **route-1**: `blake2b(entire compiled script)` → P2SH. Parcels use **route-2**:
@@ -86,14 +149,18 @@ expect `deriveP2SHAddress(genesis operands)` to match the genesis UTXO on-chain.
 
 ### What's next
 
+- **Claim panel wiring:** `buildClaimTx` is proven (see above). Wire the panel in `wallet.html`:
+  seller-pubkey field (pasted, not derived — party-agnostic), for-sale parcel txid/index/value,
+  price, buyer funding UTXO picker, build→sign→submit. Then broadcast a real claim —
+  harness `--go` first (isolates on-chain proof from panel wiring), then the web panel.
 - **Receive flow (PROVEN LIVE):** descriptor decode (`bitphoque_descriptor.js`, byte-identical to Rust codec, vendored `@scure/base` base58check) → amount-derived P2SH recompute (`bitphoque_p2sh.js`) → on-chain confirm (outpoint must exist with our covenant_id; amount self-certifies via amount-derived P2SH) → track. Wired into the Receive panel (`receiveParcel`). Trustless refusal of a spent parcel proven live on TN10 from both console and UI. The descriptor is a CLAIM; the chain is TRUTH.
 - **Descriptor emit (BUILT, UNTESTED LIVE):** send-submit assembles the recipient descriptor from `_pendingDesc` (recipientPubkey + sendAmount, stashed at build) + the submit-returned txid, via `encodeDescriptor`. Gated to send only (split/list/etc. don't set `_pendingDesc`). Code complete + committed; not yet run end-to-end (blocked on CLI toolchain, below).
 - **Parcel picker UX** — dropdown from tracked parcels instead of manual txid entry.
-- **Claim panel** — multi-input, payment-authorized (dummy sig + witness index). Different
-  sigscript: covenant input unsigned, buyer's plain input signed at its own index.
 - **Merge panel** — multi-input, leader/delegate (two sigscripts, two 2793B script reveals).
+- **Tracked-parcel persistence** — parcels are in-memory; page reload wipes them. At
+  publish time (live cPanel host = normal page), use localStorage or IndexedDB to persist.
 - **SMS Twilio node-monitor** — deferred until topology settles (listener at 18210 exists).
-- **Publish** — to the live cPanel host once receive + claim are wired.
+- **Publish** — to the live cPanel host once claim panel is wired.
 
 ---
 
@@ -164,6 +231,16 @@ cargo run --bin silverc -- C:\bitphoque\covenants\<file>.sil --ctor C:\bitphoque
 10. **v3 merge 2→1 fee floor = 1,244,500 (use 1.3M).** Two 2793B script reveals.
 11. **v3 combined 2×2 claim cleared at 1.5M** (4 inputs, 6 outputs, two script reveals).
 
+### Claim ABI detail (from proven harness + JS port)
+- **Witness byte `[1]`** = payment output index. The covenant checks that output at
+  this index pays ≥ price to the seller. Hardcoded because claim always has token/payment/change
+  in outputs 0/1/2.
+- **Dummy sig `[0u8; 65]`** = slot filler for the payment-authorized branch. The for-sale
+  contract ignores the sig when witnesses indicate a payment-authorized claim.
+- **P2PK scriptPubKey** for plain inputs/outputs = `20<32-byte-xonly>ac`
+  (OP_DATA32 + pubkey + OP_CHECKSIG). New helper `makeP2pk` in `bitphoque_tx.js`.
+- **computeBudget** per input: 24 for covenant input (240k script units), 11 for plain P2PK.
+
 ### Leader/delegate ABI (multi-covenant-input txs)
 - **Input 0 = LEADER:** carries newStates[], sigs[], witnesses[] for ALL covenant inputs.
 - **Other inputs = DELEGATE:** empty args, push own redeem script only.
@@ -192,6 +269,8 @@ wrpcCall("submitTransaction", {
 })
 ```
 computeBudget=24 for 240k script units. scriptPublicKey = version(u16 hex) + script(hex).
+For claim: input 0 computeBudget 24, input 1 computeBudget 11. Output 1+2 have
+`covenant: null` (plain P2PK, not covenant-bound).
 
 ### Node / indexing quirks
 - **Address-index lags tx-index by a few seconds** after confirmation. Mitigation: retry
@@ -223,13 +302,15 @@ C:\bitphoque\
     bitphoque_descriptor_v1.rs         <- parcel descriptor codec
     bitphoque_node_diag.rs             <- node health probe
     bitphoque_inspect_v3.rs            <- generalized on-chain inspect (retry, pubkey-only)
+    bitphoque_sale_claim_v3.rs         <- claim harness (3-field EngineFlags, sighash print)
     (+ reject tests, sale harnesses, keygen, merge, split-transfer — all canonical)
   web\
     wallet.html                        <- the wallet (onboarding + HOME + action panels)
     bitphoque_p2sh.js                  <- in-browser P2SH derivation (template splice)
     bitphoque_sighash.js               <- sighash (keyed blake2b, proven vs Rust vectors)
     bitphoque_sigscript.js             <- ABI sigscript builder (proven vs CLI hex dump)
-    bitphoque_tx.js                    <- tx builder (sighash + sign + sigscript + JSON)
+    bitphoque_tx.js                    <- tx builder: send/split/list + buildClaimTx + selftests
+    bitphoque_descriptor.js            <- parcel descriptor codec (decode + encode)
     vendor/                            <- @scure/bip39, @scure/bip32, @noble/curves,
                                           @noble/hashes — all v2.2.0, vendored locally
   docs\
@@ -251,12 +332,19 @@ Own git repo (branch `master`). Not yet pushed to GitHub.
   Launch: `kaspad.exe v2.0.1 --testnet --netsuffix=10 --appdir=C:\kaspa-testnet10\datadir
   --utxoindex --disable-upnp --rpclisten=0.0.0.0:16210 --rpclisten-borsh=0.0.0.0:17210
   --rpclisten-json=0.0.0.0:18210`. Mainnet stays on .206, untouched.
-- **Build clones:** rusty-kaspa `C:\kaspa-tn12\rusty-kaspa`; silverscript `C:\kaspa-tn12\silverscript`.
+- **Build clone:** `D:\Tocatta_Projects\kaspa-tn12\silverscript` (the unified 3-field tree).
+  `C:\kaspa-tn12` retired → `C:\_RETIRED_kaspa-tn12` (delete when file-handle releases).
+  **Recopy canonical→clone before running any harness from D:**, because the sweep fixed
+  canonical but cloned binaries may be stale (see NODE ADDR SWEEP above).
 - **Fee floors:** genesis 200k; transfer 400k; list/split 700k; claim 900k; merge 1.3M; 2×2 claim 1.5M.
-- **Key pubkeys:** buyer1 `8c02c20a…`, buyer2 `5d338aa5…`, buyer3 `267496ce…`.
+- **Key pubkeys:** buyer1 `8c02c20a…`, buyer2 `5d338aa5…`,
+  buyer3 `267496ce01f2a35653491c61b56b23e6b7dbe777a02b146286ac3635ff36ab61`.
 - **Faucet:** min 1000 TKAS/request, 24h cap 100k.
 - **Isolation lesson:** one box, one node, one datadir, one launch script. .206 runs mainnet
   flawlessly because it runs nothing else. Apply this discipline to every node.
+- **NODE addr rule:** every `.rs` `const NODE` = `127.0.0.1:16210`. No machine IPs (`.206`/
+  `.104`/`.118`) compiled into any harness. Loopback is self-correcting. Machine IPs are
+  documentation-only (here and in launch flags).
 
 ---
 
@@ -281,18 +369,28 @@ Own git repo (branch `master`). Not yet pushed to GitHub.
 - **#4 "Boques"** = colloquial for phoques; completes phoque/pup/boque denomination story.
 - **#5 Price-escalating emission** = step bonding curve; design fork A/B/Hybrid.
 - **#6 Wallet clarity** (KAS vs phoque disambiguation, unit-confusion audit, "how to acquire KAS").
+- **#7 Key naming** — rename buyer1/buyer2/buyer3 to role-neutral labels (party_a, key_1, etc.)
+  since any holder can be seller or buyer. Touches keyfile names + harness references —
+  deliberate sweep for a quiet moment.
 
 ---
 
 ## OPEN ITEMS
 
-- [ ] Receive flow (descriptor decode → confirm → record)
-- [ ] Claim panel (multi-input, payment-authorized)
+- [x] Receive flow (descriptor decode → confirm → record) — PROVEN LIVE
+- [ ] Claim panel — builder proven (`buildClaimTx` sighash PASS); panel wiring in `wallet.html` next
+- [ ] Claim on-chain — broadcast a real claim (harness `--go` first, then web panel)
 - [ ] Merge panel (multi-input, leader/delegate)
 - [ ] Parcel picker UX (dropdown from tracked parcels)
+- [ ] Tracked-parcel persistence (in-memory wipes on reload; use localStorage at publish)
 - [ ] SMS Twilio node-monitor
 - [ ] Publish to live host
 - [ ] Original-token zero-pubkey owner quirk (observed, not blocking)
 - [ ] Auction — separate future build (stateful/temporal)
 - [ ] Mainnet: clear `bitphoque_mainnet_checklist.md`
+  - NOTE: re-genesis produces a new `covenant_id`; sweep `3baed5a3…` in ALL JS + harnesses
 - [ ] Make public on GitHub (clean repo name + README + secret-sweep)
+- [ ] D: build-clone bin sweep (recopy all 14 canonical harnesses → clone, rebuild)
+- [ ] Delete `C:\_RETIRED_kaspa-tn12` (file-handle release pending)
+- [ ] Prune dead `import { decodeDescriptor }` at wallet.html line ~75
+- [ ] Update shared panel banner ("Prototype — node-free…") — now false for wired panels

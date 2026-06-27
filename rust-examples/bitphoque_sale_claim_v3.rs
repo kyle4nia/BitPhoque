@@ -108,7 +108,7 @@ fn local_vm_verify(tx: &Transaction, entries: Vec<UtxoEntry>, input_idx: usize) 
     let mut vm = TxScriptEngine::from_transaction_input(
         &populated, &input, input_idx, utxo,
         EngineCtx::new(&sig_cache).with_reused(&reused_values).with_covenants_ctx(&cov_ctx),
-        EngineFlags { covenants_enabled: true, sigop_script_units: 0.into() },
+        EngineFlags { covenants_enabled: true, zk_hardening_enabled: true, sigop_script_units: 0.into() },
     );
     vm.execute()
 }
@@ -207,7 +207,7 @@ async fn main() {
     // Sign INPUT 1 (buyer's plain funding) over the tx.
     let mtx = MutableTransaction::with_entries(unsigned, vec![fs_utxo.clone(), b_utxo.clone()]);
     let reused = SigHashReusedValuesUnsync::new();
-    let b_sig_hash = calc_schnorr_signature_hash(&mtx.as_verifiable(), 1, SIG_HASH_ALL, &reused);
+    let b_sig_hash = calc_schnorr_signature_hash(&mtx.as_verifiable(), 1, SIG_HASH_ALL, &reused);  println!("[claim] buyer sighash: {}", faster_hex::hex_string(b_sig_hash.as_bytes().as_slice()));
     let b_msg = secp256k1::Message::from_digest_slice(b_sig_hash.as_bytes().as_slice()).expect("buyer sighash");
     let b_sig = buyer.sign_schnorr(b_msg);
     let mut b_signature = b_sig.as_ref().to_vec();
@@ -221,7 +221,7 @@ async fn main() {
     let mut in0_sigscript = forsale_compiled
         .build_sig_script_for_covenant_decl("transfer", vec![new_states, sigs, witnesses], CovenantDeclCallOptions { is_leader: true })
         .expect("build leader sigscript");
-    let redeem_push = ScriptBuilder::with_flags(EngineFlags { covenants_enabled: true, sigop_script_units: 0.into() }).add_data(&forsale_compiled.script).expect("push redeem").drain();
+    let redeem_push = ScriptBuilder::with_flags(EngineFlags { covenants_enabled: true, zk_hardening_enabled: true, sigop_script_units: 0.into() }).add_data(&forsale_compiled.script).expect("push redeem").drain();
     in0_sigscript.extend_from_slice(&redeem_push);
 
     let in0 = TransactionInput { previous_outpoint: fs_outpoint, signature_script: in0_sigscript, sequence: 0, mass: cov_mass };
