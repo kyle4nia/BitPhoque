@@ -32,10 +32,16 @@ truth and live on TN10:
   closed. R1 (F-2 genesis derivation) retired by design (genesis uses route-1 whole-compiled-script,
   parcels use route-2 splice — intentionally different, see below).
 
-### TOOLCHAIN SPLIT — RESOLVED + ENGINE VERIFIED (2026-06-26)
+### TOOLCHAIN SPLIT — RESOLVED + GREEN-PATH PROVEN LIVE (2026-06-26)
 
-The CLI now compiles and the 3-field engine is PROVEN to match on-chain. Green-path is
-unblocked from the toolchain side; only gated now on the node finishing IBD.
+The CLI now compiles, the 3-field engine is PROVEN to match on-chain, AND the full live
+send→receive loop ran end-to-end. **GREEN-PATH DONE:** CLI `send` buyer2→web-wallet
+(whole 1000-phoque parcel, no change) broadcast ACCEPTED as tx
+`f8f133633960e3e693880adbd88f7db86bd591c7b41fdb169539fb39a030a82f`; recipient descriptor
+pasted into the web Receive panel → **PARCEL CONFIRMED + TRACKED** (1000 phoques, owner
+`b016a47b…`, outpoint `f8f13363…:0`, forSale=false). First trustless send→receive on TN10,
+no coordinator: descriptor = claim, chain = truth, verified via amount-derived P2SH.
+The wallet is now a working spending wallet, both halves proven live.
 
 **Build clone is now `D:\Tocatta_Projects\kaspa-tn12\silverscript`** (C:\kaspa-tn12 retired —
 renamed `C:\_RETIRED_kaspa-tn12`, the stale 2-field tree). Engine source-of-truth:
@@ -66,11 +72,9 @@ a live UTXO. Local P2SH derivation matches on-chain ground truth.
 (MAINNET box!) baked in — recopied canonical (`127.0.0.1:16210`) over it. Watch for `.206`/
 `.104` in any build-clone binary; canonical is always `127.0.0.1:16210`.
 
-- ACTION next session (gated on `synced=true`): CLI `send` buyer1→web-wallet pubkey
-  `b016a47bf515652457d4d5c67feadde3ee64daa1eafe39d362a7c54fef293e8b`, paste emitted
-  descriptor into the web Receive panel → expect first green PARCEL CONFIRMED.
-- Node was mid-IBD at session end (`synced=false`, blocks 1250939 / headers 1283913,
-  ~33k behind). Do NOT trust inspect NOT-FOUND results until `synced=true` (index lag).
+- GREEN-PATH: DONE (see above). Descriptor emit is now PROVEN LIVE, not just built.
+- Node synced at session end (`synced=true`, blocks=headers=1304873). Inspect NOT-FOUND
+  results are now trustworthy (no index lag while synced).
 - DEFERRED cleanup: physically delete/move `C:\_RETIRED_kaspa-tn12` once its file handle
   releases (was Defender/indexer-locked; rename succeeded, cross-drive move didn't).
 ### Genesis vs parcel P2SH (net-new finding, 2026-06-26)
