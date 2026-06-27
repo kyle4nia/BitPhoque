@@ -32,24 +32,47 @@ truth and live on TN10:
   closed. R1 (F-2 genesis derivation) retired by design (genesis uses route-1 whole-compiled-script,
   parcels use route-2 splice — intentionally different, see below).
 
-### TOOLCHAIN SPLIT — blocks live send→receive green-path test (2026-06-26)
+### TOOLCHAIN SPLIT — RESOLVED + ENGINE VERIFIED (2026-06-26)
 
-The send→receive loop is BUILT on both ends but never run live, because seeding a
-fresh parcel needs the CLI, and the CLI won't compile against the current build clone:
+The CLI now compiles and the 3-field engine is PROVEN to match on-chain. Green-path is
+unblocked from the toolchain side; only gated now on the node finishing IBD.
 
-- Canonical `bitphoque_cli.rs` uses three-field `EngineFlags { covenants_enabled,
-  zk_hardening_enabled, sigop_script_units }`.
-- Build clone `C:\kaspa-tn12\silverscript` (HEAD `2c46231`) has the OLDER two-field
-  `EngineFlags { covenants_enabled, sigop_script_units }` — no `zk_hardening_enabled`.
-  `git log --all` in the clone shows NO zk_hardening commit. The engine canonical
-  targets is NOT in this clone.
-- ACTION next session: locate the newer silverscript checkout where canonical last
-  built on-chain (the "proven on-chain" engine), or pull the clone to the zk_hardening
-  era. Then rebuild CLI and run the green-path: CLI `send` buyer1→web-wallet pubkey
+**Build clone is now `D:\Tocatta_Projects\kaspa-tn12\silverscript`** (C:\kaspa-tn12 retired —
+renamed `C:\_RETIRED_kaspa-tn12`, the stale 2-field tree). Engine source-of-truth:
+`D:\Tocatta_Projects\kaspa-tn12\rusty-kaspa` (the 3-field engine, `lib.rs:127-129` defines
+`covenants_enabled / zk_hardening_enabled / sigop_script_units`).
+
+**Root cause of the split:** silverscript pulled `kaspa-*` crates from GitHub branch `tn12`
+(`1.1.1-toc.1`, the 2-field engine) while a 3-field local rusty-kaspa sat unused next to it.
+Result: two copies of every kaspa crate in the graph → `Prefix`/`Address`/`ScriptPublicKey`/
+`VerifiableTransaction` type mismatches (46 errors).
+
+**Fix (in `D:\…\silverscript\Cargo.toml`):** single `[patch."https://github.com/kaspanet/
+rusty-kaspa"]` block redirecting ALL kaspa crates (consensus-core, addresses, hashes,
+txscript, txscript-errors, grpc-client, notify, rpc-core) to local `D:\…\rusty-kaspa` paths.
+Workspace deps reverted to git coordinates so the patch is the single source redirect.
+Member crate `silverscript-lang/Cargo.toml`: stripped `version = "1.1.1-toc.1"` pins from its
+5 direct git deps (so local `1.2.1-toc.3` satisfies). Added `bs58 --features check`. Deleted
+stale `Cargo.lock` (→ `.bak`) to force clean re-resolution. CLI + inspect_v3 + node_diag all
+rebuilt GREEN on the unified `1.2.1-toc.3` engine.
+
+**ENGINE VERIFIED LIVE (the gate that matters — clean build ≠ correct engine):**
+`bitphoque_node_diag.exe` derived a known parcel P2SH and FOUND its live UTXO on-chain:
+`[new 3000]` for-sale parcel at `kaspatest:pru2qyxy…` → outpoint `8dff6df4…:0`, value
+97821666447 sompi. A FOUND is dispositive — can't accidentally derive a matching address for
+a live UTXO. Local P2SH derivation matches on-chain ground truth.
+
+**Stale node-addr trap (fixed):** build-tree `bitphoque_node_diag.rs` had `192.168.0.206`
+(MAINNET box!) baked in — recopied canonical (`127.0.0.1:16210`) over it. Watch for `.206`/
+`.104` in any build-clone binary; canonical is always `127.0.0.1:16210`.
+
+- ACTION next session (gated on `synced=true`): CLI `send` buyer1→web-wallet pubkey
   `b016a47bf515652457d4d5c67feadde3ee64daa1eafe39d362a7c54fef293e8b`, paste emitted
   descriptor into the web Receive panel → expect first green PARCEL CONFIRMED.
-- Also (moot until engine fixed): canonical CLI node addr is correct at `127.0.0.1:16210`;
-  a stale `192.168.0.104` was found only in a now-deleted untracked clone copy.
+- Node was mid-IBD at session end (`synced=false`, blocks 1250939 / headers 1283913,
+  ~33k behind). Do NOT trust inspect NOT-FOUND results until `synced=true` (index lag).
+- DEFERRED cleanup: physically delete/move `C:\_RETIRED_kaspa-tn12` once its file handle
+  releases (was Defender/indexer-locked; rename succeeded, cross-drive move didn't).
 ### Genesis vs parcel P2SH (net-new finding, 2026-06-26)
 
 Genesis uses **route-1**: `blake2b(entire compiled script)` → P2SH. Parcels use **route-2**:
