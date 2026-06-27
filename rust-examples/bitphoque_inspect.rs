@@ -17,7 +17,7 @@ use kaspa_rpc_core::{api::rpc::RpcApi, notify::mode::NotificationMode};
 use kaspa_txscript::{pay_to_script_hash_script, extract_script_pub_key_address};
 use serde_json::Value;
 
-const NODE: &str = "192.168.0.206:16210";
+const NODE: &str = "127.0.0.1:16210";
 const COMPILED_JSON: &str = r"C:\bitphoque\covenants\bitphoque_compiled_real.json";
 const EXPECTED_COV_ID: &str = "69262e04b63d1ea1008fd33f8aff38c08780056b40111d0db01a306ef11a766c";
 

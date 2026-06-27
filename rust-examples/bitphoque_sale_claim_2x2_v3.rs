@@ -55,7 +55,7 @@ use secp256k1::Keypair;
 use silverscript_lang::ast::Expr;
 use silverscript_lang::compiler::{compile_contract, struct_object, CompileOptions, CovenantDeclCallOptions};
 
-const NODE: &str = "192.168.0.206:16210";
+const NODE: &str = "127.0.0.1:16210";
 const SIL_FILE: &str = r"C:\bitphoque\covenants\bitphoque_sale_v3.sil";
 const COVENANT_ID_HEX: &str = "3baed5a39ed95e6aa62a0d8d46aae39a8d832d4f900e5a6a351dca4fbc326458";
 

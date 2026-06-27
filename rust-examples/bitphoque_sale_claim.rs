@@ -39,7 +39,7 @@ use secp256k1::Keypair;
 use silverscript_lang::ast::Expr;
 use silverscript_lang::compiler::{compile_contract, struct_object, CompileOptions, CovenantDeclCallOptions};
 
-const NODE: &str = "192.168.0.206:16210";
+const NODE: &str = "127.0.0.1:16210";
 const SELLER_KEY_FILE: &str = r"C:\bitphoque\bitphoque_v2_owner.key"; // seller = current owner of the for-sale UTXO
 const BUYER_KEY_FILE: &str = r"C:\bitphoque\bitphoque_buyer.key";     // buyer funds the payment, receives phoques
 const SIL_FILE: &str = r"C:\bitphoque\covenants\bitphoque_sale_v2.sil";

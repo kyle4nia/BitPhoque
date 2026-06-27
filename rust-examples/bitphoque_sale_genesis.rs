@@ -33,7 +33,7 @@ use kaspa_txscript::pay_to_script_hash_script;
 use secp256k1::Keypair;
 use serde_json::Value;
 
-const NODE: &str = "192.168.0.206:16210";
+const NODE: &str = "127.0.0.1:16210";
 // Plain P2PK funding address we control (faucet-funded). Key in the file below.
 const FUNDING_ADDR: &str =
     "kaspatest:qrwzyuc8lkvdsxgww53n7rsjetsqhh6p9hmy8vrvqpdun5r7ysevufmglhgl4";
