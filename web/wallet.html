@@ -191,9 +191,9 @@
   .wrap { max-width: var(--maxw); margin: 0 auto; padding: 30px 24px 64px; }
 
   .mast { display: flex; align-items: center; gap: 13px; margin-bottom: 32px; }
-  .seal { width: 46px; height: 46px; object-fit: contain; flex: none; mix-blend-mode: multiply; }
+  .seal { width: 68px; height: 68px; object-fit: contain; flex: none; mix-blend-mode: multiply; }
   .seal-fallback {
-    width: 46px; height: 46px; border: 1.5px dashed var(--hair-strong); border-radius: 8px;
+    width: 68px; height: 68px; border: 1.5px dashed var(--hair-strong); border-radius: 8px;
     display: none; align-items: center; justify-content: center; font-size: 9px; color: var(--muted);
     text-align: center; line-height: 1.2; flex: none;
   }
@@ -210,6 +210,8 @@
 
   h2.title { font-family: 'Fraunces', Georgia, serif; font-weight: 500; font-size: clamp(28px,7vw,34px); line-height: 1.1; letter-spacing: -0.02em; margin: 0 0 12px; }
   p.lede { font-size: 16px; color: var(--muted); margin: 0 0 26px; max-width: 48ch; }
+  #s-welcome .title, #s-welcome .lede { text-align: center; }
+  #s-welcome .lede { margin-left: auto; margin-right: auto; }
 
   .btn {
     font-family: 'Inter', sans-serif; font-size: 15px; font-weight: 500;
@@ -522,12 +524,42 @@
       </div>
     </details>
 
+    <details class="more" style="margin-top:8px">
+      <summary>Learn about this project <span class="chev">&#8250;</span></summary>
+      <div class="more-body" style="font-size:14px;color:var(--muted);line-height:1.6">
+        <div style="margin-bottom:18px">
+          <div style="font-weight:600;color:var(--ink);margin-bottom:4px">Self-custody</div>
+          Your 12-word recovery phrase generates your private key entirely in this browser. It is never transmitted, never stored on a server, and never leaves your device. No account, no login, no custodian. If you lose the phrase, nobody can recover it for you. That is the point.
+        </div>
+        <div style="margin-bottom:18px">
+          <div style="font-weight:600;color:var(--ink);margin-bottom:4px">Fixed supply</div>
+          42,069 phoques were minted at genesis. There is no minter, no inflation function, and no admin key that can create more. The covenant enforces conservation: every transaction must account for every phoque that enters it. Supply is proven, not promised.
+        </div>
+        <div style="margin-bottom:18px">
+          <div style="font-weight:600;color:var(--ink);margin-bottom:4px">On Kaspa, no coordinator</div>
+          BitPhoque tokens are covenant-enforced at Kaspa's script layer. Ownership, transfer, and sale rules are checked by every validating node, not by a trusted off-chain indexer. There is no server deciding who owns what. The chain is the truth.
+        </div>
+        <div style="margin-bottom:18px">
+          <div style="font-weight:600;color:var(--ink);margin-bottom:4px">The Oracle Protocol</div>
+          BitPhoque is built on the same covenant stack as the Oracle Protocol, a reputation-as-UTXO system where trust is earned on-chain and enforced without a coordinator. BitPhoque is the practice run; Oracle is the destination. More at <a href="https://github.com/kyle4nia/oracle-protocol" style="color:var(--ink)">github.com/kyle4nia/oracle-protocol</a>.
+        </div>
+        <div style="text-align:center;margin-top:20px">
+          <a href="index.html" style="font-size:13px;color:var(--muted);text-decoration:underline">Back to BitPhoque.org</a>
+        </div>
+      </div>
+    </details>
+
     <div class="tools">
       <button class="link" onclick="lockWallet()">Lock wallet</button>
     </div>
   </section>
 
-  <div class="foot">BIP-39 via <b>@scure</b> (vendored) · keys generated and encrypted in your browser · TN10 practice</div>
+  <div class="foot">BIP-39 via <b>@scure</b> (vendored) · keys generated and encrypted in your browser · TN10 practice
+    <div style="margin-top:12px">Like what you see? Buy me a coffee
+      <div id="coffeeQr" style="margin:10px auto 6px;width:120px"></div>
+      <span style="font-size:9px;word-break:break-all;letter-spacing:0.01em">kaspa:qrwdl4f0snyfe66zjd8np8mrls7qf8t8le0zcdrmqww97uqu9ay6vjvlt6qkl</span>
+    </div>
+  </div>
 </div>
 
 <!-- action panel host (filled by openPanel) -->
@@ -974,8 +1006,8 @@ const PANELS = {
 
   receive: {
     title: "Receive phoques",
-    lede: "Your wallet address is below — share it to receive KAS for fees. To receive phoques, paste a parcel descriptor someone sent you. It decodes the descriptor, checks the covenant_id, derives the amount-bound address, and confirms the parcel is live on-chain before tracking it — the descriptor is a claim, the chain is the truth.",
-    addrField: true,
+    lede: "Your public key is below — share it with anyone sending you phoques (they need it to build the transaction). To receive phoques, paste the parcel descriptor they send back. It decodes the descriptor, checks the covenant_id, derives the amount-bound address, and confirms the parcel is live on-chain before tracking it — the descriptor is a claim, the chain is the truth.",
+    pubkeyField: true,
     fields: [
       {id:"desc", label:"Parcel descriptor (base58check)", ph:"paste descriptor…", textarea:true},
     ],
@@ -1415,16 +1447,35 @@ function openPanel(key){
     <div class="tools" style="justify-content:flex-start;margin:8px 0 4px">
       <button class="link" onclick="copyAddr()">Copy address</button>
     </div>` : (p.addrField ? `<div class="hint">Address unavailable — re-enter the wallet.</div>` : '');
+  const pubkeyBlock = (p.pubkeyField && myKey) ? `
+    <label>Your public key (share this with the sender)</label>
+    <div id="pubkeyQr" style="margin:10px 0;width:160px"></div>
+    <div class="descbox" id="myPubkey" style="font-size:12px;word-break:break-all">${xonly(myKey.pubHex)}</div>
+    <div class="tools" style="justify-content:flex-start;margin:8px 0 4px">
+      <button class="link" onclick="copyPubkey()">Copy pubkey</button>
+    </div>` : (p.pubkeyField ? `<div class="hint">Pubkey unavailable — re-enter the wallet.</div>` : '');
   document.getElementById('panel').innerHTML = `
     <div class="ph"><h3>${p.title}</h3><button class="x" onclick="closePanel()">&times;</button></div>
     <div class="pl">${p.lede}</div>
     ${addrBlock}
+    ${pubkeyBlock}
     ${renderPickers(p.pickers)}
     ${fields}
     <button class="btn" style="margin-top:14px" onclick="runPanel()">${p.cta}</button>
     <button class="btn" style="margin-top:8px;background:var(--ink);color:var(--paper);display:none" id="submitBtn" onclick="submitPendingTx()">Submit to node</button>
     <pre class="out" id="panelOut"></pre>`;
   document.getElementById('panelBack').classList.add('open');
+  // render QR codes if containers exist
+  renderPanelQR();
+}
+async function renderPanelQR(){
+  const pubkeyEl = document.getElementById('pubkeyQr');
+  if(pubkeyEl && myKey){
+    try {
+      const { qrSvg } = await import('./bitphoque_qr.js');
+      pubkeyEl.innerHTML = qrSvg(xonly(myKey.pubHex), 160);
+    } catch(e){ /* QR lib not available, no-op */ }
+  }
 }
 function closePanel(){ document.getElementById('panelBack').classList.remove('open'); activePanel=null; }
 async function runPanel(){
@@ -1445,6 +1496,12 @@ function copyAddr(){
   if(!myKey) return;
   navigator.clipboard?.writeText(myKey.address);
   const el=document.querySelector('#panel .tools .link');
+  if(el){ const t=el.textContent; el.textContent='Copied'; setTimeout(()=>el.textContent=t,1400); }
+}
+function copyPubkey(){
+  if(!myKey) return;
+  navigator.clipboard?.writeText(xonly(myKey.pubHex));
+  const el=document.getElementById('myPubkey')?.parentElement?.querySelector('.tools .link');
   if(el){ const t=el.textContent; el.textContent='Copied'; setTimeout(()=>el.textContent=t,1400); }
 }
 
@@ -1520,6 +1577,11 @@ else window.addEventListener('bip39-ready', boot, {once:true});
 // safety net: if modules never load (file:// open), still show welcome so the
 // page isn't blank — startCreate() will explain why create is unavailable.
 setTimeout(()=>{ if(!document.querySelector('.screen.active')) show('welcome'); }, 1500);
+</script>
+<script type="module">
+import { qrSvg } from './bitphoque_qr.js';
+var el = document.getElementById('coffeeQr');
+if (el) el.innerHTML = qrSvg('kaspa:qrwdl4f0snyfe66zjd8np8mrls7qf8t8le0zcdrmqww97uqu9ay6vjvlt6qkl', 120);
 </script>
 </body>
 </html>
