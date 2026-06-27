@@ -4,7 +4,7 @@
   Aesthetic reconciled to the live index.html (real seal, exact palette,
   Inter body / Fraunces display, color-scheme light).
   ============================================================================
-  Plain HTML/JS, NO bundler. Lives in public_html ALONGSIDE bitphoque.jpeg
+  Plain HTML/JS, NO bundler. Lives in public_html ALONGSIDE bitphoque-nowords.jpeg
   (seal is a relative path — both files must share a folder) and the vendor/
   folder (the @scure/@noble ESM packages, resolved by the import map in <head>).
 
@@ -35,6 +35,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BitPhoque Wallet</title>
+<link rel="icon" type="image/x-icon" href="favicon.ico">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500&display=swap" rel="stylesheet">
@@ -314,8 +315,8 @@
   .panel .pl { font-size: 14px; color: var(--muted); margin-bottom: 18px; line-height: 1.5; }
   .panel .pl code { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 0.9em; color: var(--ink); background: var(--paper-edge); padding: 1px 5px; border-radius: 4px; }
   .panel label { display: block; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; margin: 14px 0 6px; }
-  .panel input.fld, .panel textarea.fld { width: 100%; font-family: 'Inter', sans-serif; font-size: 15px; color: var(--ink); background: #fff; border: 1.5px solid var(--hair-strong); border-radius: 8px; padding: 11px 13px; outline: none; transition: border-color 140ms ease; }
-  .panel input.fld:focus, .panel textarea.fld:focus { border-color: var(--ink); }
+  .panel input.fld, .panel textarea.fld, .panel select.fld { width: 100%; font-family: 'Inter', sans-serif; font-size: 15px; color: var(--ink); background: #fff; border: 1.5px solid var(--hair-strong); border-radius: 8px; padding: 11px 13px; outline: none; transition: border-color 140ms ease; }
+  .panel input.fld:focus, .panel textarea.fld:focus, .panel select.fld:focus { border-color: var(--ink); }
   .panel textarea.fld { resize: vertical; min-height: 70px; font-family: 'Fraunces', Georgia, serif; word-break: break-all; line-height: 1.5; }
   .panel .hint { font-size: 12px; color: var(--muted); margin-top: 5px; line-height: 1.4; }
   .panel .seam { display: flex; gap: 9px; background: #F6EFE2; border: 1px solid #E6D9BE; border-radius: 8px; padding: 11px 13px; margin: 16px 0 4px; font-size: 12.5px; color: #6B5A32; line-height: 1.5; }
@@ -340,7 +341,7 @@
 <div class="wrap">
 
   <div class="mast">
-    <img class="seal" src="bitphoque.jpeg" alt="BitPhoque seal"
+    <img class="seal" src="bitphoque-nowords.jpeg" alt="BitPhoque seal"
          onerror="this.style.display='none'; document.getElementById('seal-fb').style.display='flex';">
     <div class="seal-fallback" id="seal-fb">seal</div>
     <div>
@@ -417,7 +418,7 @@
   </section>
 
   <section class="screen" id="s-done">
-    <img class="done-seal" src="bitphoque.jpeg" alt=""
+    <img class="done-seal" src="bitphoque-nowords.jpeg" alt=""
          onerror="this.style.display='none'; document.getElementById('done-fb').style.display='inline'">
     <span class="done-check" id="done-fb" style="display:none">&#10003;</span>
     <h2 class="title" id="doneTitle">Wallet ready</h2>
@@ -723,7 +724,7 @@ function enterWallet(){
 
 // Node JSON wRPC endpoint. Matches start-testnet10.bat --rpclisten-json=0.0.0.0:18210.
 // One place to change for mainnet / a remote node.
-const WRPC_URL = "ws://127.0.0.1:18210";
+const WRPC_URL = "wss://node.outlawpolitics.org";
 
 // --- reusable transport: one JSON wRPC request over a fresh WebSocket ---------
 // method e.g. "getUtxosByAddresses"; params e.g. {addresses:[...]}.
@@ -914,6 +915,7 @@ const PANELS = {
   send: {
     title: "Send phoques",
     lede: "Transfer phoques to another wallet. Builds, signs, and submits in-browser — key never leaves the device.",
+    pickers: [{ label:'Input parcel', targets:{txid:'txid',idx:'idx',amt:'iamt'}, filter: p=>!p.forSale }],
     fields: [
       {id:"to",    label:"Recipient pubkey (64-hex, x-only)", ph:"abcd…"},
       {id:"amt",   label:"Amount to send (phoques)", ph:"e.g. 1000", type:"number"},
@@ -957,6 +959,12 @@ const PANELS = {
       // store for submit step
       window._pendingSendTx = result.txJson;
       window._pendingDesc = { recipientPubkey: xonly(to), sendAmount: BigInt(amt), outputIndex: 0 };
+      window._pendingParcelUpdate = {
+        remove: [txid + ':' + idx],
+        add: (amt === iamt) ? [] : [
+          { owner: xonly(myKey.pubHex), covenant_amount: String(iamt - amt), forSale: false, price: '0', outputIndex: 1 }
+        ]
+      };
       const sb=document.getElementById('submitBtn'); if(sb) sb.style.display='block';
       const whole = (amt===iamt);
       return {out: `[send] BUILT + SIGNED (not yet submitted)\n  sighash: ${result.sigHashHex}\n  sigscript: ${result.sigscriptLen} bytes\n  outputs: ${whole?'1 (whole)':'2 (partial+change)'}\n  values: ${result.outputValues.map(v=>(v/1e8).toFixed(8)+' TKAS').join(' + ')}\n  fee: 0.007 TKAS\n\nClick "Submit to node" to broadcast.`};
@@ -1042,6 +1050,10 @@ const PANELS = {
       } catch(e){ return {err:'Build failed: '+(e.message||e)}; }
       window._pendingSendTx = result.txJson;
       window._pendingDesc = null;
+      window._pendingParcelUpdate = {
+        remove: [],
+        add: [{ owner: xonly(myKey.pubHex), covenant_amount: String(amt), forSale: false, price: '0', outputIndex: 0 }]
+      };
       const sb=document.getElementById('submitBtn'); if(sb) sb.style.display='block';
       return {out:
         `[claim] BUILT + SIGNED (not yet submitted)\n`+
@@ -1057,6 +1069,7 @@ const PANELS = {
   list: {
     title: "List for sale",
     lede: "Flip a parcel to for-sale at a price. Owner-signed; the covenant allows a for-sale output only when no input is for-sale.",
+    pickers: [{ label:'Parcel to list', targets:{txid:'txid',idx:'idx',amt:'iamt'}, filter: p=>!p.forSale }],
     fields: [
       {id:"txid",  label:"Parcel txid", ph:"28a90bc9\u2026"},
       {id:"idx",   label:"Parcel index", ph:"0", type:"number"},
@@ -1091,6 +1104,10 @@ const PANELS = {
         });
       } catch(e){ return {err:'Build failed: '+(e.message||e)}; }
       window._pendingSendTx = result.txJson;
+      window._pendingParcelUpdate = {
+        remove: [txid + ':' + idx],
+        add: [{ owner: xonly(myKey.pubHex), covenant_amount: String(iamt), forSale: true, price: String(price), outputIndex: 0 }]
+      };
       const sb=document.getElementById('submitBtn'); if(sb) sb.style.display='block';
       return {out: `[list] BUILT + SIGNED\n  sighash: ${result.sigHashHex}\n  listed: ${iamt} phoques at ${price} sompi\n  value: ${(result.outputValues[0]/1e8).toFixed(8)} TKAS\n  fee: 0.007 TKAS\n\nClick "Submit to node" to broadcast.`};
     }
@@ -1098,6 +1115,7 @@ const PANELS = {
   partial: {
     title: "Partial-list",
     lede: "List PART of a parcel and keep the rest as not-for-sale change, in one owner-signed tx.",
+    pickers: [{ label:'Parcel to partial-list', targets:{txid:'txid',idx:'idx',amt:'iamt'}, filter: p=>!p.forSale }],
     fields: [
       {id:"txid",  label:"Parcel txid", ph:"28a90bc9\u2026"},
       {id:"idx",   label:"Parcel index", ph:"0", type:"number"},
@@ -1141,6 +1159,13 @@ const PANELS = {
         });
       } catch(e){ return {err:'Build failed: '+(e.message||e)}; }
       window._pendingSendTx = result.txJson;
+      window._pendingParcelUpdate = {
+        remove: [txid + ':' + idx],
+        add: [
+          { owner, covenant_amount: String(amt), forSale: true, price: String(price), outputIndex: 0 },
+          { owner, covenant_amount: String(iamt - amt), forSale: false, price: '0', outputIndex: 1 }
+        ]
+      };
       const sb=document.getElementById('submitBtn'); if(sb) sb.style.display='block';
       return {out: `[partial-list] BUILT + SIGNED\n  listed: ${amt} phoques at ${price} sompi (out0)\n  change: ${iamt-amt} phoques, not-for-sale (out1)\n  values: ${result.outputValues.map(v=>(v/1e8).toFixed(8)+' TKAS').join(' + ')}\n  fee: 0.007 TKAS\n\nClick "Submit to node" to broadcast.`};
     }
@@ -1149,6 +1174,7 @@ const PANELS = {
   split: {
     title: "Split a parcel",
     lede: "Break one parcel into two (e.g. to send a round amount). Conservation enforced by the covenant.",
+    pickers: [{ label:'Parcel to split', targets:{txid:'txid',idx:'idx',amt:'iamt'}, filter: p=>!p.forSale }],
     fields: [
       {id:"txid", label:"Parcel txid", ph:"28a90bc9\u2026"},
       {id:"idx",  label:"Parcel index", ph:"0", type:"number"},
@@ -1183,6 +1209,13 @@ const PANELS = {
         });
       } catch(e){ return {err:'Build failed: '+(e.message||e)}; }
       window._pendingSendTx = result.txJson;
+      window._pendingParcelUpdate = {
+        remove: [txid + ':' + idx],
+        add: [
+          { owner: xonly(myKey.pubHex), covenant_amount: String(amt), forSale: false, price: '0', outputIndex: 0 },
+          { owner: xonly(myKey.pubHex), covenant_amount: String(iamt - amt), forSale: false, price: '0', outputIndex: 1 }
+        ]
+      };
       const sb=document.getElementById('submitBtn'); if(sb) sb.style.display='block';
       return {out: `[split] BUILT + SIGNED\n  out0: ${amt} phoques (${(result.outputValues[0]/1e8).toFixed(8)} TKAS)\n  out1: ${iamt-amt} phoques (${(result.outputValues[1]/1e8).toFixed(8)} TKAS)\n  fee: 0.007 TKAS\n\nClick "Submit to node" to broadcast.`};
     }
@@ -1190,6 +1223,10 @@ const PANELS = {
   merge: {
     title: "Merge parcels",
     lede: "Combine two same-owner, not-for-sale parcels into one. Leader/delegate ABI — both covenant inputs sign at the leader index. Fee: 1.3M sompi (two 2793B script reveals).",
+    pickers: [
+      { label:'Parcel 0', targets:{txid:'txid0',idx:'idx0',amt:'amt0'}, filter: p=>!p.forSale },
+      { label:'Parcel 1', targets:{txid:'txid1',idx:'idx1',amt:'amt1'}, filter: p=>!p.forSale }
+    ],
     fields: [
       {id:"txid0", label:"Parcel 0 txid", ph:"28a90bc9…"},
       {id:"idx0",  label:"Parcel 0 index", ph:"0", type:"number"},
@@ -1242,6 +1279,10 @@ const PANELS = {
       } catch(e){ return {err:'Build failed: '+(e.message||e)}; }
       window._pendingSendTx = result.txJson;
       window._pendingDesc = null;
+      window._pendingParcelUpdate = {
+        remove: [txid0 + ':' + idx0, txid1 + ':' + idx1],
+        add: [{ owner, covenant_amount: String(amt0 + amt1), forSale: false, price: '0', outputIndex: 0 }]
+      };
       const sb=document.getElementById('submitBtn'); if(sb) sb.style.display='block';
       return {out:
         `[merge] BUILT + SIGNED (not yet submitted)\n`+
@@ -1285,6 +1326,28 @@ async function submitPendingTx(){
     const msg = await wrpcCall("submitTransaction", window._pendingSendTx);
     const txid = (msg.params&&msg.params.transactionId)||(msg.transactionId)||'(see response)';
     window._pendingSendTx=null;
+    // --- auto-track: remove spent inputs, add new outputs ----------------
+    if (window._pendingParcelUpdate && txid !== '(see response)') {
+      const upd = window._pendingParcelUpdate;
+      if (upd.remove && upd.remove.length)
+        parcels = parcels.filter(p => !upd.remove.includes(p.outpoint));
+      if (upd.add && upd.add.length) {
+        for (const a of upd.add) {
+          const ca = BigInt(a.covenant_amount);
+          parcels.push({
+            owner: a.owner,
+            covenant_amount: a.covenant_amount,
+            amount_pups: (ca * 100000000n).toString(),
+            forSale: !!a.forSale,
+            price: a.price || '0',
+            outpoint: txid + ':' + a.outputIndex,
+          });
+        }
+      }
+      saveParcels();
+      renderBalance();
+    }
+    window._pendingParcelUpdate = null;
     let extra='';
     if(window._pendingDesc && txid!=='(see response)'){
       try {
@@ -1310,6 +1373,33 @@ async function submitPendingTx(){
   }
 }
 let activePanel=null;
+/* ---- parcel picker: dropdown from tracked parcels, auto-fills fields ---- */
+window._pickerLists = [];
+function renderPickers(pickers){
+  if(!pickers||!pickers.length) return '';
+  window._pickerLists=[];
+  return pickers.map((pk,pi)=>{
+    const eligible=parcels.filter(pk.filter||(()=>true));
+    window._pickerLists.push({eligible, targets:pk.targets});
+    if(!eligible.length) return `<label>${pk.label}</label><div class="hint">No matching tracked parcels. Enter details manually below.</div>`;
+    const opts=eligible.map((p,i)=>{
+      const amt=groupThousands(BigInt(p.covenant_amount));
+      const tag=p.forSale?' [listed]':'';
+      const op=p.outpoint.split(':');
+      return `<option value="${i}">${amt} phoques${tag} (${op[0].slice(0,8)}...:${op[1]})</option>`;
+    }).join('');
+    return `<label>${pk.label}</label><select class="fld" onchange="pickParcel(${pi},this.value)"><option value="">-- select --</option>${opts}</select>`;
+  }).join('');
+}
+function pickParcel(pi,val){
+  if(val===''||!window._pickerLists[pi]) return;
+  const {eligible,targets}=window._pickerLists[pi];
+  const p=eligible[parseInt(val)]; if(!p) return;
+  const parts=p.outpoint.split(':');
+  if(targets.txid){const el=document.getElementById('f_'+targets.txid); if(el) el.value=parts[0];}
+  if(targets.idx){const el=document.getElementById('f_'+targets.idx); if(el) el.value=parts[1];}
+  if(targets.amt){const el=document.getElementById('f_'+targets.amt); if(el) el.value=p.covenant_amount;}
+}
 function openPanel(key){
   const p=PANELS[key]; if(!p) return;
   activePanel=key;
@@ -1329,8 +1419,8 @@ function openPanel(key){
     <div class="ph"><h3>${p.title}</h3><button class="x" onclick="closePanel()">&times;</button></div>
     <div class="pl">${p.lede}</div>
     ${addrBlock}
+    ${renderPickers(p.pickers)}
     ${fields}
-    <div class="seam"><span class="ic">&#9888;</span><span>Prototype — node-free. This builds the call and shows what would run; nothing is broadcast. Live action is gated on the WASM P2SH compiler and a synced TN10 node.</span></div>
     <button class="btn" style="margin-top:14px" onclick="runPanel()">${p.cta}</button>
     <button class="btn" style="margin-top:8px;background:var(--ink);color:var(--paper);display:none" id="submitBtn" onclick="submitPendingTx()">Submit to node</button>
     <pre class="out" id="panelOut"></pre>`;
@@ -1404,6 +1494,16 @@ function forgetWallet(){
   if(!confirm('Forget the saved wallet on this device? You can only restore it from your 12-word phrase. This does not affect any phoques on-chain.')) return;
   window.WALLET_STORE?.forget(); seed=[]; show('welcome');
 }
+
+/* ---- button click sound (phoque3.wav — preloaded, event-delegated) ---- */
+const phoqueSound = new Audio('phoque3.wav');
+phoqueSound.volume = 0.4;
+document.addEventListener('click', (e) => {
+  if (e.target.closest('.btn, .act, .choice, .mact')) {
+    phoqueSound.currentTime = 0;
+    phoqueSound.play().catch(() => {});
+  }
+});
 
 /* ---- load-time routing: stored wallet -> unlock; else welcome ---- */
 function boot(){
