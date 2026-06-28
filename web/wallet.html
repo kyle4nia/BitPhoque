@@ -1,34 +1,12 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <!--
-  BitPhoque Wallet — create / restore / unlock + HOME (mirrors the proven CLI).
-  Aesthetic reconciled to the live index.html (real seal, exact palette,
-  Inter body / Fraunces display, color-scheme light).
-  ============================================================================
-  Plain HTML/JS, NO bundler. Lives in public_html ALONGSIDE bitphoque-nowords.jpeg
-  (seal is a relative path — both files must share a folder) and the vendor/
-  folder (the @scure/@noble ESM packages, resolved by the import map in <head>).
+  BitPhoque Wallet v2 -- card-based, state-driven UI.
+  Same proven crypto layer: BIP-39 (@scure, vendored), secp256k1 (@noble),
+  AES-GCM persistence, blake2b sighash, covenant ABI, wRPC transport.
+  UI rebuilt: six panels replaced by parcel cards + four stories
+  (Send, Receive, Sell, Buy). Split/merge are invisible.
 
-  >>> SERVE OVER HTTP(S) <<< ES modules do NOT load from file:// (origin null).
-  Open via a server (locally: `python -m http.server`, then localhost:PORT) or
-  the live https host. Double-clicking the file will load the page but BIP-39
-  will be unavailable and "Create" will explain why.
-
-  CRYPTO STATUS — the old "PRODUCTION SEAM" is now WIRED:
-    • mnemonic: vendored @scure/bip39 v2.2.0 — real crypto.getRandomValues
-      entropy, full 2048-word list, real checksum (bridge: window.BIP39 in <head>).
-    • persistence: WebCrypto AES-GCM under a PBKDF2 passphrase, ciphertext only
-      in localStorage, passphrase never stored (bridge: window.WALLET_STORE).
-      Optional — the done screen offers save-or-skip; a saved wallet boots to Unlock.
-
-  REMAINING SEAM — the NODE SEAM (see the HOME script): balance reads and tx
-  builds need (1) a WASM P2SH compiler the browser doesn't have yet and (2) a
-  synced TN10 node. Until then HOME shows an honest empty balance and the action
-  panels PRINT the CLI-equivalent call rather than broadcasting.
-
-  MAINNET NOTE: at mainnet genesis the supply gains 8-decimal BitPup headroom;
-  the balance formatter already renders "N phoques · M pups" and is forward-ready
-  (on TN10 the remainder is always 0 — whole-unit token, no sub-unit headroom).
-============================================================================
+  >>> SERVE OVER HTTP(S) <<< ES modules do NOT load from file://.
 -->
 <html lang="en">
 <head>
@@ -40,18 +18,6 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500&display=swap" rel="stylesheet">
 
-<!-- ===================================================================
-  BIP-39 PRODUCTION SEAM — WIRED (vendored @scure/bip39 v2.2.0).
-  Real entropy (crypto.getRandomValues), full 2048-word English list, real
-  checksum. NO build step: native ES modules resolved by this import map.
-  The audited library files live in web/vendor/ and load locally — NOT from
-  a CDN — so the seed-generating code is code you ship, not code a third
-  party serves at runtime.
-
-  NB MODULES NEED HTTP: ES modules do not load from file:// (origin null).
-  Open via a server (locally `python -m http.server` then localhost:PORT,
-  or just the live https host). Double-clicking the file will NOT load BIP-39.
-==================================================================== -->
 <script type="importmap">
 {
   "imports": {
@@ -65,38 +31,25 @@
 }
 </script>
 <script type="module">
-  // Bridge the audited ESM API onto the plain-script wallet below.
-  // generateMnemonic returns a SPACE-JOINED STRING and validateMnemonic takes
-  // a STRING; the wallet works in 12-element ARRAYS, so convert at the boundary
-  // (keeps every existing screen unchanged — smallest diff).
   import { generateMnemonic, validateMnemonic, mnemonicToSeedSync } from '@scure/bip39';
   import { wordlist } from '@scure/bip39/wordlists/english.js';
   import { HDKey } from '@scure/bip32';
   import { schnorr } from '@noble/curves/secp256k1.js';
-  import { decodeDescriptor } from './bitphoque_descriptor.js';
   window.BIP39 = {
     ready: true,
     wordlist,
-    genArray: () => generateMnemonic(wordlist, 128).split(' '),   // 12 words, real entropy+checksum
+    genArray: () => generateMnemonic(wordlist, 128).split(' '),
     validateArray: (arr) => {
       if (!Array.isArray(arr) || arr.length !== 12) return { ok:false, reason:"Need exactly 12 words." };
       const phrase = arr.map(w => (w||'').trim().toLowerCase()).join(' ');
-      // surface the first not-in-list word with a precise message (better UX than a bare checksum fail)
       const set = new Set(wordlist);
       for (let i=0;i<12;i++){ const w=arr[i]?.trim().toLowerCase(); if(!w) return {ok:false,reason:`Word ${i+1} is empty.`}; if(!set.has(w)) return {ok:false,reason:`"${arr[i]}" isn't a valid recovery word.`}; }
-      if (!validateMnemonic(phrase, wordlist)) return { ok:false, reason:"Phrase checksum is invalid — check the word order." };
+      if (!validateMnemonic(phrase, wordlist)) return { ok:false, reason:"Phrase checksum is invalid -- check the word order." };
       return { ok:true };
     },
     toSeedHex: (arr) => { const s = mnemonicToSeedSync(arr.join(' '), ''); return [...s].map(b=>b.toString(16).padStart(2,'0')).join(''); }
   };
 
-  // ---- Kaspa key derivation: seed -> BIP-32 (m/44'/111111'/0'/0/index) -> x-only pubkey -> kaspa address ----
-  // Path is the documented Kaspa standard (coin type 111111). The address encoder
-  // (custom Kaspa bech32) is VERIFIED against a real keygen vector
-  // (5d338aa5... -> kaspatest:qpwn8z49...). NETWORK: 'kaspatest' for TN10; swap to
-  // 'kaspa' + version stays 0 (PubKey) for mainnet. SEAM: the full seed->address
-  // chain is not yet cross-checked against an external wallet vector — fine for
-  // testnet practice; add an external mnemonic->address vector before mainnet.
   const KAS_CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
   const KAS_GEN = [0x98f2bc8e61n,0x79b76d99e2n,0xf33e5fb3c4n,0xae2eabe2a8n,0x1e4f43e470n];
   function kasPolymod(v){let c=1n;for(const d of v){const c0=c>>35n;c=((c&0x07ffffffffn)<<5n)^BigInt(d);for(let i=0;i<5;i++)if((c0>>BigInt(i))&1n)c^=KAS_GEN[i];}return c^1n;}
@@ -105,15 +58,14 @@
   function kasEncode(prefix,version,payload){const f=kas8to5([version,...payload]);const comb=f.concat(kasChecksum(f,prefix));let a=prefix+':';for(const v of comb)a+=KAS_CHARSET[v];return a;}
 
   window.KASPA = {
-    network: 'kaspatest',          // TN10; 'kaspa' for mainnet
-    // derive the spending keypair for a given account/index from the seed words
+    network: 'kaspatest',
     derive(seedArr, account=0, index=0){
       const seed = mnemonicToSeedSync(seedArr.join(' '), '');
       const path = `m/44'/111111'/${account}'/0/${index}`;
       const child = HDKey.fromMasterSeed(seed).derive(path);
       const priv = child.privateKey;
-      const xpub = schnorr.getPublicKey(priv);   // 32-byte x-only, matches keygen
-      const address = kasEncode(this.network, 0, xpub);   // version 0 = PubKey
+      const xpub = schnorr.getPublicKey(priv);
+      const address = kasEncode(this.network, 0, xpub);
       return {
         path,
         privHex: [...priv].map(b=>b.toString(16).padStart(2,'0')).join(''),
@@ -121,14 +73,9 @@
         address
       };
     },
-    encode: kasEncode   // exposed for tests
+    encode: kasEncode
   };
 
-  // ---- Encrypted persistence (WebCrypto AES-GCM under a PBKDF2 passphrase) ----
-  // Stores ONLY ciphertext + salt + IV in localStorage. Passphrase is never
-  // stored. Wrong passphrase fails the GCM auth tag -> decrypt throws -> "wrong
-  // passphrase", never silent garbage. WebCrypto needs a secure context
-  // (https:// or localhost); it is the browser's own audited crypto.
   const LS_KEY = "bitphoque_wallet_v1";
   const enc = new TextEncoder(), dec = new TextDecoder();
   const b64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
@@ -156,7 +103,7 @@
       const key = await deriveKey(passphrase, unb64(rec.salt));
       let pt;
       try { pt = await crypto.subtle.decrypt({name:"AES-GCM", iv:unb64(rec.iv)}, key, unb64(rec.ct)); }
-      catch(e){ throw new Error("BAD_PASSPHRASE"); }   // GCM auth-tag failure
+      catch(e){ throw new Error("BAD_PASSPHRASE"); }
       return dec.decode(pt).split(' ');
     },
     forget(){ localStorage.removeItem(LS_KEY); }
@@ -164,6 +111,7 @@
 
   window.dispatchEvent(new Event('bip39-ready'));
 </script>
+
 <style>
   :root {
     --ink: #111110;
@@ -176,6 +124,12 @@
     --ok: #3d6b4a;
     --radius: 10px;
     --maxw: 560px;
+    --held: #3d6b4a;
+    --held-bg: #e8f5e9;
+    --sale: #1565c0;
+    --sale-bg: #e3f2fd;
+    --pending: #e65100;
+    --pending-bg: #fff3e0;
     color-scheme: light;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -226,6 +180,7 @@
   .btn.ghost:hover { background: transparent; border-color: var(--ink); }
   .btn-row { display: flex; gap: 12px; margin-top: 12px; }
   .btn-row .btn { width: auto; flex: 1; }
+  .btn.sm { padding: 10px 16px; font-size: 13px; width: auto; flex: 1; }
   .link { background: none; border: none; color: var(--muted); font-family: 'Inter', sans-serif; font-size: 13px; text-decoration: underline; cursor: pointer; padding: 8px 0; }
   .link:hover { color: var(--ink); }
 
@@ -274,59 +229,6 @@
   .foot { margin-top: 38px; font-size: 11px; color: var(--muted); letter-spacing: 0.03em; text-align: center; }
   .foot b { color: var(--ink); font-weight: 500; }
 
-  /* ---- HOME (post-onboarding wallet view; mirrors the CLI surface) ---- */
-  .bal { border: 1.5px solid var(--hair-strong); border-radius: var(--radius); background: #fff; padding: 22px 22px 20px; margin: 4px 0 22px; }
-  .bal .lab { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.14em; }
-  .bal .amt { font-family: 'Fraunces', Georgia, serif; font-weight: 500; font-size: clamp(34px,9vw,46px); line-height: 1.05; letter-spacing: -0.02em; margin: 6px 0 0; font-variant-numeric: tabular-nums; }
-  .bal .amt .u { font-size: 0.42em; font-weight: 400; color: var(--muted); letter-spacing: 0; margin-left: 8px; }
-  .bal .pups { font-size: 13px; color: var(--muted); margin-top: 5px; font-variant-numeric: tabular-nums; }
-  .bal .pups.zero { opacity: .5; }
-  .bal .empty { font-size: 14px; color: var(--muted); margin-top: 8px; line-height: 1.5; }
-  .bal-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--hair); }
-  .bal-foot .pc { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
-  .bal-foot .rf { font-size: 12px; }
-
-  .acts { display: grid; grid-template-columns: repeat(2,1fr); gap: 12px; margin: 0 0 16px; }
-  .act { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; background: var(--paper); border: 1.5px solid var(--hair); border-radius: var(--radius); padding: 16px 16px 15px; cursor: pointer; text-align: left; font-family: 'Inter', sans-serif; transition: border-color 160ms ease, background 160ms ease, transform 120ms ease; }
-  .act:hover { border-color: var(--hair-strong); background: #fff; }
-  .act:active { transform: scale(0.99); }
-  .act .ai { font-family: 'Fraunces', serif; font-size: 22px; line-height: 1; }
-  .act .at { font-size: 15px; font-weight: 500; color: var(--ink); }
-  .act .ad { font-size: 12px; color: var(--muted); line-height: 1.4; }
-
-  .more { border: 1.5px solid var(--hair); border-radius: var(--radius); overflow: hidden; margin: 0 0 18px; }
-  .more summary { list-style: none; cursor: pointer; padding: 14px 16px; font-size: 14px; font-weight: 500; color: var(--ink); display: flex; align-items: center; justify-content: space-between; }
-  .more summary::-webkit-details-marker { display: none; }
-  .more summary .chev { color: var(--muted); transition: transform 200ms ease; }
-  .more[open] summary .chev { transform: rotate(90deg); }
-  .more .more-body { border-top: 1px solid var(--hair); padding: 6px; display: grid; grid-template-columns: repeat(2,1fr); gap: 6px; }
-  .more .mact { background: none; border: 1px solid transparent; border-radius: 8px; padding: 11px 12px; text-align: left; cursor: pointer; font-family: 'Inter', sans-serif; transition: background 140ms ease, border-color 140ms ease; }
-  .more .mact:hover { background: var(--paper); border-color: var(--hair); }
-  .more .mact .mt { font-size: 14px; font-weight: 500; color: var(--ink); }
-  .more .mact .md { font-size: 11px; color: var(--muted); margin-top: 2px; line-height: 1.35; }
-
-  /* slide-up panel for an action (send/receive/claim/list/...) */
-  .panel-back { position: fixed; inset: 0; background: rgba(17,17,16,0.28); display: none; align-items: flex-end; justify-content: center; z-index: 40; }
-  .panel-back.open { display: flex; animation: fade 200ms ease both; }
-  @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
-  .panel { background: var(--paper); width: 100%; max-width: var(--maxw); border-radius: 16px 16px 0 0; border: 1.5px solid var(--hair-strong); border-bottom: none; padding: 22px 24px 30px; max-height: 88vh; overflow-y: auto; animation: slideup 320ms cubic-bezier(0.16,1,0.3,1) both; }
-  @keyframes slideup { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
-  .panel .ph { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px; }
-  .panel .ph h3 { font-family: 'Fraunces', Georgia, serif; font-weight: 500; font-size: 24px; letter-spacing: -0.02em; }
-  .panel .ph .x { background: none; border: none; font-size: 22px; color: var(--muted); cursor: pointer; line-height: 1; padding: 4px; }
-  .panel .pl { font-size: 14px; color: var(--muted); margin-bottom: 18px; line-height: 1.5; }
-  .panel .pl code { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 0.9em; color: var(--ink); background: var(--paper-edge); padding: 1px 5px; border-radius: 4px; }
-  .panel label { display: block; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; margin: 14px 0 6px; }
-  .panel input.fld, .panel textarea.fld, .panel select.fld { width: 100%; font-family: 'Inter', sans-serif; font-size: 15px; color: var(--ink); background: #fff; border: 1.5px solid var(--hair-strong); border-radius: 8px; padding: 11px 13px; outline: none; transition: border-color 140ms ease; }
-  .panel input.fld:focus, .panel textarea.fld:focus, .panel select.fld:focus { border-color: var(--ink); }
-  .panel textarea.fld { resize: vertical; min-height: 70px; font-family: 'Fraunces', Georgia, serif; word-break: break-all; line-height: 1.5; }
-  .panel .hint { font-size: 12px; color: var(--muted); margin-top: 5px; line-height: 1.4; }
-  .panel .seam { display: flex; gap: 9px; background: #F6EFE2; border: 1px solid #E6D9BE; border-radius: 8px; padding: 11px 13px; margin: 16px 0 4px; font-size: 12.5px; color: #6B5A32; line-height: 1.5; }
-  .panel .seam .ic { flex: none; font-weight: 600; }
-  .panel .out { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 12px; background: var(--ink); color: #E9E7E0; border-radius: 8px; padding: 13px 14px; margin-top: 14px; white-space: pre-wrap; word-break: break-all; line-height: 1.6; display: none; }
-  .panel .out.show { display: block; }
-  .descbox { font-family: 'Fraunces', Georgia, serif; font-size: 14px; background: #fff; border: 1.5px solid var(--hair-strong); border-radius: 8px; padding: 13px; word-break: break-all; line-height: 1.55; margin-top: 6px; }
-
   .save-box { border: 1.5px solid var(--hair-strong); border-radius: var(--radius); background: #fff; padding: 20px; margin: 4px 0 0; }
   .save-box .save-head { font-family: 'Fraunces', Georgia, serif; font-size: 18px; font-weight: 500; }
   .save-box .save-sub { font-size: 13px; color: var(--muted); line-height: 1.5; margin: 6px 0 4px; }
@@ -335,8 +237,98 @@
   .save-box input.fld:focus { border-color: var(--ink); background: #fff; }
   .save-box .btn { margin-top: 16px; }
 
+  /* ---- v2 HOME: hero + cards + primary buttons ---- */
+  .hero { text-align: center; margin: 0 0 6px; }
+  .hero-num { font-family: 'Fraunces', Georgia, serif; font-weight: 500; font-size: clamp(48px,14vw,72px); line-height: 1; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+  .hero-unit { font-size: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.16em; margin-top: 2px; }
+
+  .kas-info { text-align: center; font-size: 13px; color: var(--muted); margin: 0 0 24px; min-height: 20px; }
+  .kas-warn { display: block; margin-top: 6px; padding: 8px 12px; background: #F6EFE2; border: 1px solid #E6D9BE; border-radius: 8px; font-size: 13px; color: #6B5A32; line-height: 1.5; }
+
+  .cards { display: flex; flex-direction: column; gap: 10px; margin: 0 0 20px; }
+  .card {
+    background: #fff; border: 1.5px solid var(--hair); border-radius: var(--radius);
+    padding: 16px; cursor: pointer; font-family: 'Inter', sans-serif;
+    transition: border-color 160ms ease, background 160ms ease;
+  }
+  .card:hover { border-color: var(--hair-strong); }
+  .card-row { display: flex; align-items: center; gap: 14px; }
+  .card-icon {
+    width: 40px; height: 40px; border-radius: 10px; display: flex;
+    align-items: center; justify-content: center; font-size: 18px; flex: none;
+  }
+  .card-body { flex: 1; min-width: 0; }
+  .card-amt { font-family: 'Fraunces', Georgia, serif; font-weight: 500; font-size: 20px; letter-spacing: -0.01em; }
+  .card-sub { font-size: 13px; color: var(--muted); margin-top: 2px; }
+  .card-chev { color: var(--muted); font-size: 18px; transition: transform 200ms ease; flex: none; }
+  .card.expanded .card-chev { transform: rotate(90deg); }
+
+  .card-detail { display: none; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--hair); }
+  .card.expanded .card-detail { display: block; }
+  .card-item { font-size: 13px; color: var(--muted); padding: 6px 0; border-bottom: 1px solid var(--hair); display: flex; align-items: center; justify-content: space-between; }
+  .card-item:last-of-type { border-bottom: none; }
+  .card-actions { display: flex; gap: 10px; margin-top: 12px; }
+
+  .state-held .card-icon { background: var(--held-bg); color: var(--held); }
+  .state-sale .card-icon { background: var(--sale-bg); color: var(--sale); }
+  .state-pending .card-icon { background: var(--pending-bg); color: var(--pending); }
+
+  .empty-home { text-align: center; font-size: 15px; color: var(--muted); padding: 32px 16px; line-height: 1.6; }
+
+  .primary-btns { display: flex; gap: 12px; margin: 0 0 20px; }
+  .primary-btns .btn { flex: 1; }
+
+  .node-bar {
+    display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted);
+    padding: 10px 0; border-top: 1px solid var(--hair); margin: 0 0 6px;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .dot.on { background: var(--ok); }
+  .dot.off { background: var(--danger); }
+  .dot.checking { background: var(--muted); }
+  .node-bar .rf { margin-left: auto; font-size: 12px; }
+
+  /* ---- story panel (slide-up, replaces old panel system) ---- */
+  .story-back { position: fixed; inset: 0; background: rgba(17,17,16,0.28); display: none; align-items: flex-end; justify-content: center; z-index: 40; }
+  .story-back.open { display: flex; animation: fade 200ms ease both; }
+  @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+  .story {
+    background: var(--paper); width: 100%; max-width: var(--maxw);
+    border-radius: 16px 16px 0 0; border: 1.5px solid var(--hair-strong); border-bottom: none;
+    padding: 22px 24px 30px; max-height: 88vh; overflow-y: auto;
+    animation: slideup 320ms cubic-bezier(0.16,1,0.3,1) both;
+  }
+  @keyframes slideup { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+  .story-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px; }
+  .story-head h3 { font-family: 'Fraunces', Georgia, serif; font-weight: 500; font-size: 24px; letter-spacing: -0.02em; }
+  .story-head .x { background: none; border: none; font-size: 22px; color: var(--muted); cursor: pointer; line-height: 1; padding: 4px; }
+  .story-lede { font-size: 14px; color: var(--muted); margin-bottom: 18px; line-height: 1.5; }
+  .story label { display: block; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; margin: 14px 0 6px; }
+  .story .fld {
+    width: 100%; font-family: 'Inter', sans-serif; font-size: 15px; color: var(--ink);
+    background: #fff; border: 1.5px solid var(--hair-strong); border-radius: 8px;
+    padding: 11px 13px; outline: none; transition: border-color 140ms ease;
+  }
+  .story textarea.fld { resize: vertical; min-height: 70px; font-family: 'Fraunces', Georgia, serif; word-break: break-all; line-height: 1.5; }
+  .story .fld:focus { border-color: var(--ink); }
+  .story .hint { font-size: 12px; color: var(--muted); margin-top: 5px; line-height: 1.4; }
+  .story .out { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 12px; background: var(--ink); color: #E9E7E0; border-radius: 8px; padding: 13px 14px; margin-top: 14px; white-space: pre-wrap; word-break: break-all; line-height: 1.6; display: none; }
+  .story .out.show { display: block; }
+  .submit-btn { margin-top: 8px; background: var(--ok); border-color: var(--ok); }
+  .submit-btn:hover { background: #2d5a3a; }
+  .story .descbox { font-family: 'Fraunces', Georgia, serif; font-size: 14px; background: #fff; border: 1.5px solid var(--hair-strong); border-radius: 8px; padding: 13px; word-break: break-all; line-height: 1.55; margin-top: 6px; }
+
+  .learn-section { border: 1.5px solid var(--hair); border-radius: var(--radius); overflow: hidden; margin: 0 0 18px; }
+  .learn-section summary { list-style: none; cursor: pointer; padding: 14px 16px; font-size: 14px; font-weight: 500; color: var(--ink); display: flex; align-items: center; justify-content: space-between; }
+  .learn-section summary::-webkit-details-marker { display: none; }
+  .learn-section summary .chev { color: var(--muted); transition: transform 200ms ease; }
+  .learn-section[open] summary .chev { transform: rotate(90deg); }
+  .learn-section .learn-body { border-top: 1px solid var(--hair); padding: 16px; font-size: 14px; color: var(--muted); line-height: 1.6; }
+  .learn-section .learn-body .lb-head { font-weight: 600; color: var(--ink); margin-bottom: 4px; }
+  .learn-section .learn-body .lb-block { margin-bottom: 18px; }
+
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
-  @media (max-width: 440px) { .vault-grid, .entry-grid { grid-template-columns: repeat(2,1fr); } .acts { grid-template-columns: 1fr; } }
+  @media (max-width: 440px) { .vault-grid, .entry-grid { grid-template-columns: repeat(2,1fr); } .primary-btns { flex-direction: column; } }
 </style>
 </head>
 <body>
@@ -348,7 +340,7 @@
     <div class="seal-fallback" id="seal-fb">seal</div>
     <div>
       <h1>BitPhoque</h1>
-      <div class="sub">Wallet · TN10 practice</div>
+      <div class="sub">Wallet</div>
     </div>
   </div>
 
@@ -359,10 +351,12 @@
     <div class="seg" data-step="3"></div>
   </div>
 
+  <!-- ===== ONBOARDING SCREENS (proven, unchanged) ===== -->
+
   <section class="screen" id="s-welcome">
     <h2 class="title">All out of phoques?<br>Let's fix that.</h2>
     <p class="lede">A non-custodial wallet for BitPhoque. Your keys are generated on
-      this device and never leave it — no account, no server, no custodian.</p>
+      this device and never leave it -- no account, no server, no custodian.</p>
     <button class="choice" onclick="startCreate()">
       <span class="ic">&#9633;</span>
       <span>
@@ -425,12 +419,12 @@
     <span class="done-check" id="done-fb" style="display:none">&#10003;</span>
     <h2 class="title" id="doneTitle">Wallet ready</h2>
     <p class="lede" id="doneLede">Your wallet is set up and held in this browser. Next
-      you'll fund it with a little KAS for fees, then you can send, receive, and claim phoques.</p>
+      you'll fund it with a little KAS for fees, then you can send and receive phoques.</p>
 
     <div class="save-box" id="saveBox">
       <div class="save-head">Save this wallet to this browser?</div>
       <p class="save-sub">Set a passphrase and your recovery phrase is encrypted (AES-GCM)
-        and kept on this device, so it survives a refresh. The passphrase is never stored —
+        and kept on this device, so it survives a refresh. The passphrase is never stored --
         only you can unlock it. Or skip and keep the wallet for this session only.</p>
       <label for="ppNew">Passphrase</label>
       <input class="fld" id="ppNew" type="password" autocomplete="new-password" placeholder="choose a strong passphrase" oninput="ppStrength()">
@@ -440,7 +434,7 @@
       <div class="msg" id="saveMsg"></div>
       <button class="btn" onclick="saveWallet()" id="saveBtn">Encrypt &amp; save</button>
       <div class="tools" style="margin-top:14px">
-        <button class="link" onclick="enterWallet()">Skip — this session only</button>
+        <button class="link" onclick="enterWallet()">Skip -- this session only</button>
       </div>
     </div>
 
@@ -450,7 +444,6 @@
     </div>
   </section>
 
-  <!-- Unlock: shown on load when an encrypted wallet is already stored -->
   <section class="screen" id="s-unlock">
     <h2 class="title">Welcome back</h2>
     <p class="lede">This browser has a saved BitPhoque wallet. Enter your passphrase to unlock it.</p>
@@ -465,82 +458,54 @@
     </div>
   </section>
 
-  <!-- ====================== HOME (post-onboarding) ====================== -->
-  <!-- Mirrors the proven CLI surface. Everyday 4 are primary; plumbing verbs
-       live in the "More" drawer. Balance + all chain reads/writes are routed
-       through the NODE SEAM (see script) — node-free prototype, no fake chain
-       truth shown. -->
+  <!-- ===== HOME (v2: hero + cards + primary actions) ===== -->
   <section class="screen" id="s-home">
-    <div class="bal">
-      <div class="lab">Balance</div>
-      <div class="amt" id="balAmt">0 <span class="u">phoques</span></div>
-      <div class="pups zero" id="balPups">· 0 pups</div>
-      <div class="empty" id="balEmpty">No parcels yet. This wallet is empty until you
-        receive phoques or import a parcel descriptor.</div>
-      <div class="bal-foot">
-        <span class="pc" id="parcelCount">0 parcels</span>
-        <button class="link rf" onclick="refreshBalance()" id="refreshBtn">Refresh</button>
-      </div>
+    <div class="hero">
+      <div class="hero-num" id="heroNum">0</div>
+      <div class="hero-unit">phoques</div>
     </div>
 
-    <div class="acts">
-      <button class="act" onclick="openPanel('send')">
-        <span class="ai">&#8599;</span><span class="at">Send</span>
-        <span class="ad">Transfer phoques to another wallet.</span>
-      </button>
-      <button class="act" onclick="openPanel('receive')">
-        <span class="ai">&#8601;</span><span class="at">Receive</span>
-        <span class="ad">Import a parcel descriptor someone sent you.</span>
-      </button>
-      <button class="act" onclick="openPanel('claim')">
-        <span class="ai">&#9671;</span><span class="at">Claim</span>
-        <span class="ad">Pay a listing and receive the phoques.</span>
-      </button>
-      <button class="act" onclick="openPanel('list')">
-        <span class="ai">&#9650;</span><span class="at">List</span>
-        <span class="ad">Put a parcel up for sale at a price.</span>
-      </button>
+    <div class="kas-info" id="kasInfo"></div>
+
+    <div class="cards" id="cardList"></div>
+
+    <div class="empty-home" id="emptyHome">
+      No phoques yet. Tap <b>Receive</b> to get started.
     </div>
 
-    <details class="more">
-      <summary>More actions <span class="chev">&#8250;</span></summary>
-      <div class="more-body">
-        <button class="mact" onclick="openPanel('partial')">
-          <div class="mt">Partial-list</div>
-          <div class="md">List part of a parcel; keep the rest.</div>
-        </button>
-        <button class="mact" onclick="openPanel('split')">
-          <div class="mt">Split</div>
-          <div class="md">Break one parcel into two.</div>
-        </button>
-        <button class="mact" onclick="openPanel('merge')">
-          <div class="mt">Merge</div>
-          <div class="md">Combine parcels into one.</div>
-        </button>
-        <button class="mact" onclick="openPanel('import')">
-          <div class="mt">Import</div>
-          <div class="md">Load a parcel by outpoint.</div>
-        </button>
-      </div>
-    </details>
+    <div class="primary-btns">
+      <button class="btn" onclick="openSend()">Send</button>
+      <button class="btn ghost" onclick="openReceive()">Receive</button>
+    </div>
 
-    <details class="more" style="margin-top:8px">
+    <div class="primary-btns" style="margin-top:-8px">
+      <button class="btn ghost" onclick="openSell()">Sell</button>
+      <button class="btn ghost" onclick="openBuy()">Buy</button>
+    </div>
+
+    <div class="node-bar" id="nodeBar">
+      <span class="dot checking" id="nodeDot"></span>
+      <span id="nodeText">Checking node...</span>
+      <button class="link rf" onclick="refreshAll()" id="refreshBtn">Refresh</button>
+    </div>
+
+    <details class="learn-section" style="margin-top:8px">
       <summary>Learn about this project <span class="chev">&#8250;</span></summary>
-      <div class="more-body" style="font-size:14px;color:var(--muted);line-height:1.6">
-        <div style="margin-bottom:18px">
-          <div style="font-weight:600;color:var(--ink);margin-bottom:4px">Self-custody</div>
+      <div class="learn-body">
+        <div class="lb-block">
+          <div class="lb-head">Self-custody</div>
           Your 12-word recovery phrase generates your private key entirely in this browser. It is never transmitted, never stored on a server, and never leaves your device. No account, no login, no custodian. If you lose the phrase, nobody can recover it for you. That is the point.
         </div>
-        <div style="margin-bottom:18px">
-          <div style="font-weight:600;color:var(--ink);margin-bottom:4px">Fixed supply</div>
+        <div class="lb-block">
+          <div class="lb-head">Fixed supply</div>
           42,069 phoques were minted at genesis. There is no minter, no inflation function, and no admin key that can create more. The covenant enforces conservation: every transaction must account for every phoque that enters it. Supply is proven, not promised.
         </div>
-        <div style="margin-bottom:18px">
-          <div style="font-weight:600;color:var(--ink);margin-bottom:4px">On Kaspa, no coordinator</div>
+        <div class="lb-block">
+          <div class="lb-head">On Kaspa, no coordinator</div>
           BitPhoque tokens are covenant-enforced at Kaspa's script layer. Ownership, transfer, and sale rules are checked by every validating node, not by a trusted off-chain indexer. There is no server deciding who owns what. The chain is the truth.
         </div>
-        <div style="margin-bottom:18px">
-          <div style="font-weight:600;color:var(--ink);margin-bottom:4px">The Oracle Protocol</div>
+        <div class="lb-block">
+          <div class="lb-head">The Oracle Protocol</div>
           BitPhoque is built on the same covenant stack as the Oracle Protocol, a reputation-as-UTXO system where trust is earned on-chain and enforced without a coordinator. BitPhoque is the practice run; Oracle is the destination. More at <a href="https://github.com/kyle4nia/oracle-protocol" style="color:var(--ink)">github.com/kyle4nia/oracle-protocol</a>.
         </div>
         <div style="text-align:center;margin-top:20px">
@@ -554,7 +519,7 @@
     </div>
   </section>
 
-  <div class="foot">BIP-39 via <b>@scure</b> (vendored) · keys generated and encrypted in your browser · TN10 practice
+  <div class="foot">BIP-39 via <b>@scure</b> (vendored) &middot; keys generated and encrypted in your browser &middot; TN10 practice
     <div style="margin-top:12px">Like what you see? Buy me a coffee
       <div id="coffeeQr" style="margin:10px auto 6px;width:120px"></div>
       <span style="font-size:9px;word-break:break-all;letter-spacing:0.01em">kaspa:qrwdl4f0snyfe66zjd8np8mrls7qf8t8le0zcdrmqww97uqu9ay6vjvlt6qkl</span>
@@ -562,25 +527,23 @@
   </div>
 </div>
 
-<!-- action panel host (filled by openPanel) -->
-<div class="panel-back" id="panelBack" onclick="if(event.target===this)closePanel()">
-  <div class="panel" id="panel"></div>
+<!-- story panel host (filled by openSend/openReceive/openSell/openBuy) -->
+<div class="story-back" id="storyBack" onclick="if(event.target===this)closeStory()">
+  <div class="story" id="storyPanel"></div>
 </div>
 
 <script>
-// BIP-39 is provided by the vendored @scure module bridge (window.BIP39, set up
-// in <head>). These thin wrappers keep the rest of the wallet calling the same
-// names it always did. If the module hasn't loaded yet (e.g. opened over file://
-// where ES modules can't load), they fail loud rather than silently stubbing.
+/* ---- BIP-39 wrappers (proven) ---- */
 function generateMnemonic(){
   if(!window.BIP39?.ready) throw new Error("BIP39_NOT_LOADED");
-  return window.BIP39.genArray();           // 12 words, real entropy + checksum
+  return window.BIP39.genArray();
 }
 function validateMnemonic(arr){
-  if(!window.BIP39?.ready) return {ok:false,reason:"Crypto library not loaded — open this wallet over http(s), not as a local file."};
-  return window.BIP39.validateArray(arr);   // real checksum validation
+  if(!window.BIP39?.ready) return {ok:false,reason:"Crypto library not loaded -- open this wallet over http(s), not as a local file."};
+  return window.BIP39.validateArray(arr);
 }
 
+/* ---- onboarding state (proven) ---- */
 let seed=[], verifyBlanks=[], mode="create";
 const STEP_OF={welcome:0,seed:1,verify:2,restore:1,done:3,home:-1};
 
@@ -588,14 +551,13 @@ function show(name){
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.getElementById('s-'+name).classList.add('active');
   const step=STEP_OF[name]??0;
-  // rail is onboarding chrome only — hide it once the wallet is open (home) or on unlock
   document.getElementById('rail').style.display = (name==='home'||name==='unlock') ? 'none' : 'flex';
   document.querySelectorAll('#rail .seg').forEach(seg=>seg.classList.toggle('on', Number(seg.dataset.step)<=step));
   window.scrollTo({top:0,behavior:'smooth'});
 }
 
 function startCreate(){
-  if(!window.BIP39?.ready){ alert("The recovery-phrase library hasn't loaded.\n\nThis wallet uses ES modules, which browsers only load over http(s) — not from a double-clicked local file. Serve the folder (e.g. `python -m http.server`) or open it on the live site."); return; }
+  if(!window.BIP39?.ready){ alert("The recovery-phrase library hasn't loaded.\n\nThis wallet uses ES modules, which browsers only load over http(s) -- not from a double-clicked local file. Serve the folder (e.g. `python -m http.server`) or open it on the live site."); return; }
   mode="create"; regen(); show('seed');
 }
 function regen(){
@@ -638,18 +600,16 @@ function checkVerify(){
   else { m.className='msg bad'; m.textContent="That doesn't match. Check the highlighted words."; }
 }
 function prepDone(){
-  // reset the done screen into "offer to save" mode each time we arrive
   const hasStore = window.WALLET_STORE && window.WALLET_STORE.secureContext();
   document.getElementById('saveBox').style.display = hasStore ? 'block' : 'none';
   document.getElementById('enteredBox').style.display = hasStore ? 'none' : 'block';
   ['ppNew','ppNew2'].forEach(id=>{ const e=document.getElementById(id); if(e) e.value=''; });
   const sm=document.getElementById('saveMsg'); if(sm){ sm.textContent=''; sm.className='msg'; }
   const sh=document.getElementById('ppStrengthHint'); if(sh) sh.textContent='';
-  // if not a secure context, persistence is unavailable — explain why via enteredBox only
 }
 function finishCreate(){
   document.getElementById('doneTitle').textContent='Wallet ready';
-  document.getElementById('doneLede').textContent="Your wallet is set up and held in this browser. Set a passphrase below to keep it on this device, or skip for a session-only wallet.";
+  document.getElementById('doneLede').textContent="Your wallet is set up and held in this browser. Set a passphrase below to keep it on this device, or skip for a session-only wallet.\n\nYou\u2019ll need a small amount of KAS to cover transaction fees. Once you\u2019re in, tap the \u201CNeed KAS for fees?\u201D link on the home screen to see your address.";
   prepDone();
   setTimeout(()=>show('done'),600);
 }
@@ -681,29 +641,13 @@ function checkRestore(){
   setTimeout(()=>show('done'),500);
 }
 
-/* ====================================================================
-   HOME SCREEN — mirrors the proven CLI (import/balance/list/split/merge/
-   partial-list/claim/send/receive). Everyday 4 are primary; the rest are
-   in the "More" drawer.
+/* ==================================================================
+   WALLET STATE + RENDERING
+   ================================================================== */
 
-   >>> NODE SEAM (the place live chain access drops in) <<<
-     Every read (balance, parcel discovery, confirm) and every write (the
-     covenant txs) needs TWO things this prototype does NOT have:
-       (1) P2SH derivation — the browser has no silverscript compiler. The
-           real build compiles the v3 covenant ctor-args → P2SH via WASM
-           (keeps "browser = full trustless client", fits self-erecting).
-       (2) a live node — gRPC get_utxos_by_addresses (the ONLY UTXO lookup;
-           there is no by-outpoint RPC) with the retry the CLI already does.
-     Until both are wired, balance reads as empty and actions PRINT the exact
-     CLI-equivalent call / descriptor rather than touching a chain. No fake
-     balances are shown — chain truth is never faked, only deferred.
-   ==================================================================== */
-
-const PUPS_PER_PHOQUE = 100_000_000n;            // 1 phoque = 10^8 BitPups (8 dp), mainnet-genesis convention
-const COVENANT_ID = "3baed5a3";                  // v3 covenant_id prefix (from status doc) — descriptor must match
-// wallet.json analogue: parcels the wallet tracks. Empty in the prototype —
-// populated by `receive`/`import`/`refreshBalance` against the NODE SEAM.
-let parcels = [];                                // [{outpoint, amount_pups, forSale, price, owner}]
+const PUPS_PER_PHOQUE = 100_000_000n;
+const COVENANT_ID = "3baed5a3";
+let parcels = [];
 function saveParcels(){
   try { localStorage.setItem('bitphoque_parcels', JSON.stringify(parcels)); }
   catch(e){ console.warn('[parcels] save failed:', e); }
@@ -722,46 +666,122 @@ function fmtBalance(){
   return { phoques, pups, total, count: parcels.length };
 }
 function groupThousands(bi){ return bi.toString().replace(/\B(?=(\d{3})+(?!\d))/g,','); }
+function shortId(hex){ return (hex||'').slice(0,6)+'...'+hex.slice(-4); }
+function kasFromSompi(s){ return (Number(s)/1e8).toFixed(8).replace(/\.?0+$/,''); }
+
+let kasBalance = null;  // sompi, null = unknown
 
 function renderBalance(){
-  const { phoques, pups, count } = fmtBalance();
-  document.getElementById('balAmt').innerHTML =
-    `${groupThousands(phoques)} <span class="u">phoque${phoques===1n?'':'s'}</span>`;
-  const pupsEl = document.getElementById('balPups');
-  pupsEl.textContent = `· ${groupThousands(pups)} pups`;
-  pupsEl.classList.toggle('zero', pups===0n);
-  document.getElementById('parcelCount').textContent =
-    `${count} parcel${count===1?'':'s'}`;
-  document.getElementById('balEmpty').style.display = count===0 ? 'block' : 'none';
+  const total = parcels.reduce((a,p) => a + BigInt(p.covenant_amount||0), 0n);
+  document.getElementById('heroNum').textContent = groupThousands(total);
+  renderCards();
+  renderKasInfo();
 }
 
-let myKey = null;   // derived Kaspa keypair {path, privHex, pubHex, address} for this wallet
+function renderCards(){
+  const held = parcels.filter(p => !p.forSale);
+  const listed = parcels.filter(p => p.forSale);
+  let html = '';
+
+  if(held.length > 0){
+    const total = held.reduce((a,p) => a + BigInt(p.covenant_amount||0), 0n);
+    const sub = held.length === 1 ? 'Held' : 'Held -- ' + held.length + ' groups';
+    const items = held.length > 1 ? held.map(p =>
+      '<div class="card-item">' + groupThousands(BigInt(p.covenant_amount)) + ' phoques</div>'
+    ).join('') : '';
+    html += '<div class="card state-held" id="card-held" onclick="toggleCard(this)">' +
+      '<div class="card-row">' +
+        '<div class="card-icon">&#9679;</div>' +
+        '<div class="card-body">' +
+          '<div class="card-amt">' + groupThousands(total) + ' phoques</div>' +
+          '<div class="card-sub">' + sub + '</div>' +
+        '</div>' +
+        '<div class="card-chev">&#8250;</div>' +
+      '</div>' +
+      '<div class="card-detail">' + items +
+        '<div class="card-actions">' +
+          '<button class="btn sm" onclick="event.stopPropagation(); openSend()">Send</button>' +
+          '<button class="btn sm ghost" onclick="event.stopPropagation(); openSell()">Sell</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }
+
+  if(listed.length > 0){
+    const total = listed.reduce((a,p) => a + BigInt(p.covenant_amount||0), 0n);
+    const sub = listed.length === 1 ? 'For sale' : 'For sale -- ' + listed.length + ' listings';
+    const items = listed.map(p => {
+      const pk = kasFromSompi(BigInt(p.price||0));
+      return '<div class="card-item">' + groupThousands(BigInt(p.covenant_amount)) + ' phoques at ' + pk + ' KAS</div>';
+    }).join('');
+    html += '<div class="card state-sale" id="card-sale" onclick="toggleCard(this)">' +
+      '<div class="card-row">' +
+        '<div class="card-icon">&#9830;</div>' +
+        '<div class="card-body">' +
+          '<div class="card-amt">' + groupThousands(total) + ' phoques</div>' +
+          '<div class="card-sub">' + sub + '</div>' +
+        '</div>' +
+        '<div class="card-chev">&#8250;</div>' +
+      '</div>' +
+      '<div class="card-detail">' + items + '</div>' +
+    '</div>';
+  }
+
+  document.getElementById('cardList').innerHTML = html;
+  document.getElementById('emptyHome').style.display = parcels.length === 0 ? 'block' : 'none';
+}
+
+function renderKasInfo(){
+  const el = document.getElementById('kasInfo');
+  if(kasBalance === null){
+    if(myKey){
+      el.innerHTML = '<details style="margin-top:8px;font-size:13px;color:var(--muted)">' +
+        '<summary style="cursor:pointer;list-style:none;display:flex;align-items:center;gap:4px">' +
+        '<span style="display:inline-block;transition:transform 200ms" class="kas-chev">&#8250;</span> Need KAS for fees?</summary>' +
+        '<div style="margin-top:8px;line-height:1.5">' +
+        'Every action costs a small KAS fee. Send KAS to your wallet address:<br>' +
+        '<span style="font-size:11px;word-break:break-all;user-select:all">' + myKey.address + '</span><br>' +
+        '<span style="font-size:11px">On testnet, get free TKAS from <a href="https://faucet.kaspa.org" target="_blank" rel="noopener" style="color:var(--ink)">faucet.kaspa.org</a></span>' +
+        '</div></details>';
+    } else { el.innerHTML = ''; }
+    return;
+  }
+  const kas = Number(kasBalance) / 1e8;
+  let html = kas.toFixed(4) + ' KAS for fees';
+  // figure out what the cheapest possible action costs
+  const FEE_SEND = 700000n;
+  const minNeeded = FEE_SEND * 3n;
+  if(myKey){
+    html += '<details style="margin-top:8px;font-size:13px;color:var(--muted)">' +
+      '<summary style="cursor:pointer;list-style:none;display:flex;align-items:center;gap:4px">' +
+      '<span style="display:inline-block;transition:transform 200ms">&#8250;</span> Need KAS for fees?</summary>' +
+      '<div style="margin-top:8px;line-height:1.5">' +
+      'Every action costs a small KAS fee. Send KAS to your wallet address:<br>' +
+      '<span style="font-size:11px;word-break:break-all;user-select:all">' + myKey.address + '</span><br>' +
+      '<span style="font-size:11px">On testnet, get free TKAS from <a href="https://faucet.kaspa.org" target="_blank" rel="noopener" style="color:var(--ink)">faucet.kaspa.org</a></span>' +
+      '</div></details>';
+  }
+  el.innerHTML = html;
+}
+
+function toggleCard(el){ el.classList.toggle('expanded'); }
+
+let myKey = null;
 function enterWallet(){
-  // derive the spending key from the seed (account 0, index 0) once on entry
   try { myKey = (window.KASPA && seed.length) ? window.KASPA.derive(seed, 0, 0) : null; }
   catch(e){ myKey = null; }
-  renderBalance(); show('home');
+  renderBalance();
+  show('home');
+  // kick off background refresh
+  setTimeout(()=>refreshAll(), 300);
 }
 
-/* ============================================================================
-   NODE SEAM (read side) WIRED: wrpcCall transport + refreshBalance reconcile
-   ----------------------------------------------------------------------------
-   Replaces the refreshBalance stub. Both halves it depends on are proven:
-     - in-browser P2SH derivation (bitphoque_p2sh.js, template splice)
-     - JSON wRPC over WebSocket to the synced TN10 node (port 18210)
-   This function RECONCILES already-tracked parcels against the live UTXO set.
-   It does NOT discover new holdings (amount-derived P2SH cannot be enumerated
-   blind); discovery is receive/import's job. Here we confirm + prune + sum.
-   ============================================================================ */
+/* ==================================================================
+   NODE TRANSPORT + REFRESH (proven)
+   ================================================================== */
 
-// Node JSON wRPC endpoint. Matches start-testnet10.bat --rpclisten-json=0.0.0.0:18210.
-// One place to change for mainnet / a remote node.
 const WRPC_URL = "wss://node.outlawpolitics.org";
 
-// --- reusable transport: one JSON wRPC request over a fresh WebSocket ---------
-// method e.g. "getUtxosByAddresses"; params e.g. {addresses:[...]}.
-// Resolves with the parsed message. Rejects on socket error or timeout so a
-// dead node fails loud instead of hanging the UI. Reused by receive/import/write.
 function wrpcCall(method, params, timeoutMs){
   return new Promise((resolve, reject)=>{
     let ws, done=false;
@@ -779,9 +799,6 @@ function wrpcCall(method, params, timeoutMs){
   });
 }
 
-// Normalize a stored owner pubkey to the 32-byte x-only hex the covenant uses.
-// derive() yields pubHex; if it is 33-byte compressed (66 hex, 02/03 prefix),
-// drop the prefix byte. If already 64 hex (x-only), pass through.
 function xonly(ownerHex){
   const h=(ownerHex||"").toLowerCase();
   if(h.length===66 && (h.startsWith("02")||h.startsWith("03"))) return h.slice(2);
@@ -789,21 +806,14 @@ function xonly(ownerHex){
   throw new Error("owner pubkey not 32B x-only or 33B compressed: len "+h.length);
 }
 
-// --- the real refreshBalance: derive -> getUtxosByAddresses -> reconcile ------
-// For each tracked parcel: re-derive its P2SH from (owner, covenant_amount,
-// forSale, price), query the node for that address's UTXOs, and keep the parcel
-// only if a returned entry's covenantId matches our token AND the outpoint is
-// live. Retries on address-index lag (the node's by-address index trails
-// confirmation by a few seconds, per the status doc). Prunes spent parcels.
 async function refreshBalance(){
   const btn=document.getElementById('refreshBtn'), label=btn?btn.textContent:'';
   const setBtn=(s)=>{ if(btn) btn.textContent=s; };
 
-  if(parcels.length===0){ renderBalance(); return; }   // nothing tracked, nothing to query
+  if(parcels.length===0){ renderBalance(); return; }
 
-  setBtn('Checking node...');
+  setBtn('Checking...');
 
-  // 1) derive each tracked parcel's address (covenant_amount, NOT amount_pups)
   let derived;
   try {
     const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js');
@@ -819,7 +829,7 @@ async function refreshBalance(){
       )
     }));
   } catch(e){
-    setBtn('Bad parcel data');
+    setBtn('Error');
     console.error('[refreshBalance] derive failed:', e);
     setTimeout(()=>setBtn(label), 1400);
     return;
@@ -827,12 +837,10 @@ async function refreshBalance(){
 
   const addresses = [...new Set(derived.map(d=>d.addr))];
 
-  // 2) query the node, retrying on index lag (3 attempts, 3s apart)
   let entries=null, lastErr=null;
   for(let attempt=1; attempt<=3; attempt++){
     try {
       const msg = await wrpcCall("getUtxosByAddresses", { addresses });
-      // wRPC convention: results under params.entries[], not result
       entries = (msg.params && msg.params.entries) || msg.entries || [];
       if(entries.length>0 || attempt===3) break;
       setBtn('Indexing... ('+attempt+'/3)');
@@ -848,45 +856,35 @@ async function refreshBalance(){
     setBtn('Node unreachable');
     console.error('[refreshBalance] node call failed:', lastErr);
     setTimeout(()=>setBtn(label), 1600);
+    updateNodeStatus(false);
     return;
   }
 
-  // 3) index live covenant entries by outpoint. Keep only OUR token
-  //    (covenantId prefix match); plain KAS (covenantId null) is fee money,
-  //    not a phoque parcel, so it is skipped here.
   const live=new Map();
   for(const e of entries){
     const ue=e.utxoEntry||{}, op=e.outpoint||{};
     const cid=ue.covenantId||"";
-    if(!cid || !cid.startsWith(COVENANT_ID)) continue;   // skip plain KAS / wrong token
-    // key on the outpoint alone (txid:index is globally unique; no address echo assumed)
+    if(!cid || !cid.startsWith(COVENANT_ID)) continue;
     live.set(op.transactionId+":"+op.index, { amount: ue.amount, cid });
   }
 
-  // 4) reconcile: keep tracked parcels still present on-chain, prune the rest.
-  //    A parcel matches if its stored outpoint is in the live set.
   const kept=[];
   for(const {p} of derived){
-    if(live.has(p.outpoint)) kept.push(p);   // outpoint stored as "txid:index"
+    if(live.has(p.outpoint)) kept.push(p);
   }
   parcels = kept;
   saveParcels();
 
   renderBalance();
   setBtn(label);
+  updateNodeStatus(true);
 }
-// ---- RECEIVE: descriptor string -> trustless confirm -> tracked parcel ----
-// Same scope/helpers as refreshBalance (wrpcCall, parcels, renderBalance,
-// COVENANT_ID, xonly) + window.KASPA.deriveP2SHAddress. decodeDescriptor imported above.
-// The descriptor is a CLAIM; the node is TRUTH. P2SH is amount-derived, so a UTXO
-// at the derived address cryptographically proves the amount — sender's number isn't trusted.
+
 async function receiveParcel(descriptorString){
-  // 1) decode — throws loud on bad checksum / foreign covenant_id / bad length
   const {decodeDescriptor} = await import('./bitphoque_descriptor.js');
   const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js');
   const d = decodeDescriptor(descriptorString.trim());
 
-  // 2) derive the amount-bound P2SH (logical values, as proven)
   const addr = deriveP2SHAddress(
     xonly(d.ownerPubkey), d.amount, d.forSale, d.price,
     'kaspatest'
@@ -894,9 +892,8 @@ async function receiveParcel(descriptorString){
   const wantOutpoint = d.txid + ":" + d.outputIndex;
 
   if (parcels.some(p => p.outpoint === wantOutpoint))
-    throw new Error('parcel already tracked: ' + wantOutpoint);
+    throw new Error('Already in your wallet: ' + wantOutpoint);
 
-  // 3) confirm on-chain — query derived address, retry on index lag (3x, 3s)
   let entries = null, lastErr = null;
   for (let attempt = 1; attempt <= 3; attempt++){
     try {
@@ -906,26 +903,24 @@ async function receiveParcel(descriptorString){
       await new Promise(r => setTimeout(r, 3000));
     } catch(e){ lastErr = e; if (attempt === 3) break; await new Promise(r => setTimeout(r, 3000)); }
   }
-  if (entries === null) throw new Error('node unreachable: ' + (lastErr && lastErr.message));
+  if (entries === null) throw new Error('Node unreachable: ' + (lastErr && lastErr.message));
 
-  // find the exact outpoint and confirm it's OUR token
   let found = false;
   for (const e of entries){
     const ue = e.utxoEntry || {}, op = e.outpoint || {};
     if (op.transactionId + ":" + op.index !== wantOutpoint) continue;
     const cid = ue.covenantId || "";
     if (!cid || !cid.startsWith(COVENANT_ID))
-      throw new Error('outpoint exists but is not a BitPhoque covenant UTXO');
+      throw new Error('Found on chain but not a BitPhoque token.');
     found = true; break;
   }
   if (!found)
-    throw new Error('parcel not found at ' + addr + ' (outpoint ' + wantOutpoint + '). If the tx is fresh, wait for the address index and retry.');
+    throw new Error('Not found on chain yet. If the transaction is new, wait a moment and try again.');
 
-  // 4) record — fund-safety fields match the refreshBalance reconcile contract exactly
   const parcel = {
-    owner:           d.ownerPubkey,                       // x-only hex; xonly() normalizes at derive
-    covenant_amount: d.amount.toString(),                 // whole units (BigInt-safe string)
-    amount_pups:     (d.amount * 100000000n).toString(),  // 1 phoque = 1e8 pups (DISPLAY only — see note)
+    owner:           d.ownerPubkey,
+    covenant_amount: d.amount.toString(),
+    amount_pups:     (d.amount * 100000000n).toString(),
     forSale:         d.forSale,
     price:           d.price.toString(),
     outpoint:        wantOutpoint,
@@ -937,428 +932,439 @@ async function receiveParcel(descriptorString){
 }
 
 function lockWallet(){
-  // prototype: seed is in-memory only; "lock" returns to welcome without wiping
-  // the in-session seed. Real impl re-prompts the WebCrypto passphrase.
   show('welcome');
 }
 
-/* ---- action panels: real UI, chain action routed to the NODE SEAM ---- */
-const PANELS = {
-  send: {
-    title: "Send phoques",
-    lede: "Transfer phoques to another wallet. Builds, signs, and submits in-browser — key never leaves the device.",
-    pickers: [{ label:'Input parcel', targets:{txid:'txid',idx:'idx',amt:'iamt'}, filter: p=>!p.forSale }],
-    fields: [
-      {id:"to",    label:"Recipient pubkey (64-hex, x-only)", ph:"abcd…"},
-      {id:"amt",   label:"Amount to send (phoques)", ph:"e.g. 1000", type:"number"},
-      {id:"txid",  label:"Input parcel txid", ph:"28a90bc9…"},
-      {id:"idx",   label:"Input parcel index", ph:"0", type:"number"},
-      {id:"iamt",  label:"Input parcel phoques", ph:"e.g. 5000", type:"number"},
-    ],
-    cta: "Build & sign",
-    run: async (v)=>{
-      const to=(v.to||'').trim(), amt=parseInt(v.amt||'0',10), txid=(v.txid||'').trim();
-      const idx=parseInt(v.idx||'0',10), iamt=parseInt(v.iamt||'0',10);
-      if(!to||to.length!==64) return {err:'Recipient must be 64-hex x-only pubkey.'};
-      if(!amt||amt<=0) return {err:'Enter a positive phoque amount.'};
-      if(!txid||txid.length!==64) return {err:'Enter the input parcel txid (64 hex).'};
-      if(!iamt||iamt<=0) return {err:'Enter the input parcel phoque amount.'};
-      if(amt>iamt) return {err:'Send amount exceeds input parcel ('+iamt+').'};
-      if(!myKey) return {err:'Wallet not unlocked — re-enter first.'};
-      // query node for UTXO value
-      
-      const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js');
-      const inputAddr = deriveP2SHAddress(xonly(myKey.pubHex), BigInt(iamt), false, 0n, 'kaspatest');
-      let inputValue;
-      try {
-        const msg = await wrpcCall("getUtxosByAddresses", {addresses:[inputAddr]});
-        const entries = (msg.params&&msg.params.entries)||[];
-        const match = entries.find(e=>e.outpoint&&e.outpoint.transactionId===txid&&e.outpoint.index===idx);
-        if(!match) return {err:'Parcel not found on-chain at '+txid.slice(0,8)+'…:'+idx+' (address '+inputAddr.slice(0,20)+'…). Check txid/index/amount.'};
-        inputValue = BigInt(match.utxoEntry.amount);
-      } catch(e){ return {err:'Node query failed: '+(e.message||e)}; }
-      // build + sign
-      const {buildSendTx} = await import('./bitphoque_tx.js');
-      let result;
-      try {
-        result = buildSendTx({
-          inputTxId: txid, inputIndex: idx, inputValue,
-          inputOwner: xonly(myKey.pubHex), inputAmount: BigInt(iamt),
-          recipientPubkey: xonly(to), sendAmount: BigInt(amt),
-          privkeyHex: myKey.privHex,
-        });
-      } catch(e){ return {err:'Build failed: '+(e.message||e)}; }
-      // store for submit step
-      window._pendingSendTx = result.txJson;
-      window._pendingDesc = { recipientPubkey: xonly(to), sendAmount: BigInt(amt), outputIndex: 0 };
-      window._pendingParcelUpdate = {
-        remove: [txid + ':' + idx],
-        add: (amt === iamt) ? [] : [
-          { owner: xonly(myKey.pubHex), covenant_amount: String(iamt - amt), forSale: false, price: '0', outputIndex: 1 }
-        ]
-      };
-      const sb=document.getElementById('submitBtn'); if(sb) sb.style.display='block';
-      const whole = (amt===iamt);
-      return {out: `[send] BUILT + SIGNED (not yet submitted)\n  sighash: ${result.sigHashHex}\n  sigscript: ${result.sigscriptLen} bytes\n  outputs: ${whole?'1 (whole)':'2 (partial+change)'}\n  values: ${result.outputValues.map(v=>(v/1e8).toFixed(8)+' TKAS').join(' + ')}\n  fee: 0.007 TKAS\n\nClick "Submit to node" to broadcast.`};
-    }
-  },
-  
+/* ==================================================================
+   KAS BALANCE + NODE STATUS
+   ================================================================== */
 
-  receive: {
-    title: "Receive phoques",
-    lede: "Your public key is below — share it with anyone sending you phoques (they need it to build the transaction). To receive phoques, paste the parcel descriptor they send back. It decodes the descriptor, checks the covenant_id, derives the amount-bound address, and confirms the parcel is live on-chain before tracking it — the descriptor is a claim, the chain is the truth.",
-    pubkeyField: true,
-    fields: [
-      {id:"desc", label:"Parcel descriptor (base58check)", ph:"paste descriptor…", textarea:true},
-    ],
-    cta: "Decode & confirm",
-    run: async (v)=>{
-      const desc=(v.desc||"").trim();
-      if(!desc) return {err:"Paste a descriptor first."};
-      let p;
-      try {
-        p = await receiveParcel(desc);
-      } catch(e){ return {err: e.message || String(e)}; }
-      return {out:
-        `[receive] PARCEL CONFIRMED + TRACKED\n  amount: ${p.covenant_amount} phoques\n  owner:  ${p.owner.slice(0,16)}…\n  outpoint: ${p.outpoint}\n  forSale: ${p.forSale}${p.forSale ? ` @ ${p.price} sompi` : ''}\n\nIt now appears in your balance. Refresh to see it.`};
+async function refreshKasBalance(){
+  if(!myKey) return;
+  try {
+    const msg = await wrpcCall("getUtxosByAddresses", { addresses: [myKey.address] });
+    const entries = (msg.params && msg.params.entries) || msg.entries || [];
+    let total = 0n;
+    for(const e of entries){
+      const ue = e.utxoEntry || {};
+      if(!ue.covenantId) total += BigInt(ue.amount || 0);
     }
-  },
-  claim: {
-    title: "Claim a listing",
-    lede: "Pay a listing and receive the phoques. Payment-authorized — no seller signature needed. The covenant input is unsigned; you sign only your KAS funding input. Fee: 900k sompi. Payment: 100M sompi (1 TKAS, KIP-9-safe).",
-    fields: [
-      {id:"seller", label:"Seller pubkey (64-hex, x-only)", ph:"8c02c20a…"},
-      {id:"txid",   label:"Listing txid", ph:"8dff6df4…"},
-      {id:"idx",    label:"Listing index", ph:"0", type:"number"},
-      {id:"amt",    label:"Parcel phoques", ph:"e.g. 3000", type:"number"},
-      {id:"price",  label:"Listed price (sompi)", ph:"e.g. 500000", type:"number"},
-    ],
-    cta: "Build & sign",
-    run: async (v)=>{
-      const seller=(v.seller||'').trim(), txid=(v.txid||'').trim();
-      const idx=parseInt(v.idx||'0',10), amt=parseInt(v.amt||'0',10);
-      const price=parseInt(v.price||'0',10);
-      if(!seller||seller.length!==64) return {err:'Seller must be 64-hex x-only pubkey.'};
-      if(!txid||txid.length!==64) return {err:'Enter the listing txid (64 hex).'};
-      if(!amt||amt<=0) return {err:'Enter the parcel phoque amount.'};
-      if(!price||price<=0) return {err:'Enter the listed price in sompi.'};
-      if(!myKey) return {err:'Wallet not unlocked — re-enter first.'};
-      // 1) confirm the for-sale covenant UTXO on-chain
-      const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js');
-      const covAddr = deriveP2SHAddress(xonly(seller), BigInt(amt), true, BigInt(price), 'kaspatest');
-      let covValue;
-      try {
-        const msg = await wrpcCall("getUtxosByAddresses", {addresses:[covAddr]});
-        const entries = (msg.params&&msg.params.entries)||[];
-        const match = entries.find(e=>e.outpoint&&e.outpoint.transactionId===txid&&e.outpoint.index===idx);
-        if(!match) return {err:'Listing not found on-chain at '+txid.slice(0,8)+'…:'+idx+' (P2SH '+covAddr.slice(0,24)+'…). Already claimed or wrong details.'};
-        covValue = BigInt(match.utxoEntry.amount);
-      } catch(e){ return {err:'Node query (listing): '+(e.message||e)}; }
-      // 2) auto-pick a funding UTXO from buyer's plain P2PK address
-      const {CLAIM_FEE, CLAIM_PAYMENT} = await import('./bitphoque_tx.js');
-      const minFund = CLAIM_PAYMENT + CLAIM_FEE;
-      let fundTxId, fundIndex, fundValue;
-      try {
-        const msg = await wrpcCall("getUtxosByAddresses", {addresses:[myKey.address]});
-        const entries = (msg.params&&msg.params.entries)||[];
-        const suitable = entries
-          .filter(e=>BigInt(e.utxoEntry.amount)>minFund)
-          .sort((a,b)=>{ const av=BigInt(a.utxoEntry.amount), bv=BigInt(b.utxoEntry.amount); return av<bv?-1:av>bv?1:0; });
-        if(!suitable.length) return {err:'No KAS UTXO at '+myKey.address.slice(0,24)+'… large enough for payment+fee ('+minFund+' sompi). Fund your wallet with KAS first.'};
-        const pick=suitable[0];
-        fundTxId=pick.outpoint.transactionId; fundIndex=pick.outpoint.index; fundValue=BigInt(pick.utxoEntry.amount);
-      } catch(e){ return {err:'Node query (funding): '+(e.message||e)}; }
-      // 3) build + sign
-      const {buildClaimTx} = await import('./bitphoque_tx.js');
-      let result;
-      try {
-        result = buildClaimTx({
-          covTxId: txid, covIndex: idx, covValue,
-          sellerPubkey: xonly(seller), buyerPubkey: xonly(myKey.pubHex),
-          amount: BigInt(amt), price: BigInt(price),
-          fundTxId, fundIndex, fundValue,
-          buyerPrivkeyHex: myKey.privHex,
-        });
-      } catch(e){ return {err:'Build failed: '+(e.message||e)}; }
-      window._pendingSendTx = result.txJson;
-      window._pendingDesc = null;
-      window._pendingParcelUpdate = {
-        remove: [],
-        add: [{ owner: xonly(myKey.pubHex), covenant_amount: String(amt), forSale: false, price: '0', outputIndex: 0 }]
-      };
-      const sb=document.getElementById('submitBtn'); if(sb) sb.style.display='block';
-      return {out:
-        `[claim] BUILT + SIGNED (not yet submitted)\n`+
-        `  parcel: ${amt} phoques from ${seller.slice(0,8)}…\n`+
-        `  payment: ${result.paymentValue} sompi → seller\n`+
-        `  change:  ${result.changeValue} sompi → you\n`+
-        `  funding: ${fundTxId.slice(0,8)}…:${fundIndex} (${fundValue} sompi)\n`+
-        `  in0 sigscript: ${result.sigscriptLen} bytes (covenant ABI + redeem)\n`+
-        `  buyer sighash: ${result.sigHashHex}\n`+
-        `  fee: 0.009 TKAS\n\nClick "Submit to node" to broadcast.`};
-    }
-  },
-  list: {
-    title: "List for sale",
-    lede: "Flip a parcel to for-sale at a price. Owner-signed; the covenant allows a for-sale output only when no input is for-sale.",
-    pickers: [{ label:'Parcel to list', targets:{txid:'txid',idx:'idx',amt:'iamt'}, filter: p=>!p.forSale }],
-    fields: [
-      {id:"txid",  label:"Parcel txid", ph:"28a90bc9\u2026"},
-      {id:"idx",   label:"Parcel index", ph:"0", type:"number"},
-      {id:"iamt",  label:"Parcel phoques", ph:"e.g. 5000", type:"number"},
-      {id:"price", label:"Price (sompi)", ph:"e.g. 500000", type:"number"},
-    ],
-    cta: "Build & sign",
-    run: async (v)=>{
-      const txid=(v.txid||'').trim(), idx=parseInt(v.idx||'0',10);
-      const iamt=parseInt(v.iamt||'0',10), price=parseInt(v.price||'0',10);
-      if(!txid||txid.length!==64) return {err:'Enter the parcel txid (64 hex).'};
-      if(!iamt||iamt<=0) return {err:'Enter the parcel phoque amount.'};
-      if(!price||price<=0) return {err:'Enter a positive price in sompi.'};
-      if(!myKey) return {err:'Wallet not unlocked.'};
-      const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js');
-      const inputAddr = deriveP2SHAddress(xonly(myKey.pubHex), BigInt(iamt), false, 0n, 'kaspatest');
-      let inputValue;
-      try {
-        const msg = await wrpcCall("getUtxosByAddresses", {addresses:[inputAddr]});
-        const entries = (msg.params&&msg.params.entries)||[];
-        const match = entries.find(e=>e.outpoint&&e.outpoint.transactionId===txid&&e.outpoint.index===idx);
-        if(!match) return {err:'Parcel not found on-chain. Check txid/index/amount.'};
-        inputValue = BigInt(match.utxoEntry.amount);
-      } catch(e){ return {err:'Node query failed: '+(e.message||e)}; }
-      const {buildListTx} = await import('./bitphoque_tx.js');
-      let result;
-      try {
-        result = buildListTx({
-          inputTxId: txid, inputIndex: idx, inputValue,
-          inputOwner: xonly(myKey.pubHex), inputAmount: BigInt(iamt),
-          listPrice: BigInt(price), privkeyHex: myKey.privHex,
-        });
-      } catch(e){ return {err:'Build failed: '+(e.message||e)}; }
-      window._pendingSendTx = result.txJson;
-      window._pendingParcelUpdate = {
-        remove: [txid + ':' + idx],
-        add: [{ owner: xonly(myKey.pubHex), covenant_amount: String(iamt), forSale: true, price: String(price), outputIndex: 0 }]
-      };
-      const sb=document.getElementById('submitBtn'); if(sb) sb.style.display='block';
-      return {out: `[list] BUILT + SIGNED\n  sighash: ${result.sigHashHex}\n  listed: ${iamt} phoques at ${price} sompi\n  value: ${(result.outputValues[0]/1e8).toFixed(8)} TKAS\n  fee: 0.007 TKAS\n\nClick "Submit to node" to broadcast.`};
-    }
-  },
-  partial: {
-    title: "Partial-list",
-    lede: "List PART of a parcel and keep the rest as not-for-sale change, in one owner-signed tx.",
-    pickers: [{ label:'Parcel to partial-list', targets:{txid:'txid',idx:'idx',amt:'iamt'}, filter: p=>!p.forSale }],
-    fields: [
-      {id:"txid",  label:"Parcel txid", ph:"28a90bc9\u2026"},
-      {id:"idx",   label:"Parcel index", ph:"0", type:"number"},
-      {id:"iamt",  label:"Parcel phoques", ph:"e.g. 5000", type:"number"},
-      {id:"amt",   label:"Amount to list (phoques)", ph:"e.g. 3000", type:"number"},
-      {id:"price", label:"Price (sompi)", ph:"e.g. 500000", type:"number"},
-    ],
-    cta: "Build & sign",
-    run: async (v)=>{
-      const txid=(v.txid||'').trim(), idx=parseInt(v.idx||'0',10);
-      const iamt=parseInt(v.iamt||'0',10), amt=parseInt(v.amt||'0',10);
-      const price=parseInt(v.price||'0',10);
-      if(!txid||txid.length!==64) return {err:'Enter the parcel txid (64 hex).'};
-      if(!iamt||iamt<=0) return {err:'Enter the parcel phoque amount.'};
-      if(!amt||amt<=0||amt>=iamt) return {err:'List amount must be between 1 and '+(iamt-1)+'.'};
-      if(!price||price<=0) return {err:'Enter a positive price in sompi.'};
-      if(!myKey) return {err:'Wallet not unlocked.'};
-      const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js');
-      const inputAddr = deriveP2SHAddress(xonly(myKey.pubHex), BigInt(iamt), false, 0n, 'kaspatest');
-      let inputValue;
-      try {
-        const msg = await wrpcCall("getUtxosByAddresses", {addresses:[inputAddr]});
-        const entries = (msg.params&&msg.params.entries)||[];
-        const match = entries.find(e=>e.outpoint&&e.outpoint.transactionId===txid&&e.outpoint.index===idx);
-        if(!match) return {err:'Parcel not found on-chain. Check txid/index/amount.'};
-        inputValue = BigInt(match.utxoEntry.amount);
-      } catch(e){ return {err:'Node query failed: '+(e.message||e)}; }
-      const {buildOwnerSignedTx} = await import('./bitphoque_tx.js');
-      const owner = xonly(myKey.pubHex);
-      let result;
-      try {
-        result = buildOwnerSignedTx({
-          inputTxId: txid, inputIndex: idx, inputValue,
-          inputOwner: owner, inputAmount: BigInt(iamt),
-          inputForSale: false, inputPrice: 0n,
-          newStates: [
-            {owner, amount: BigInt(amt), forSale: true, price: BigInt(price)},
-            {owner, amount: BigInt(iamt-amt), forSale: false, price: 0n},
-          ],
-          privkeyHex: myKey.privHex,
-        });
-      } catch(e){ return {err:'Build failed: '+(e.message||e)}; }
-      window._pendingSendTx = result.txJson;
-      window._pendingParcelUpdate = {
-        remove: [txid + ':' + idx],
-        add: [
-          { owner, covenant_amount: String(amt), forSale: true, price: String(price), outputIndex: 0 },
-          { owner, covenant_amount: String(iamt - amt), forSale: false, price: '0', outputIndex: 1 }
-        ]
-      };
-      const sb=document.getElementById('submitBtn'); if(sb) sb.style.display='block';
-      return {out: `[partial-list] BUILT + SIGNED\n  listed: ${amt} phoques at ${price} sompi (out0)\n  change: ${iamt-amt} phoques, not-for-sale (out1)\n  values: ${result.outputValues.map(v=>(v/1e8).toFixed(8)+' TKAS').join(' + ')}\n  fee: 0.007 TKAS\n\nClick "Submit to node" to broadcast.`};
-    }
-  },
-    
-  split: {
-    title: "Split a parcel",
-    lede: "Break one parcel into two (e.g. to send a round amount). Conservation enforced by the covenant.",
-    pickers: [{ label:'Parcel to split', targets:{txid:'txid',idx:'idx',amt:'iamt'}, filter: p=>!p.forSale }],
-    fields: [
-      {id:"txid", label:"Parcel txid", ph:"28a90bc9\u2026"},
-      {id:"idx",  label:"Parcel index", ph:"0", type:"number"},
-      {id:"iamt", label:"Parcel phoques", ph:"e.g. 5000", type:"number"},
-      {id:"amt",  label:"First piece (phoques)", ph:"remainder is the second", type:"number"},
-    ],
-    cta: "Build & sign",
-    run: async (v)=>{
-      const txid=(v.txid||'').trim(), idx=parseInt(v.idx||'0',10);
-      const iamt=parseInt(v.iamt||'0',10), amt=parseInt(v.amt||'0',10);
-      if(!txid||txid.length!==64) return {err:'Enter the parcel txid (64 hex).'};
-      if(!iamt||iamt<=0) return {err:'Enter the parcel phoque amount.'};
-      if(!amt||amt<=0||amt>=iamt) return {err:'Split amount must be between 1 and '+(iamt-1)+'.'};
-      if(!myKey) return {err:'Wallet not unlocked.'};
-      const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js');
-      const inputAddr = deriveP2SHAddress(xonly(myKey.pubHex), BigInt(iamt), false, 0n, 'kaspatest');
-      let inputValue;
-      try {
-        const msg = await wrpcCall("getUtxosByAddresses", {addresses:[inputAddr]});
-        const entries = (msg.params&&msg.params.entries)||[];
-        const match = entries.find(e=>e.outpoint&&e.outpoint.transactionId===txid&&e.outpoint.index===idx);
-        if(!match) return {err:'Parcel not found on-chain. Check txid/index/amount.'};
-        inputValue = BigInt(match.utxoEntry.amount);
-      } catch(e){ return {err:'Node query failed: '+(e.message||e)}; }
-      const {buildSplitTx} = await import('./bitphoque_tx.js');
-      let result;
-      try {
-        result = buildSplitTx({
-          inputTxId: txid, inputIndex: idx, inputValue,
-          inputOwner: xonly(myKey.pubHex), inputAmount: BigInt(iamt),
-          splitAmount: BigInt(amt), privkeyHex: myKey.privHex,
-        });
-      } catch(e){ return {err:'Build failed: '+(e.message||e)}; }
-      window._pendingSendTx = result.txJson;
-      window._pendingParcelUpdate = {
-        remove: [txid + ':' + idx],
-        add: [
-          { owner: xonly(myKey.pubHex), covenant_amount: String(amt), forSale: false, price: '0', outputIndex: 0 },
-          { owner: xonly(myKey.pubHex), covenant_amount: String(iamt - amt), forSale: false, price: '0', outputIndex: 1 }
-        ]
-      };
-      const sb=document.getElementById('submitBtn'); if(sb) sb.style.display='block';
-      return {out: `[split] BUILT + SIGNED\n  out0: ${amt} phoques (${(result.outputValues[0]/1e8).toFixed(8)} TKAS)\n  out1: ${iamt-amt} phoques (${(result.outputValues[1]/1e8).toFixed(8)} TKAS)\n  fee: 0.007 TKAS\n\nClick "Submit to node" to broadcast.`};
-    }
-  },
-  merge: {
-    title: "Merge parcels",
-    lede: "Combine two same-owner, not-for-sale parcels into one. Leader/delegate ABI — both covenant inputs sign at the leader index. Fee: 1.3M sompi (two 2793B script reveals).",
-    pickers: [
-      { label:'Parcel 0', targets:{txid:'txid0',idx:'idx0',amt:'amt0'}, filter: p=>!p.forSale },
-      { label:'Parcel 1', targets:{txid:'txid1',idx:'idx1',amt:'amt1'}, filter: p=>!p.forSale }
-    ],
-    fields: [
-      {id:"txid0", label:"Parcel 0 txid", ph:"28a90bc9…"},
-      {id:"idx0",  label:"Parcel 0 index", ph:"0", type:"number"},
-      {id:"amt0",  label:"Parcel 0 phoques", ph:"e.g. 1000", type:"number"},
-      {id:"txid1", label:"Parcel 1 txid", ph:"f8f13363…"},
-      {id:"idx1",  label:"Parcel 1 index", ph:"0", type:"number"},
-      {id:"amt1",  label:"Parcel 1 phoques", ph:"e.g. 4000", type:"number"},
-    ],
-    cta: "Build & sign",
-    run: async (v)=>{
-      const txid0=(v.txid0||'').trim(), idx0=parseInt(v.idx0||'0',10), amt0=parseInt(v.amt0||'0',10);
-      const txid1=(v.txid1||'').trim(), idx1=parseInt(v.idx1||'0',10), amt1=parseInt(v.amt1||'0',10);
-      if(!txid0||txid0.length!==64) return {err:'Parcel 0: enter the txid (64 hex).'};
-      if(!amt0||amt0<=0) return {err:'Parcel 0: enter a positive phoque amount.'};
-      if(!txid1||txid1.length!==64) return {err:'Parcel 1: enter the txid (64 hex).'};
-      if(!amt1||amt1<=0) return {err:'Parcel 1: enter a positive phoque amount.'};
-      if(txid0===txid1&&idx0===idx1) return {err:'Both parcels point to the same outpoint.'};
-      if(!myKey) return {err:'Wallet not unlocked — re-enter first.'};
-      // 1) confirm parcel 0 on-chain (not-for-sale, owner = wallet key)
-      const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js');
-      const owner = xonly(myKey.pubHex);
-      const addr0 = deriveP2SHAddress(owner, BigInt(amt0), false, 0n, 'kaspatest');
-      let val0;
-      try {
-        const msg = await wrpcCall("getUtxosByAddresses", {addresses:[addr0]});
-        const entries = (msg.params&&msg.params.entries)||[];
-        const match = entries.find(e=>e.outpoint&&e.outpoint.transactionId===txid0&&e.outpoint.index===idx0);
-        if(!match) return {err:'Parcel 0 not found on-chain at '+txid0.slice(0,8)+'…:'+idx0+'. Check txid/index/amount.'};
-        val0 = BigInt(match.utxoEntry.amount);
-      } catch(e){ return {err:'Node query (parcel 0): '+(e.message||e)}; }
-      // 2) confirm parcel 1 on-chain
-      const addr1 = deriveP2SHAddress(owner, BigInt(amt1), false, 0n, 'kaspatest');
-      let val1;
-      try {
-        const msg = await wrpcCall("getUtxosByAddresses", {addresses:[addr1]});
-        const entries = (msg.params&&msg.params.entries)||[];
-        const match = entries.find(e=>e.outpoint&&e.outpoint.transactionId===txid1&&e.outpoint.index===idx1);
-        if(!match) return {err:'Parcel 1 not found on-chain at '+txid1.slice(0,8)+'…:'+idx1+'. Check txid/index/amount.'};
-        val1 = BigInt(match.utxoEntry.amount);
-      } catch(e){ return {err:'Node query (parcel 1): '+(e.message||e)}; }
-      // 3) build + sign
-      const {buildMergeTx} = await import('./bitphoque_tx.js');
-      let result;
-      try {
-        result = buildMergeTx({
-          in0TxId: txid0, in0Index: idx0, in0Value: val0, in0Amount: BigInt(amt0),
-          in1TxId: txid1, in1Index: idx1, in1Value: val1, in1Amount: BigInt(amt1),
-          ownerPubkey: owner, privkeyHex: myKey.privHex,
-        });
-      } catch(e){ return {err:'Build failed: '+(e.message||e)}; }
-      window._pendingSendTx = result.txJson;
-      window._pendingDesc = null;
-      window._pendingParcelUpdate = {
-        remove: [txid0 + ':' + idx0, txid1 + ':' + idx1],
-        add: [{ owner, covenant_amount: String(amt0 + amt1), forSale: false, price: '0', outputIndex: 0 }]
-      };
-      const sb=document.getElementById('submitBtn'); if(sb) sb.style.display='block';
-      return {out:
-        `[merge] BUILT + SIGNED (not yet submitted)\n`+
-        `  parcel 0: ${amt0} phoques (${txid0.slice(0,8)}…:${idx0}, ${val0} sompi)\n`+
-        `  parcel 1: ${amt1} phoques (${txid1.slice(0,8)}…:${idx1}, ${val1} sompi)\n`+
-        `  → merged: ${amt0+amt1} phoques\n`+
-        `  output value: ${result.outputValue} sompi (${(result.outputValue/1e8).toFixed(8)} TKAS)\n`+
-        `  leader sighash: ${result.sigHashHex}\n`+
-        `  in0 sigscript: ${result.in0SigscriptLen} bytes (leader ABI + redeem)\n`+
-        `  in1 sigscript: ${result.in1SigscriptLen} bytes (delegate + redeem)\n`+
-        `  fee: 0.013 TKAS\n\nClick "Submit to node" to broadcast.`};
-    }
-  },
-  import: {
-    title: "Import a parcel",
-    lede: "Track a parcel you control by its outpoint. Mirrors the CLI <code>import</code> — read-only registration into wallet.json; it does not move anything.",
-    fields: [
-      {id:"out", label:"Parcel outpoint", ph:"txid:index"},
-    ],
-    cta: "Import",
-    run: (v)=>{
-      if(!(v.out||"").trim()) return {err:"Enter an outpoint."};
-      // NODE SEAM: real impl = gRPC confirm the outpoint exists & decode its
-      // covenant state, then add to wallet.json. Prototype only echoes intent.
-      return {out:`import ${v.out.trim()}\n  • confirm on-chain … NODE SEAM (needs synced node)\n  • decode cov state … NODE SEAM (needs WASM)\n  → would record the parcel in wallet.json (no funds move).`};
-    }
-  },
-};
-
-function seamTx(kind, cli, note){
-  // Uniform NODE SEAM result for the write actions: show the exact CLI call
-  // this wallet would make, plus the relevant on-chain note. No broadcast.
-  return { out:
-    `# ${kind} — would run (NODE SEAM, not broadcast):\n${cli}\n\n# ${note}\n\n# The web build constructs + signs this tx in-browser (key never leaves\n# the device) and submits via gRPC. Blocked here on: WASM P2SH compiler\n# + a synced TN10 node.` };
+    kasBalance = total;
+    renderKasInfo();
+    updateNodeStatus(true);
+  } catch(e){
+    console.error('[kasBalance] failed:', e);
+    updateNodeStatus(false);
+  }
 }
+
+function updateNodeStatus(connected){
+  const dot = document.getElementById('nodeDot');
+  const txt = document.getElementById('nodeText');
+  if(connected){
+    dot.className = 'dot on';
+    txt.textContent = 'Connected to node';
+  } else {
+    dot.className = 'dot off';
+    txt.textContent = 'Node unreachable';
+  }
+}
+
+async function refreshAll(){
+  const btn = document.getElementById('refreshBtn');
+  if(btn) btn.textContent = 'Checking...';
+  try {
+    await Promise.all([refreshBalance(), refreshKasBalance()]);
+  } catch(e){ console.error('[refreshAll]', e); }
+  if(btn) btn.textContent = 'Refresh';
+}
+
+/* ==================================================================
+   STORY SCREENS (replace old PANELS)
+   ================================================================== */
+
+function openStory(html){
+  document.getElementById('storyPanel').innerHTML = html;
+  document.getElementById('storyBack').classList.add('open');
+}
+function closeStory(){
+  document.getElementById('storyBack').classList.remove('open');
+  window._pendingSendTx = null;
+  window._pendingDesc = null;
+  window._pendingParcelUpdate = null;
+}
+
+/* ---- SEND ---- */
+function openSend(){
+  const held = parcels.filter(p => !p.forSale);
+  const totalHeld = held.reduce((a,p) => a + BigInt(p.covenant_amount||0), 0n);
+  openStory(
+    '<div class="story-head"><h3>Send phoques</h3><button class="x" onclick="closeStory()">&times;</button></div>' +
+    '<p class="story-lede">Transfer phoques to someone else. Your key never leaves this device.</p>' +
+    '<label>To</label>' +
+    '<input class="fld" id="s_to" placeholder="Recipient\'s public key" autocomplete="off" spellcheck="false">' +
+    '<div class="hint">Paste the key the recipient shared with you.</div>' +
+    '<label>Amount</label>' +
+    '<input class="fld" id="s_amt" type="number" placeholder="How many phoques?" min="1">' +
+    '<div class="hint">' + (totalHeld > 0n ? groupThousands(totalHeld) + ' available to send' : 'No phoques to send') + '</div>' +
+    '<button class="btn" style="margin-top:16px" onclick="doSend()">Send phoques</button>' +
+    '<button class="btn submit-btn" id="storySubmitBtn" style="display:none" onclick="submitPendingTx()">Confirm and send</button>' +
+    '<pre class="out" id="storyOut"></pre>'
+  );
+}
+
+async function doSend(){
+  const to = (document.getElementById('s_to').value||'').trim();
+  const amt = parseInt(document.getElementById('s_amt').value||'0', 10);
+  const out = document.getElementById('storyOut');
+  out.classList.add('show');
+
+  if(!to || to.length!==64){ out.textContent = 'Enter the recipient\'s 64-character public key.'; return; }
+  if(!amt || amt<=0){ out.textContent = 'Enter a positive amount.'; return; }
+  if(!myKey){ out.textContent = 'Wallet not ready -- go back and unlock.'; return; }
+
+  const held = parcels.filter(p => !p.forSale);
+  let pick = held.find(p => parseInt(p.covenant_amount)===amt)
+          || held.filter(p => parseInt(p.covenant_amount)>=amt)
+               .sort((a,b) => parseInt(a.covenant_amount)-parseInt(b.covenant_amount))[0];
+
+  if(!pick){
+    const totalHeld = held.reduce((a,p) => a + BigInt(p.covenant_amount||0), 0n);
+    out.textContent = totalHeld >= BigInt(amt)
+      ? 'No single group has ' + amt + ' phoques. You have ' + held.length + ' groups totaling ' + groupThousands(totalHeld) + ', but combining isn\'t supported yet.'
+      : 'You only have ' + groupThousands(totalHeld) + ' phoques.';
+    return;
+  }
+
+  const iamt = parseInt(pick.covenant_amount);
+  const parts = pick.outpoint.split(':');
+  const txid = parts[0], idx = parseInt(parts[1]);
+
+  out.textContent = 'Looking up on chain...';
+
+  const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js');
+  const inputAddr = deriveP2SHAddress(xonly(myKey.pubHex), BigInt(iamt), false, 0n, 'kaspatest');
+  let inputValue;
+  try {
+    const msg = await wrpcCall("getUtxosByAddresses", {addresses:[inputAddr]});
+    const entries = (msg.params&&msg.params.entries)||[];
+    const match = entries.find(e=>e.outpoint&&e.outpoint.transactionId===txid&&e.outpoint.index===idx);
+    if(!match){ out.textContent = 'Could not find this group on chain. Try refreshing first.'; return; }
+    inputValue = BigInt(match.utxoEntry.amount);
+  } catch(e){ out.textContent = 'Node unreachable: '+(e.message||e); return; }
+
+  out.textContent = 'Building transaction...';
+
+  const {buildSendTx} = await import('./bitphoque_tx.js');
+  let result;
+  try {
+    result = buildSendTx({
+      inputTxId: txid, inputIndex: idx, inputValue,
+      inputOwner: xonly(myKey.pubHex), inputAmount: BigInt(iamt),
+      recipientPubkey: xonly(to), sendAmount: BigInt(amt),
+      privkeyHex: myKey.privHex,
+    });
+  } catch(e){ out.textContent = 'Build failed: '+(e.message||e); return; }
+
+  window._pendingSendTx = result.txJson;
+  window._pendingDesc = { recipientPubkey: xonly(to), sendAmount: BigInt(amt), outputIndex: 0 };
+  window._pendingParcelUpdate = {
+    remove: [txid + ':' + idx],
+    add: (amt === iamt) ? [] : [
+      { owner: xonly(myKey.pubHex), covenant_amount: String(iamt - amt), forSale: false, price: '0', outputIndex: 1 }
+    ]
+  };
+
+  const whole = (amt === iamt);
+  const summary = whole
+    ? 'Sending all ' + amt + ' phoques to ' + shortId(to)
+    : 'Sending ' + amt + ' phoques to ' + shortId(to) + ', keeping ' + (iamt - amt);
+  out.textContent = 'Ready to send.\n\n' + summary + '\nFee: 0.007 TKAS\n\nTap "Confirm and send" to broadcast.';
+  document.getElementById('storySubmitBtn').style.display = 'block';
+}
+
+/* ---- RECEIVE ---- */
+function openReceive(){
+  const pubkey = myKey ? xonly(myKey.pubHex) : '';
+  openStory(
+    '<div class="story-head"><h3>Receive phoques</h3><button class="x" onclick="closeStory()">&times;</button></div>' +
+    '<p class="story-lede">Share your key with the sender, then paste the code they give you back.</p>' +
+    '<div style="text-align:center;margin:16px 0">' +
+      '<div style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px">Your key</div>' +
+      '<div id="recvQr" style="margin:0 auto;width:160px"></div>' +
+      '<div class="descbox" style="font-size:12px;word-break:break-all;margin-top:8px">' + pubkey + '</div>' +
+      '<div style="margin-top:6px"><button class="link" onclick="copyKey(\'' + pubkey + '\',this)">Copy key</button></div>' +
+    '</div>' +
+    '<div style="margin:20px 0 8px;border-top:1px solid var(--hair);padding-top:16px">' +
+      '<div style="font-size:14px;color:var(--ink);font-weight:500;margin-bottom:8px">How it works</div>' +
+      '<div style="font-size:13px;color:var(--muted);line-height:1.8">' +
+        '1. Share your key above with the sender.<br>' +
+        '2. They send phoques and give you a code back.<br>' +
+        '3. Paste that code below and tap Claim.' +
+      '</div>' +
+    '</div>' +
+    '<label>Code from sender</label>' +
+    '<textarea class="fld" id="r_desc" placeholder="Paste the code here..." rows="3" style="font-family:\'Fraunces\',serif;word-break:break-all"></textarea>' +
+    '<button class="btn" style="margin-top:14px" onclick="doReceive()">Claim phoques</button>' +
+    '<pre class="out" id="storyOut"></pre>'
+  );
+  // render QR
+  (async()=>{
+    const el = document.getElementById('recvQr');
+    if(el && pubkey){
+      try { const {qrSvg} = await import('./bitphoque_qr.js'); el.innerHTML = qrSvg(pubkey, 160); } catch(e){}
+    }
+  })();
+}
+
+async function doReceive(){
+  const desc = (document.getElementById('r_desc').value||'').trim();
+  const out = document.getElementById('storyOut');
+  out.classList.add('show');
+  if(!desc){ out.textContent = 'Paste the code from the sender first.'; return; }
+  out.textContent = 'Checking on chain...';
+  let p;
+  try { p = await receiveParcel(desc); }
+  catch(e){ out.textContent = (e.message || String(e)); return; }
+  out.textContent = 'Claimed!\n\n' + p.covenant_amount + ' phoques confirmed and added to your wallet.\n\nClose this to see your updated balance.';
+}
+
+/* ---- SELL (list for sale) ---- */
+function openSell(){
+  const held = parcels.filter(p => !p.forSale);
+  const totalHeld = held.reduce((a,p) => a + BigInt(p.covenant_amount||0), 0n);
+  openStory(
+    '<div class="story-head"><h3>Sell phoques</h3><button class="x" onclick="closeStory()">&times;</button></div>' +
+    '<p class="story-lede">List phoques for sale. Anyone can buy them by paying the price you set.</p>' +
+    '<label>Amount to sell</label>' +
+    '<input class="fld" id="sl_amt" type="number" placeholder="How many?" min="1">' +
+    '<div class="hint">' + (totalHeld > 0n ? groupThousands(totalHeld) + ' available' : 'No phoques to sell') + '</div>' +
+    '<label>Price (KAS)</label>' +
+    '<input class="fld" id="sl_price" type="number" placeholder="Price in KAS" min="0" step="0.00000001">' +
+    '<div class="hint">Buyer pays this much in KAS to claim your phoques.</div>' +
+    '<button class="btn" style="margin-top:16px" onclick="doSell()">List for sale</button>' +
+    '<button class="btn submit-btn" id="storySubmitBtn" style="display:none" onclick="submitPendingTx()">Confirm listing</button>' +
+    '<pre class="out" id="storyOut"></pre>'
+  );
+}
+
+async function doSell(){
+  const amt = parseInt(document.getElementById('sl_amt').value||'0', 10);
+  const priceKas = parseFloat(document.getElementById('sl_price').value||'0');
+  const out = document.getElementById('storyOut');
+  out.classList.add('show');
+
+  if(!amt || amt<=0){ out.textContent = 'Enter a positive amount.'; return; }
+  const priceSompi = Math.round(priceKas * 1e8);
+  if(priceSompi <= 0){ out.textContent = 'Enter a positive price.'; return; }
+  if(!myKey){ out.textContent = 'Wallet not ready.'; return; }
+
+  const held = parcels.filter(p => !p.forSale);
+  let pick = held.find(p => parseInt(p.covenant_amount)===amt)
+          || held.filter(p => parseInt(p.covenant_amount)>=amt)
+               .sort((a,b) => parseInt(a.covenant_amount)-parseInt(b.covenant_amount))[0];
+  if(!pick){ out.textContent = 'No single group has ' + amt + ' phoques.'; return; }
+
+  const iamt = parseInt(pick.covenant_amount);
+  const parts = pick.outpoint.split(':');
+  const txid = parts[0], idx = parseInt(parts[1]);
+  const isPartial = amt < iamt;
+
+  out.textContent = 'Looking up on chain...';
+
+  const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js');
+  const inputAddr = deriveP2SHAddress(xonly(myKey.pubHex), BigInt(iamt), false, 0n, 'kaspatest');
+  let inputValue;
+  try {
+    const msg = await wrpcCall("getUtxosByAddresses", {addresses:[inputAddr]});
+    const entries = (msg.params&&msg.params.entries)||[];
+    const match = entries.find(e=>e.outpoint&&e.outpoint.transactionId===txid&&e.outpoint.index===idx);
+    if(!match){ out.textContent = 'Could not find this group on chain. Try refreshing.'; return; }
+    inputValue = BigInt(match.utxoEntry.amount);
+  } catch(e){ out.textContent = 'Node unreachable: '+(e.message||e); return; }
+
+  out.textContent = 'Building transaction...';
+
+  const owner = xonly(myKey.pubHex);
+  let result;
+
+  if(isPartial){
+    const {buildOwnerSignedTx} = await import('./bitphoque_tx.js');
+    try {
+      result = buildOwnerSignedTx({
+        inputTxId: txid, inputIndex: idx, inputValue,
+        inputOwner: owner, inputAmount: BigInt(iamt),
+        inputForSale: false, inputPrice: 0n,
+        newStates: [
+          {owner, amount: BigInt(amt), forSale: true, price: BigInt(priceSompi)},
+          {owner, amount: BigInt(iamt - amt), forSale: false, price: 0n},
+        ],
+        privkeyHex: myKey.privHex,
+      });
+    } catch(e){ out.textContent = 'Build failed: '+(e.message||e); return; }
+    window._pendingParcelUpdate = {
+      remove: [txid + ':' + idx],
+      add: [
+        { owner, covenant_amount: String(amt), forSale: true, price: String(priceSompi), outputIndex: 0 },
+        { owner, covenant_amount: String(iamt - amt), forSale: false, price: '0', outputIndex: 1 }
+      ]
+    };
+  } else {
+    const {buildListTx} = await import('./bitphoque_tx.js');
+    try {
+      result = buildListTx({
+        inputTxId: txid, inputIndex: idx, inputValue,
+        inputOwner: owner, inputAmount: BigInt(iamt),
+        listPrice: BigInt(priceSompi), privkeyHex: myKey.privHex,
+      });
+    } catch(e){ out.textContent = 'Build failed: '+(e.message||e); return; }
+    window._pendingParcelUpdate = {
+      remove: [txid + ':' + idx],
+      add: [{ owner, covenant_amount: String(iamt), forSale: true, price: String(priceSompi), outputIndex: 0 }]
+    };
+  }
+
+  window._pendingSendTx = result.txJson;
+  window._pendingDesc = null;
+
+  out.textContent = 'Ready to list.\n\n' + amt + ' phoques for sale at ' + priceKas + ' KAS' +
+    (isPartial ? '\n' + (iamt - amt) + ' phoques kept in wallet' : '') +
+    '\nFee: 0.007 TKAS\n\nTap "Confirm listing" to broadcast.';
+  document.getElementById('storySubmitBtn').style.display = 'block';
+}
+
+/* ---- BUY (claim a listing) ---- */
+function openBuy(){
+  openStory(
+    '<div class="story-head"><h3>Buy phoques</h3><button class="x" onclick="closeStory()">&times;</button></div>' +
+    '<p class="story-lede">Pay a listing and receive the phoques. You need KAS in your wallet for the price and fee.</p>' +
+    '<label>Listing code</label>' +
+    '<input class="fld" id="b_code" placeholder="Paste a listing code to auto-fill" autocomplete="off" spellcheck="false" oninput="decodeListing()">' +
+    '<div class="hint" id="b_codeHint" style="margin-bottom:12px"></div>' +
+    '<label>Seller\'s key</label>' +
+    '<input class="fld" id="b_seller" placeholder="Seller\'s public key" autocomplete="off" spellcheck="false">' +
+    '<label>Listing ID</label>' +
+    '<input class="fld" id="b_txid" placeholder="Transaction ID of the listing" autocomplete="off" spellcheck="false">' +
+    '<label>Output position</label>' +
+    '<input class="fld" id="b_idx" type="number" placeholder="0" value="0">' +
+    '<label>Phoques in listing</label>' +
+    '<input class="fld" id="b_amt" type="number" placeholder="How many phoques?" min="1">' +
+    '<label>Price (KAS)</label>' +
+    '<input class="fld" id="b_price" type="number" placeholder="Price in KAS" min="1">' +
+    '<div class="hint">Or enter the details manually.</div>' +
+    '<button class="btn" style="margin-top:16px" onclick="doBuy()">Buy phoques</button>' +
+    '<button class="btn submit-btn" id="storySubmitBtn" style="display:none" onclick="submitPendingTx()">Confirm purchase</button>' +
+    '<pre class="out" id="storyOut"></pre>'
+  );
+}
+
+async function decodeListing(){
+  const code = (document.getElementById('b_code').value||'').trim();
+  const hint = document.getElementById('b_codeHint');
+  if(!code){ hint.textContent=''; return; }
+  try {
+    const {decodeDescriptor} = await import('./bitphoque_descriptor.js');
+    const d = decodeDescriptor(code);
+    if(!d.forSale){ hint.textContent='This is a receive code, not a listing. Paste it into Receive instead.'; return; }
+    document.getElementById('b_seller').value = d.ownerPubkey;
+    document.getElementById('b_txid').value = d.txid;
+    document.getElementById('b_idx').value = d.outputIndex;
+    document.getElementById('b_amt').value = d.amount.toString();
+    document.getElementById('b_price').value = (Number(d.price)/1e8).toFixed(8).replace(/\.?0+$/,'');
+    hint.textContent = d.amount + ' phoques for ' + (Number(d.price)/1e8).toFixed(8).replace(/\.?0+$/,'') + ' KAS â€” fields filled.';
+    hint.style.color = 'green';
+  } catch(e){
+    hint.textContent = 'Could not decode: '+(e.message||e);
+    hint.style.color = '';
+  }
+}
+async function doBuy(){
+  const seller = (document.getElementById('b_seller').value||'').trim();
+  const txid = (document.getElementById('b_txid').value||'').trim();
+  const idx = parseInt(document.getElementById('b_idx').value||'0', 10);
+  const amt = parseInt(document.getElementById('b_amt').value||'0', 10);
+  const priceKasInput = parseFloat(document.getElementById('b_price').value||'0'); const price = Math.round(priceKasInput * 1e8);
+  const out = document.getElementById('storyOut');
+  out.classList.add('show');
+
+  if(!seller || seller.length!==64){ out.textContent = 'Enter the seller\'s 64-character public key.'; return; }
+  if(!txid || txid.length!==64){ out.textContent = 'Enter the listing ID (64-character transaction ID).'; return; }
+  if(!amt || amt<=0){ out.textContent = 'Enter the number of phoques in the listing.'; return; }
+  if(!price || price<=0){ out.textContent = 'Enter a positive price in KAS.'; return; }
+  if(!myKey){ out.textContent = 'Wallet not ready.'; return; }
+
+  out.textContent = 'Checking listing on chain...';
+
+  // 1) confirm the for-sale UTXO
+  const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js');
+  const covAddr = deriveP2SHAddress(xonly(seller), BigInt(amt), true, BigInt(price), 'kaspatest');
+  let covValue;
+  try {
+    const msg = await wrpcCall("getUtxosByAddresses", {addresses:[covAddr]});
+    const entries = (msg.params&&msg.params.entries)||[];
+    const match = entries.find(e=>e.outpoint&&e.outpoint.transactionId===txid&&e.outpoint.index===idx);
+    if(!match){ out.textContent = 'Listing not found on chain. It may have already been bought, or the details are wrong.'; return; }
+    covValue = BigInt(match.utxoEntry.amount);
+  } catch(e){ out.textContent = 'Node unreachable: '+(e.message||e); return; }
+
+  // 2) auto-pick a funding UTXO
+  out.textContent = 'Finding KAS for payment...';
+  const {CLAIM_FEE, CLAIM_PAYMENT} = await import('./bitphoque_tx.js');
+  const minFund = CLAIM_PAYMENT + CLAIM_FEE;
+  let fundTxId, fundIndex, fundValue;
+  try {
+    const msg = await wrpcCall("getUtxosByAddresses", {addresses:[myKey.address]});
+    const entries = (msg.params&&msg.params.entries)||[];
+    const suitable = entries
+      .filter(e=>BigInt(e.utxoEntry.amount)>minFund)
+      .sort((a,b)=>{ const av=BigInt(a.utxoEntry.amount), bv=BigInt(b.utxoEntry.amount); return av<bv?-1:av>bv?1:0; });
+    if(!suitable.length){
+      const need = kasFromSompi(minFund * 3n);
+      out.textContent = 'Not enough KAS. Send at least ' + need + ' KAS to:\n' + myKey.address;
+      return;
+    }
+    const pick=suitable[0];
+    fundTxId=pick.outpoint.transactionId; fundIndex=pick.outpoint.index; fundValue=BigInt(pick.utxoEntry.amount);
+  } catch(e){ out.textContent = 'Node unreachable: '+(e.message||e); return; }
+
+  // 3) build + sign
+  out.textContent = 'Building transaction...';
+  const {buildClaimTx} = await import('./bitphoque_tx.js');
+  let result;
+  try {
+    result = buildClaimTx({
+      covTxId: txid, covIndex: idx, covValue,
+      sellerPubkey: xonly(seller), buyerPubkey: xonly(myKey.pubHex),
+      amount: BigInt(amt), price: BigInt(price),
+      fundTxId, fundIndex, fundValue,
+      buyerPrivkeyHex: myKey.privHex,
+    });
+  } catch(e){ out.textContent = 'Build failed: '+(e.message||e); return; }
+
+  window._pendingSendTx = result.txJson;
+  window._pendingDesc = null;
+  window._pendingParcelUpdate = {
+    remove: [],
+    add: [{ owner: xonly(myKey.pubHex), covenant_amount: String(amt), forSale: false, price: '0', outputIndex: 0 }]
+  };
+
+  const priceKas = kasFromSompi(BigInt(price));
+  out.textContent = 'Ready to buy.\n\n' + amt + ' phoques for ' + priceKas + ' KAS from ' + shortId(seller) +
+    '\nPayment: ' + result.paymentValue + ' sompi to seller' +
+    '\nChange: ' + result.changeValue + ' sompi back to you' +
+    '\nFee: 0.009 TKAS\n\nTap "Confirm purchase" to broadcast.';
+  document.getElementById('storySubmitBtn').style.display = 'block';
+}
+
+/* ---- SUBMIT (shared, proven with minor element-ID change) ---- */
 async function submitPendingTx(){
-  const out=document.getElementById('panelOut');
-  if(!window._pendingSendTx){ out.textContent='! No pending tx. Build first.'; return; }
-  out.textContent='Submitting…';
+  const out=document.getElementById('storyOut');
+  if(!window._pendingSendTx){ out.textContent='No pending transaction. Build first.'; return; }
+  out.textContent='Submitting...';
   try {
     const msg = await wrpcCall("submitTransaction", window._pendingSendTx);
     const txid = (msg.params&&msg.params.transactionId)||(msg.transactionId)||'(see response)';
     window._pendingSendTx=null;
-    // --- auto-track: remove spent inputs, add new outputs ----------------
     if (window._pendingParcelUpdate && txid !== '(see response)') {
       const upd = window._pendingParcelUpdate;
       if (upd.remove && upd.remove.length)
@@ -1395,124 +1401,33 @@ async function submitPendingTx(){
           txid: txid,
           outputIndex: pd.outputIndex,
         });
-        extra = '\n\nGIVE THIS DESCRIPTOR TO THE RECIPIENT (they paste it into Receive):\n'+desc;
-      } catch(e){ extra='\n\n[descriptor emit failed: '+(e.message||e)+' — recipient can still receive once they have txid:0]'; }
+        extra = '\n\n' + (pd.forSale ? 'Share this listing code with buyers (they paste it into Buy)' : 'Give this code to the recipient (they paste it into Receive)') + ':\n'+desc;
+      } catch(e){ extra='\n\n(Code generation failed: '+(e.message||e)+')'; }
     }
     window._pendingDesc=null;
-    out.textContent='ACCEPTED. txid: '+txid+'\n\nThe parcel is in the mempool. Refresh balance to confirm.'+extra;
+    const sub = document.getElementById('storySubmitBtn');
+    if(sub) sub.style.display = 'none';
+    out.textContent='Done! Transaction accepted.\n\nID: '+txid+extra+'\n\nClose this panel and refresh to see your updated balance.';
   } catch(e){
-    out.textContent='! REJECTED: '+(e.message||e)+'\n\nThe tx was not accepted. Check the error above.';
-  }
-}
-let activePanel=null;
-/* ---- parcel picker: dropdown from tracked parcels, auto-fills fields ---- */
-window._pickerLists = [];
-function renderPickers(pickers){
-  if(!pickers||!pickers.length) return '';
-  window._pickerLists=[];
-  return pickers.map((pk,pi)=>{
-    const eligible=parcels.filter(pk.filter||(()=>true));
-    window._pickerLists.push({eligible, targets:pk.targets});
-    if(!eligible.length) return `<label>${pk.label}</label><div class="hint">No matching tracked parcels. Enter details manually below.</div>`;
-    const opts=eligible.map((p,i)=>{
-      const amt=groupThousands(BigInt(p.covenant_amount));
-      const tag=p.forSale?' [listed]':'';
-      const op=p.outpoint.split(':');
-      return `<option value="${i}">${amt} phoques${tag} (${op[0].slice(0,8)}...:${op[1]})</option>`;
-    }).join('');
-    return `<label>${pk.label}</label><select class="fld" onchange="pickParcel(${pi},this.value)"><option value="">-- select --</option>${opts}</select>`;
-  }).join('');
-}
-function pickParcel(pi,val){
-  if(val===''||!window._pickerLists[pi]) return;
-  const {eligible,targets}=window._pickerLists[pi];
-  const p=eligible[parseInt(val)]; if(!p) return;
-  const parts=p.outpoint.split(':');
-  if(targets.txid){const el=document.getElementById('f_'+targets.txid); if(el) el.value=parts[0];}
-  if(targets.idx){const el=document.getElementById('f_'+targets.idx); if(el) el.value=parts[1];}
-  if(targets.amt){const el=document.getElementById('f_'+targets.amt); if(el) el.value=p.covenant_amount;}
-}
-function openPanel(key){
-  const p=PANELS[key]; if(!p) return;
-  activePanel=key;
-  const fields=p.fields.map(f=>{
-    const input = f.textarea
-      ? `<textarea class="fld" id="f_${f.id}" placeholder="${f.ph||''}" rows="3"></textarea>`
-      : `<input class="fld" id="f_${f.id}" type="${f.type||'text'}" placeholder="${f.ph||''}" autocomplete="off" spellcheck="false">`;
-    return `<label>${f.label}</label>${input}`;
-  }).join('');
-  const addrBlock = (p.addrField && myKey) ? `
-    <label>Your wallet address (${window.KASPA.network})</label>
-    <div class="descbox" id="myAddr">${myKey.address}</div>
-    <div class="tools" style="justify-content:flex-start;margin:8px 0 4px">
-      <button class="link" onclick="copyAddr()">Copy address</button>
-    </div>` : (p.addrField ? `<div class="hint">Address unavailable — re-enter the wallet.</div>` : '');
-  const pubkeyBlock = (p.pubkeyField && myKey) ? `
-    <label>Your public key (share this with the sender)</label>
-    <div id="pubkeyQr" style="margin:10px 0;width:160px"></div>
-    <div class="descbox" id="myPubkey" style="font-size:12px;word-break:break-all">${xonly(myKey.pubHex)}</div>
-    <div class="tools" style="justify-content:flex-start;margin:8px 0 4px">
-      <button class="link" onclick="copyPubkey()">Copy pubkey</button>
-    </div>` : (p.pubkeyField ? `<div class="hint">Pubkey unavailable — re-enter the wallet.</div>` : '');
-  document.getElementById('panel').innerHTML = `
-    <div class="ph"><h3>${p.title}</h3><button class="x" onclick="closePanel()">&times;</button></div>
-    <div class="pl">${p.lede}</div>
-    ${addrBlock}
-    ${pubkeyBlock}
-    ${renderPickers(p.pickers)}
-    ${fields}
-    <button class="btn" style="margin-top:14px" onclick="runPanel()">${p.cta}</button>
-    <button class="btn" style="margin-top:8px;background:var(--ink);color:var(--paper);display:none" id="submitBtn" onclick="submitPendingTx()">Submit to node</button>
-    <pre class="out" id="panelOut"></pre>`;
-  document.getElementById('panelBack').classList.add('open');
-  // render QR codes if containers exist
-  renderPanelQR();
-}
-async function renderPanelQR(){
-  const pubkeyEl = document.getElementById('pubkeyQr');
-  if(pubkeyEl && myKey){
-    try {
-      const { qrSvg } = await import('./bitphoque_qr.js');
-      pubkeyEl.innerHTML = qrSvg(xonly(myKey.pubHex), 160);
-    } catch(e){ /* QR lib not available, no-op */ }
-  }
-}
-function closePanel(){ document.getElementById('panelBack').classList.remove('open'); activePanel=null; }
-async function runPanel(){
-  const p=PANELS[activePanel]; if(!p) return;
-  const v={}; p.fields.forEach(f=>{ v[f.id]=document.getElementById('f_'+f.id).value; });
-  const out=document.getElementById('panelOut');
-  out.classList.add('show');
-  try {
-    const res = await Promise.resolve(p.run(v));
-    out.textContent = res.err ? `! ${res.err}` : res.out;
-  } catch(e) {
-    out.textContent = '! Error: ' + (e.message||e);
+    out.textContent='Rejected: '+(e.message||e)+'\n\nThe transaction was not accepted. Check the error above.';
   }
 }
 
-function resetAll(){ seed=[]; verifyBlanks=[]; parcels=[]; saveParcels(); myKey=null; closePanel(); show('welcome'); }
-function copyAddr(){
-  if(!myKey) return;
-  navigator.clipboard?.writeText(myKey.address);
-  const el=document.querySelector('#panel .tools .link');
-  if(el){ const t=el.textContent; el.textContent='Copied'; setTimeout(()=>el.textContent=t,1400); }
-}
-function copyPubkey(){
-  if(!myKey) return;
-  navigator.clipboard?.writeText(xonly(myKey.pubHex));
-  const el=document.getElementById('myPubkey')?.parentElement?.querySelector('.tools .link');
+/* ---- utility ---- */
+function copyKey(text, el){
+  navigator.clipboard?.writeText(text);
   if(el){ const t=el.textContent; el.textContent='Copied'; setTimeout(()=>el.textContent=t,1400); }
 }
 
-/* ---- encrypted persistence UI (optional; passphrase on the done screen) ---- */
+function resetAll(){ seed=[]; verifyBlanks=[]; parcels=[]; saveParcels(); myKey=null; kasBalance=null; closeStory(); show('welcome'); }
+
+/* ---- encrypted persistence UI (proven) ---- */
 function ppStrength(){
   const v=document.getElementById('ppNew').value, h=document.getElementById('ppStrengthHint');
   if(!v){ h.textContent=''; return; }
-  // simple, honest heuristic — length is what matters most for a passphrase
   let label, cls;
-  if(v.length<8){ label='Too short — use at least 8 characters (a passphrase of several words is best).'; cls='bad'; }
-  else if(v.length<12){ label='OK. Longer is stronger — consider a few random words.'; cls=''; }
+  if(v.length<8){ label='Too short -- use at least 8 characters (a passphrase of several words is best).'; cls='bad'; }
+  else if(v.length<12){ label='OK. Longer is stronger -- consider a few random words.'; cls=''; }
   else { label='Good length.'; cls='ok'; }
   h.textContent=label; h.className='hint'; h.style.color = cls==='bad' ? 'var(--danger)' : (cls==='ok'?'var(--ok)':'var(--muted)');
 }
@@ -1520,13 +1435,12 @@ async function saveWallet(){
   const p1=document.getElementById('ppNew').value, p2=document.getElementById('ppNew2').value;
   const m=document.getElementById('saveMsg');
   if(p1.length<8){ m.className='msg bad'; m.textContent='Passphrase must be at least 8 characters.'; return; }
-  if(p1!==p2){ m.className='msg bad'; m.textContent='The two passphrases don\u2019t match.'; return; }
+  if(p1!==p2){ m.className='msg bad'; m.textContent='The two passphrases don\'t match.'; return; }
   if(!seed.length){ m.className='msg bad'; m.textContent='No wallet in memory to save.'; return; }
-  const btn=document.getElementById('saveBtn'); btn.disabled=true; const t=btn.textContent; btn.textContent='Encrypting\u2026';
+  const btn=document.getElementById('saveBtn'); btn.disabled=true; const t=btn.textContent; btn.textContent='Encrypting...';
   try{
     await window.WALLET_STORE.save(seed, p1);
     m.className='msg ok'; m.textContent='Saved and encrypted on this device.';
-    // collapse the save box, reveal Enter
     document.getElementById('saveBox').style.display='none';
     document.getElementById('enteredBox').style.display='block';
   }catch(e){
@@ -1536,7 +1450,7 @@ async function saveWallet(){
 async function unlockWallet(){
   const pp=document.getElementById('ppUnlock').value, m=document.getElementById('unlockMsg');
   if(!pp){ m.className='msg bad'; m.textContent='Enter your passphrase.'; return; }
-  m.className='msg'; m.textContent='Unlocking\u2026';
+  m.className='msg'; m.textContent='Unlocking...';
   try{
     seed = await window.WALLET_STORE.unlock(pp);
     if(!window.BIP39?.validateArray(seed).ok) throw new Error('Stored phrase failed validation.');
@@ -1552,17 +1466,17 @@ function forgetWallet(){
   window.WALLET_STORE?.forget(); seed=[]; show('welcome');
 }
 
-/* ---- button click sound (phoque3.wav — preloaded, event-delegated) ---- */
+/* ---- button click sound ---- */
 const phoqueSound = new Audio('phoque3.wav');
 phoqueSound.volume = 0.4;
 document.addEventListener('click', (e) => {
-  if (e.target.closest('.btn, .act, .choice, .mact')) {
+  if (e.target.closest('.btn, .choice')) {
     phoqueSound.currentTime = 0;
     phoqueSound.play().catch(() => {});
   }
 });
 
-/* ---- load-time routing: stored wallet -> unlock; else welcome ---- */
+/* ---- boot ---- */
 function boot(){
   if(window.WALLET_STORE && window.WALLET_STORE.exists() && window.WALLET_STORE.secureContext()){
     show('unlock'); setTimeout(()=>document.getElementById('ppUnlock')?.focus(),300);
@@ -1570,12 +1484,8 @@ function boot(){
     show('welcome');
   }
 }
-// BIP-39 module may load after this script — wait for the ready signal (or fire
-// now if it already loaded). Either way, route appropriately.
 if(window.BIP39?.ready) boot();
 else window.addEventListener('bip39-ready', boot, {once:true});
-// safety net: if modules never load (file:// open), still show welcome so the
-// page isn't blank — startCreate() will explain why create is unavailable.
 setTimeout(()=>{ if(!document.querySelector('.screen.active')) show('welcome'); }, 1500);
 </script>
 <script type="module">
@@ -1589,3 +1499,13 @@ if (el) el.innerHTML = qrSvg('kaspa:qrwdl4f0snyfe66zjd8np8mrls7qf8t8le0zcdrmqww9
 </div>
 </body>
 </html>
+
+
+
+
+
+
+
+
+
+
