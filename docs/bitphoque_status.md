@@ -32,17 +32,30 @@ truth and live on TN10.
 ### Wallet v2 — PUBLISHED (2026-06-28)
 
 Wallet v2 replaces the original `wallet.html`. Card-based UI, no protocol jargon.
-Sompi references removed from all user-facing labels (Buy panel price input now takes KAS,
-converts internally). Published to cPanel at `outlawpolitics.org/BitPhoque/wallet.html`.
+Published to cPanel at `outlawpolitics.org/BitPhoque/wallet.html`.
 
-Prior commits covering UI/UX work: `2c4f55c` (seal resize, welcome screen, QR, collapsibles,
-Receive panel pubkey+QR, audio), `39b8b88` (trademark on seal, powered-by-Kaspa banner).
+Commit `9406efb` covers the full session:
+- Sompi→KAS: Buy panel price input now takes KAS, converts internally. No user-facing sompi.
+- **Listing descriptor emit (Sell):** when a list tx confirms, wallet encodes a parcel descriptor
+  with `forSale: true` + price. Uses the existing 118B descriptor codec — no new format. Submit
+  handler label is context-aware ("Share this listing code with buyers" vs "Give this code to
+  the recipient").
+- **Listing code auto-fill (Buy):** new "Listing code" field at top of Buy panel. Paste a
+  descriptor → `decodeListing()` decodes via `bitphoque_descriptor.js`, auto-fills seller key,
+  txid, index, amount, price. Detects receive-vs-listing codes. Manual entry still works below.
+- **KAS-for-fees collapsible:** home screen shows "Need KAS for fees?" dropdown with wallet
+  address + faucet link. Shows even when node is unreachable (`kasBalance === null`).
+- **Get Started on lander:** `index.html` gets a 6-step collapsible: create wallet, get KAS,
+  receive, send, sell, buy. Same visual style as "Learn about this project."
+- Onboarding "done" screen now tells new users to look for "Need KAS for fees?" on home screen.
 
-**Deferred cleanup in `web\`:** `wallet_old.html` (pre-v2 backup) and `fix_price.ps1`
-(one-shot edit script) — delete after v2 is tested.
+Prior commits: `2c4f55c` (seal resize, welcome screen, QR, collapsibles, Receive panel
+pubkey+QR, audio), `39b8b88` (trademark on seal, powered-by-Kaspa banner).
+
+**Deferred cleanup in `web\`:** `wallet_old.html` (pre-v2 backup) — delete after tested.
 
 **Wallet v2 design spec** at `docs/bitphoque_wallet_v2_design.md`. Open design questions:
-auto-claim vs manual, card aggregation, multi-parcel send, descriptor relay.
+auto-claim vs manual, card aggregation, multi-parcel send.
 
 ### VPS + PUBLIC DEPLOY — DONE (2026-06-27)
 
@@ -63,8 +76,7 @@ Node RPC: Hetzner VPS. Completely separate.
 
 SSH: `ssh root@89.167.32.239`. Full operational details in `vps_handoff.md`.
 
-**IBD status:** was in progress at last check. Verify:
-`journalctl -u kaspad --no-pager -n 20` → look for `synced=true`.
+**IBD complete (2026-06-28).** Node synced — 300M UTXOs imported, wallet connects live.
 
 ---
 
@@ -194,6 +206,9 @@ splice → `blake2b` → P2SH). Different scripts, different addresses. Wallet d
   3-field `rusty-kaspa`. Green-path proven: CLI send → web Receive → parcel confirmed.
 - **Node addr sweep (2026-06-27):** all 14 `.rs` harnesses repointed from stale machine IPs
   to `127.0.0.1:16210`. Commit `e3f6628`.
+- **Wallet v2 + listing descriptors (2026-06-28):** wallet_v2.html published as wallet.html.
+  Listing descriptor emit on Sell, auto-fill on Buy, KAS collapsible, Get Started on lander.
+  VPS IBD completed. Commit `9406efb`.
 - **VPS upgrade (2026-06-27):** CX22 → CX33 after kaspad OOM during IBD.
 - **Claim harness EngineFlags fix (2026-06-27):** added `zk_hardening_enabled: true`.
 
@@ -280,10 +295,11 @@ Own git repo (branch `master`). Not yet pushed to GitHub.
 - [x] All panels wired — send, split, list, partial-list, claim, merge
 - [x] CLI feature-complete
 - [x] VPS deployed — Hetzner CX33, Caddy TLS, `wss://node.outlawpolitics.org`
+- [x] VPS IBD complete — node synced, 300M UTXOs
 - [x] Site published to cPanel
-- [x] Wallet v2 published (card-based UI, sompi→KAS fix)
-- [ ] VPS IBD completion — verify `synced=true`
+- [x] Wallet v2 published (card-based UI, listing descriptors, KAS collapsible, Get Started)
 - [ ] Multi-entity testing (Entity1–4 cross-device send/claim/list)
+- [ ] Listing bulletin board — static JSON on cPanel, wallet POSTs on Sell, GETs on Buy
 - [ ] Parcel picker UX (dropdown from tracked parcels)
 - [ ] `max(price, CLAIM_PAYMENT)` fix in `buildClaimTx`
 - [ ] SMS Twilio node-monitor
@@ -296,4 +312,4 @@ Own git repo (branch `master`). Not yet pushed to GitHub.
 - [ ] Delete `C:\_RETIRED_kaspa-tn12` (file-handle release pending)
 - [ ] Prune dead `import { decodeDescriptor }` at wallet.html line ~75
 - [ ] Update shared panel banner ("Prototype — node-free…") — now false
-- [ ] Clean up `wallet_old.html` + `fix_price.ps1` from `web\`
+- [ ] Clean up `wallet_old.html` from `web\`
