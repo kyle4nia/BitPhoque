@@ -8,7 +8,7 @@ _The on-chain tx ledger (every confirmed txid) and session-by-session history li
 
 ---
 
-## WHERE WE ARE (2026-06-27)
+## WHERE WE ARE (2026-06-28)
 
 The web wallet is a **spending wallet**. Every layer of the write seam is proven against ground
 truth and live on TN10:
@@ -36,7 +36,9 @@ truth and live on TN10:
 
 ### VPS + PUBLIC DEPLOY — DONE (2026-06-27)
 
-**Hetzner VPS (CX22, Helsinki, Ubuntu 24.04)** provisioned as the public-facing TN10 node.
+**Hetzner VPS (CX33, Helsinki, Ubuntu 24.04)** provisioned as the public-facing TN10 node.
+Upgraded from CX22 (4GB/2vCPU/40GB) after kaspad OOM-killed repeatedly during IBD (65 restart
+cycles, never synced). CX33: 8GB RAM / 4 vCPU / 80GB disk. 4GB swap as safety net.
 
 - **kaspad v2.0.1** installed, running as systemd service (`/etc/systemd/system/kaspad.service`).
   Flags: `--testnet --netsuffix=10 --utxoindex --rpclisten-json=0.0.0.0:18210`.
@@ -64,6 +66,25 @@ Wallet static files served by cPanel (outlawpolitics.org/BitPhoque/).
 Node RPC served by Hetzner VPS. Completely separate.
 
 Full VPS operational details in `vps_handoff.md`.
+
+### UI/UX PASS (2026-06-28)
+
+Two commits cover the visual/UX work:
+
+**Commit `2c4f55c`:** seal resized 46->68px, welcome screen centered, "Buy me a coffee"
+footer with QR on both pages, "Learn about this project" collapsible on both pages (three
+pillars + Oracle Protocol blurb), Receive panel shows x-only pubkey + QR (not kaspatest
+address), lander tagline updated, lander logo 168->210px, "Open wallet" button plays
+phoque2.wav before navigating. New files: `bitphoque_qr.js` (QR SVG wrapper),
+`vendor/qrcode-generator.mjs` (vendored MIT), `phoque2.wav`.
+
+**Commit `39b8b88`:** trademark added to seal (`bitphoque-nowords.jpeg`), "powered by Kaspa"
+banner on all pages, `kaspa-logo.png` added.
+
+**Wallet v2 design spec** saved at `docs/bitphoque_wallet_v2_design.md`. Core shift: replace
+six task panels with state-driven parcel cards; actions contextual on cards; no protocol jargon
+in UI. Four user stories: Send, Receive, Sell, Buy. Open design questions: auto-claim vs manual,
+card aggregation, multi-parcel send, descriptor relay.
 
 ### Claim — PANEL WIRED + PROVEN LIVE (2026-06-27)
 
@@ -375,13 +396,18 @@ C:\bitphoque\
     bitphoque_sigscript.js             <- ABI sigscript builder (proven vs CLI hex dump)
     bitphoque_tx.js                    <- tx builder: send/split/list + buildClaimTx + selftests
     bitphoque_descriptor.js            <- parcel descriptor codec (decode + encode)
+    bitphoque_qr.js                    <- QR SVG wrapper, exports qrSvg(text, size)
+    kaspa-logo.png                     <- Kaspa logo for powered-by banner
+    phoque2.wav                        <- audio for lander "Open wallet" button
     vendor/                            <- @scure/bip39, @scure/bip32, @noble/curves,
-                                          @noble/hashes — all v2.2.0, vendored locally
+                                          @noble/hashes (all v2.2.0), qrcode-generator.mjs
+                                          (MIT) — all vendored locally
   docs\
     bitphoque_status.md                <- this file
     bitphoque_history.md               <- on-chain tx ledger + session history
     bitphoque_audit_2026-06-25.md      <- security audit
     bitphoque_swap_covenant_design.md  <- sale/swap design + auction future-build
+    bitphoque_wallet_v2_design.md     <- wallet v2 design spec (card-based UI)
     bitphoque_mainnet_checklist.md     <- pre-mainnet gate
     vps_handoff.md                     <- VPS setup + operational reference
     operating_baseline.md              <- shared portable baseline
@@ -397,7 +423,7 @@ Own git repo (branch `master`). Not yet pushed to GitHub.
   Launch: `kaspad.exe v2.0.1 --testnet --netsuffix=10 --appdir=C:\kaspa-testnet10\datadir
   --utxoindex --disable-upnp --rpclisten=0.0.0.0:16210 --rpclisten-borsh=0.0.0.0:17210
   --rpclisten-json=0.0.0.0:18210`. Mainnet stays on .206, untouched.
-- **VPS node:** Hetzner CX22 (Helsinki), `89.167.32.239`. kaspad 2.0.1, systemd service.
+- **VPS node:** Hetzner CX33 (Helsinki), `89.167.32.239`. kaspad 2.0.1, systemd service.
   Public endpoint: `wss://node.outlawpolitics.org` (Caddy TLS → `127.0.0.1:18210`).
   SSH: `ssh root@89.167.32.239`. Operational details in `vps_handoff.md`.
 - **Build clone:** `D:\Tocatta_Projects\kaspa-tn12\silverscript` (the unified 3-field tree).
@@ -466,7 +492,7 @@ buyer3 `267496ce01f2a35653491c61b56b23e6b7dbe777a02b146286ac3635ff36ab61`.
 - [x] Claim on-chain — three web-wallet txs, full lifecycle (claim→list→claim)
 - [x] Merge panel — wired + proven live (split 206413…, merge 128bb090…), commit `b04c041`
 - [x] Tracked-parcel persistence — localStorage, saveParcels() at all mutation sites (commit `b04c041`)
-- [x] VPS node provisioned — Hetzner CX22, kaspad + Caddy, `wss://node.outlawpolitics.org`
+- [x] VPS node provisioned — Hetzner CX33 (upgraded from CX22), kaspad + Caddy, `wss://node.outlawpolitics.org`
 - [x] Site published to cPanel — `outlawpolitics.org/BitPhoque/`
 - [ ] VPS IBD completion — wait for `synced=true`, then live site is fully operational
 - [ ] Multi-entity testing (Entity1–4 cross-device send/claim/list)
@@ -482,3 +508,4 @@ buyer3 `267496ce01f2a35653491c61b56b23e6b7dbe777a02b146286ac3635ff36ab61`.
 - [ ] Delete `C:\_RETIRED_kaspa-tn12` (file-handle release pending)
 - [ ] Prune dead `import { decodeDescriptor }` at wallet.html line ~75
 - [ ] Update shared panel banner ("Prototype — node-free…") — now false for wired panels
+- [ ] Wallet v2 UI rebuild (from `docs/bitphoque_wallet_v2_design.md`)
