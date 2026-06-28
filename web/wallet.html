@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <!--
   BitPhoque Wallet v2 -- card-based, state-driven UI.
   Same proven crypto layer: BIP-39 (@scure, vendored), secp256k1 (@noble),
@@ -780,13 +780,13 @@ function enterWallet(){
    NODE TRANSPORT + REFRESH (proven)
    ================================================================== */
 
-const WRPC_URL = "wss://node.outlawpolitics.org";
+const WRPC_URL = location.hostname === "127.0.0.1" || location.hostname === "localhost" ? "ws://127.0.0.1:18210" : location.hostname === "192.168.0.118" ? "ws://192.168.0.118:18210" : "wss://node.outlawpolitics.org";
 
 function wrpcCall(method, params, timeoutMs){
   return new Promise((resolve, reject)=>{
     let ws, done=false;
     const finish=(fn,arg)=>{ if(done) return; done=true; try{ws&&ws.close();}catch(e){} fn(arg); };
-    const timer=setTimeout(()=>finish(reject,new Error("wRPC timeout ("+method+")")), timeoutMs||8000);
+    const timer=setTimeout(()=>finish(reject,new Error("wRPC timeout ("+method+")")), timeoutMs||30000);
     try { ws = new WebSocket(WRPC_URL); }
     catch(e){ clearTimeout(timer); return reject(e); }
     ws.onopen   = ()=>ws.send(JSON.stringify({ id:1, method, params: params||{} }));
@@ -1271,7 +1271,7 @@ async function decodeListing(){
     document.getElementById('b_idx').value = d.outputIndex;
     document.getElementById('b_amt').value = d.amount.toString();
     document.getElementById('b_price').value = (Number(d.price)/1e8).toFixed(8).replace(/\.?0+$/,'');
-    hint.textContent = d.amount + ' phoques for ' + (Number(d.price)/1e8).toFixed(8).replace(/\.?0+$/,'') + ' KAS â€” fields filled.';
+    hint.textContent = d.amount + ' phoques for ' + (Number(d.price)/1e8).toFixed(8).replace(/\.?0+$/,'') + ' KAS — fields filled.';
     hint.style.color = 'green';
   } catch(e){
     hint.textContent = 'Could not decode: '+(e.message||e);

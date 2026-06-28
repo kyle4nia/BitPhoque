@@ -1,14 +1,14 @@
 /* ============================================================================
-   BitPhoque — transaction builder (send / split / list)
+   BitPhoque  --  transaction builder (send / split / list)
    ----------------------------------------------------------------------------
    Wires the proven pieces into a complete covenant transaction pipeline:
-     bitphoque_sighash.js  → sighash computation (proven vs Rust test vectors)
-     bitphoque_sigscript.js → ABI sigscript (proven vs CLI dry-run bytes)
-     bitphoque_p2sh.js     → P2SH derivation (proven vs on-chain parcels)
-     @noble/curves schnorr  → signing (proven via key derivation + KasWare)
+     bitphoque_sighash.js   ->  sighash computation (proven vs Rust test vectors)
+     bitphoque_sigscript.js  ->  ABI sigscript (proven vs CLI dry-run bytes)
+     bitphoque_p2sh.js      ->  P2SH derivation (proven vs on-chain parcels)
+     @noble/curves schnorr   ->  signing (proven via key derivation + KasWare)
 
    SCOPE: owner-signed, leader ABI transactions (send, split, list).
-   Claim (2-input, payment-authorized) is a separate path — not here yet.
+   Claim (2-input, payment-authorized) is a separate path  --  not here yet.
    ============================================================================ */
 import { calcSchnorrSignatureHash, SIG_HASH_ALL, hexToBytes, bytesToHex } from './bitphoque_sighash.js';
 import { buildSigScript } from './bitphoque_sigscript.js';
@@ -39,7 +39,7 @@ function spkJsonHex(version, spkBytes) {
 //   inputIndex:    number
 //   inputValue:    BigInt (sompi)
 //   inputOwner:    string (64-char hex, x-only)
-//   inputAmount:   BigInt (phoques — covenant amount)
+//   inputAmount:   BigInt (phoques  --  covenant amount)
 //   inputForSale:  bool
 //   inputPrice:    BigInt (sompi)
 //   newStates:     [{ owner(hex), amount(BigInt), forSale(bool), price(BigInt) }]
@@ -219,20 +219,20 @@ function buildListTx(p) {
 
 // --- self-test: cross-check sighash against CLI dry-run ----------------------
 //
-// The CLI split dry-run (buyer2, 5000→1000+4000) produced:
+// The CLI split dry-run (buyer2, 5000 -> 1000+4000) produced:
 //   sighash: aef9823c78ef4bae0c91fa4e09489f93d9ebb4f61fbf103258bf9147d70df13c
 //
 // We rebuild the exact same tx and verify the sighash matches. This proves:
-//   - P2SH derivation for input + outputs → correct scriptPubKeys
-//   - sighash computation with covenant bindings → byte-identical to Rust
-//   - proportional value split → same output values
+//   - P2SH derivation for input + outputs  ->  correct scriptPubKeys
+//   - sighash computation with covenant bindings  ->  byte-identical to Rust
+//   - proportional value split  ->  same output values
 //
 // NOTE: we use a DUMMY private key for the self-test. The sighash is computed
 // from the UNSIGNED tx (empty sigscript), so the key doesn't affect it.
 //
 function selfTest() {
   const buyer2 = '5d338aa54bcf4d955941ff8bcdd069b2f3aa1deb40234dc73ce5f4f581adf161';
-  // Dummy key — sighash is computed before signing, so any key works for the cross-check
+  // Dummy key  --  sighash is computed before signing, so any key works for the cross-check
   const dummyPriv = '0000000000000000000000000000000000000000000000000000000000000001';
 
   let result;
@@ -267,12 +267,12 @@ function selfTest() {
 }
 
 /* ============================================================================
-   CLAIM — 2-input, payment-authorized (ported from bitphoque_sale_claim_v3.rs)
+   CLAIM  --  2-input, payment-authorized (ported from bitphoque_sale_claim_v3.rs)
    ----------------------------------------------------------------------------
    A buyer claims a for-sale covenant parcel by PAYING the seller, with NO
    seller signature. This is the unsigned-spend path.
 
-   Tx shape (output ORDER is contract-enforced — witness byte points at output 1):
+   Tx shape (output ORDER is contract-enforced  --  witness byte points at output 1):
      input  0: for-sale covenant UTXO     UNSIGNED   (payment-authorized)
      input  1: buyer plain P2PK funding   buyer-SIGNED at index 1
      output 0: token -> BUYER             covenant-bound, authorizing_input 0,
@@ -281,7 +281,7 @@ function selfTest() {
      output 2: change  -> BUYER  P2PK
 
    PARTY-AGNOSTIC: the seller is identified by PUBKEY (a param), never a key.
-   The claim never needs the seller's private key — that is the whole point.
+   The claim never needs the seller's private key  --  that is the whole point.
 
    KEY DIFFERENCES from buildOwnerSignedTx (why this is a separate fn, not an
    edit to a proven path):
@@ -294,15 +294,15 @@ function selfTest() {
 
 // claim constants (status doc consensus rules #6, #9)
 const CLAIM_FEE = 900_000n;          // v3 2-input claim floor 857k -> 900k headroom
-const CLAIM_PAYMENT = 100_000_000n;  // 1 TKAS — KIP-9-safe; tiny payment spikes storage mass
+const CLAIM_PAYMENT = 100_000_000n;  // 1 TKAS  --  KIP-9-safe; tiny payment spikes storage mass
 const PAYMENT_OUTPUT_INDEX = 1;      // witness byte -> output 1 is the seller payment
 
 // merge constants (status doc consensus rule #10)
-const MERGE_FEE = 1_300_000n;         // v3 merge 2→1 floor ~1,244,500 → 1.3M margin
-const MERGE_COMPUTE_BUDGET = 30;      // 300k script units (two covenant reveals) → ceil(300000/10000)
+const MERGE_FEE = 1_300_000n;         // v3 merge 2 -> 1 floor ~1,244,500  ->  1.3M margin
+const MERGE_COMPUTE_BUDGET = 30;      // 300k script units (two covenant reveals)  ->  ceil(300000/10000)
 
 // Plain P2PK scriptPubKey: OP_DATA32 <xonly-pubkey> OP_CHECKSIG = 20<pubkey>ac
-// (Kaspa schnorr P2PK. NOT a covenant script — claim's funding input + payment
+// (Kaspa schnorr P2PK. NOT a covenant script  --  claim's funding input + payment
 //  + change outputs are all plain P2PK, which the covenant builders never emit.)
 function makeP2pk(pubkeyHex) {
   return hexToBytes('20' + pubkeyHex + 'ac');
@@ -310,17 +310,17 @@ function makeP2pk(pubkeyHex) {
 
 // buildClaimTx(params)
 // params = {
-//   covTxId:        string  — for-sale covenant UTXO txid (64-hex)
-//   covIndex:       number  — its output index
-//   covValue:       BigInt  — its sompi value (carried whole to the token output)
-//   sellerPubkey:   string  — 64-hex x-only; identifies the for-sale parcel owner
-//   buyerPubkey:    string  — 64-hex x-only; the claimer (new token owner)
-//   amount:         BigInt  — phoques in the parcel (unchanged by claim)
-//   price:          BigInt  — the listing price (sompi); payment must be >= this
-//   fundTxId:       string  — buyer's plain P2PK funding UTXO txid (64-hex)
-//   fundIndex:      number  — its output index
-//   fundValue:      BigInt  — its sompi value (must exceed payment + fee)
-//   buyerPrivkeyHex:string  — buyer's 32-byte private key (64-hex); signs input 1
+//   covTxId:        string   --  for-sale covenant UTXO txid (64-hex)
+//   covIndex:       number   --  its output index
+//   covValue:       BigInt   --  its sompi value (carried whole to the token output)
+//   sellerPubkey:   string   --  64-hex x-only; identifies the for-sale parcel owner
+//   buyerPubkey:    string   --  64-hex x-only; the claimer (new token owner)
+//   amount:         BigInt   --  phoques in the parcel (unchanged by claim)
+//   price:          BigInt   --  the listing price (sompi); payment must be >= this
+//   fundTxId:       string   --  buyer's plain P2PK funding UTXO txid (64-hex)
+//   fundIndex:      number   --  its output index
+//   fundValue:      BigInt   --  its sompi value (must exceed payment + fee)
+//   buyerPrivkeyHex:string   --  buyer's 32-byte private key (64-hex); signs input 1
 // }
 // Returns { txJson, sigHashHex, sigHex, sigscriptLen, paymentValue, changeValue }
 function buildClaimTx(params) {
@@ -330,9 +330,7 @@ function buildClaimTx(params) {
     fundTxId, fundIndex, fundValue, buyerPrivkeyHex,
   } = params;
 
-  const payment = CLAIM_PAYMENT;
-  if (payment < BigInt(price))
-    throw new Error('payment ' + payment + ' < price ' + price + ' (contract requires payment >= price)');
+  const payment = BigInt(price) > CLAIM_PAYMENT ? BigInt(price) : CLAIM_PAYMENT;
   if (BigInt(fundValue) <= payment + CLAIM_FEE)
     throw new Error('funding ' + fundValue + ' <= payment+fee ' + (payment + CLAIM_FEE));
 
@@ -386,7 +384,7 @@ function buildClaimTx(params) {
     payload: new Uint8Array(0),
   };
 
-  // UTXO entries, one per input, SAME ORDER. (No covenant field needed here —
+  // UTXO entries, one per input, SAME ORDER. (No covenant field needed here  -- 
   // the sighash hashes each input's scriptPubKey, not its covenant binding;
   // the covenant_id lives on the token OUTPUT, already in `outputs` above.)
   const utxoEntries = [
@@ -413,7 +411,7 @@ function buildClaimTx(params) {
     forSale: false,
     price: 0n,
   };
-  const dummySig = new Uint8Array(65); // all zero — for-sale branch is payment-authorized
+  const dummySig = new Uint8Array(65); // all zero  --  for-sale branch is payment-authorized
   const witnesses = new Uint8Array([PAYMENT_OUTPUT_INDEX]);
   const covRedeem = deriveRedeemScript(sellerPubkey, BigInt(amount), true, BigInt(price));
   const in0Sigscript = buildSigScript([newState], [dummySig], witnesses, covRedeem, true);
@@ -486,7 +484,7 @@ function buildPlainSig(sig65) {
 // Rebuild the IDENTICAL tx in JS and assert the input-1 sighash matches. This
 // proves the 2-input claim path: P2SH (input/token) + P2PK (fund/pay/change)
 // scriptPubKeys, output ORDER, covenant binding on output 0, and the sighash
-// computed over input 1 of a 2-input tx — all byte-identical to the Rust engine.
+// computed over input 1 of a 2-input tx  --  all byte-identical to the Rust engine.
 // (Dummy key: the sighash is over the UNSIGNED tx, so signing key is irrelevant.)
 //
 function claimSelfTest() {
@@ -525,7 +523,7 @@ function claimSelfTest() {
 }
 
 /* ============================================================================
-   MERGE — 2-input leader/delegate, owner-signed (ported from cmd_merge in CLI)
+   MERGE  --  2-input leader/delegate, owner-signed (ported from cmd_merge in CLI)
    ----------------------------------------------------------------------------
    Merges two covenant parcels (same owner, both not-for-sale) into one.
    This is the first MULTI-COVENANT-INPUT tx in the wallet.
@@ -536,14 +534,14 @@ function claimSelfTest() {
      output 0: merged covenant UTXO       amount = A + B, same owner, forSale=false
 
    KEY DIFFERENCES from single-input txs:
-     - 2 covenant inputs, each with its own redeem script (different amounts →
-       different P2SH → different redeem scripts).
+     - 2 covenant inputs, each with its own redeem script (different amounts  -> 
+       different P2SH  ->  different redeem scripts).
      - Leader ABI carries TWO sigs (one per covenant input), both computed
        against sighash index 0. Same key + same sighash = identical bytes,
        but the ABI expects one entry per covenant input.
-     - Witnesses = [0x00, 0x01] — dormant filler on the owner-signed branch;
+     - Witnesses = [0x00, 0x01]  --  dormant filler on the owner-signed branch;
        the contract doesn't check them, but the ABI expects the blob.
-     - Delegate sigscript is JUST selector (OP_1) + redeem push — no ABI args.
+     - Delegate sigscript is JUST selector (OP_1) + redeem push  --  no ABI args.
      - computeBudget = 30 (300k script units for two covenant reveals),
        not 24 like single-covenant-input txs.
      - No plain P2PK inputs or outputs. Fee comes from the covenant UTXOs' KAS.
@@ -551,16 +549,16 @@ function claimSelfTest() {
 
 // buildMergeTx(params)
 // params = {
-//   in0TxId:      string  — parcel 0 txid (64-hex)
-//   in0Index:     number  — parcel 0 output index
-//   in0Value:     BigInt  — parcel 0 sompi value
-//   in0Amount:    BigInt  — parcel 0 phoques
-//   in1TxId:      string  — parcel 1 txid (64-hex)
-//   in1Index:     number  — parcel 1 output index
-//   in1Value:     BigInt  — parcel 1 sompi value
-//   in1Amount:    BigInt  — parcel 1 phoques
-//   ownerPubkey:  string  — 64-hex x-only (same owner, both parcels)
-//   privkeyHex:   string  — 64-hex private key (signs both inputs)
+//   in0TxId:      string   --  parcel 0 txid (64-hex)
+//   in0Index:     number   --  parcel 0 output index
+//   in0Value:     BigInt   --  parcel 0 sompi value
+//   in0Amount:    BigInt   --  parcel 0 phoques
+//   in1TxId:      string   --  parcel 1 txid (64-hex)
+//   in1Index:     number   --  parcel 1 output index
+//   in1Value:     BigInt   --  parcel 1 sompi value
+//   in1Amount:    BigInt   --  parcel 1 phoques
+//   ownerPubkey:  string   --  64-hex x-only (same owner, both parcels)
+//   privkeyHex:   string   --  64-hex private key (signs both inputs)
 // }
 // Returns { txJson, sigHashHex, sigHex, in0SigscriptLen, in1SigscriptLen, outputValue }
 function mergeSelfTest() {
@@ -611,7 +609,7 @@ function buildMergeTx(params) {
   if (outValue < MIN_OUT_VALUE)
     throw new Error('output value ' + outValue + ' below MIN_OUT_VALUE');
 
-  // --- input scriptPubKeys (for sighash) — both not-for-sale, price 0 --------
+  // --- input scriptPubKeys (for sighash)  --  both not-for-sale, price 0 --------
   const in0SpkHash = deriveScriptHashHex(ownerPubkey, BigInt(in0Amount), false, 0n);
   const in0Spk = makeSpk(in0SpkHash);
   const in1SpkHash = deriveScriptHashHex(ownerPubkey, BigInt(in1Amount), false, 0n);
@@ -648,7 +646,7 @@ function buildMergeTx(params) {
     { amount: BigInt(in1Value), scriptPubKeyVersion: 0, scriptPubKey: in1Spk },
   ];
 
-  // --- sighash at INDEX 0 (leader) — BOTH sigs use this ----------------------
+  // --- sighash at INDEX 0 (leader)  --  BOTH sigs use this ----------------------
   const sigHash = calcSchnorrSignatureHash(tx, 0, utxoEntries, SIG_HASH_ALL);
   const sig = schnorr.sign(sigHash, hexToBytes(privkeyHex));
   const sigWithType = new Uint8Array(65);
