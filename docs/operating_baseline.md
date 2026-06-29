@@ -83,6 +83,19 @@ self-contained: this baseline + that project's status doc, no cross-tree pointer
 
 ---
 
+## Script-based edits for large files
+
+When a file is too large to re-deliver whole (token cost, download time), Claude delivers a
+small `.ps1` (preferred) or `.py` script that performs the surgical edit — find-and-replace,
+insert, or delete — against the CANONICAL copy. The user runs it, verifies the result, then
+deletes the script. This avoids the three bad alternatives: re-delivering the entire file,
+hand-editing (slow, error-prone), and multi-line terminal pastes (VS Code reversal problem).
+One-shot edit scripts are disposable — add a cleanup line to the status doc's open items
+immediately so the script doesn't linger. (This pattern was adopted after a large wallet.html
+session proved it faster and more reliable than any alternative.)
+
+---
+
 ## Standing technical discipline
 
 _(Substitute the current project's root path for `<PROJECT>` below. Each project is its own
@@ -122,6 +135,16 @@ live in the project's status doc, not here.)_
   the chat. Chats compact and lose detail; the doc and the files in the project tree do not.
   Keep the doc current after every meaningful step. A fresh chat resumes from the doc, not
   from conversation history.
+- **Three-doc structure.** Each project carries three docs in `<PROJECT>\docs\`:
+  `operating_baseline.md` (portable, shared — HOW we work), a status doc (current state,
+  design, open items — WHERE the project is), and a history doc (chronological session
+  ledger, on-chain tx log — HOW we got here). Status stays tight by pushing session narrative
+  to history after each session. A fresh chat reads baseline + status; history is a lookup
+  reference, not a load-every-time document.
+- **Deferred-cleanup tracking.** One-shot scripts, backup files (`*_old.*`), stale artifacts,
+  and anything on disk that is not permanent gets a named line in the status doc's open items
+  IMMEDIATELY — not "I'll remember to clean that up later." If it exists on disk and isn't
+  part of the permanent tree, it's either tracked for cleanup or deleted now.
 - **Secret sweep before any push.** Before a repo goes public, grep ALL history for
   private-key material: `git grep -i -E "privkey|private.key|secret" $(git rev-list --all)`.
   Must come back clean (matches in comments/docs ABOUT keys are fine; an actual 64-char hex

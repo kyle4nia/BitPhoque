@@ -32,7 +32,7 @@ truth and live on TN10.
 ### Wallet v2 — PUBLISHED (2026-06-28)
 
 Wallet v2 replaces the original `wallet.html`. Card-based UI, no protocol jargon.
-Published to cPanel at `outlawpolitics.org/BitPhoque/wallet.html`.
+Published at `https://bitphoque.org/wallet.html` (Hetzner VPS, Caddy static serving).
 
 Commit `9406efb` covers the full session:
 - Sompi→KAS: Buy panel price input now takes KAS, converts internally. No user-facing sompi.
@@ -57,7 +57,43 @@ pubkey+QR, audio), `39b8b88` (trademark on seal, powered-by-Kaspa banner).
 **Wallet v2 design spec** at `docs/bitphoque_wallet_v2_design.md`. Open design questions:
 auto-claim vs manual, card aggregation, multi-parcel send.
 
-### VPS + PUBLIC DEPLOY — DONE (2026-06-27)
+### Cross-device testing + claim/send fixes (2026-06-28 evening)
+
+Commit `95edb06`: max(price, CLAIM_PAYMENT) fix in `buildClaimTx`, mojibake cleanup, LAN node
+detect (`192.168.0.118` → Big Daddy). Commit `96fe14b`: auto-merge wiring in Send panel
+(chain 2-at-a-time when no single parcel covers the send amount).
+
+Proven live this session: Sell→Buy via listing code cross-device (Entity 1 → Entity 3, 5 KAS
+price), Send + implicit split (Entity 1 → Entity 3, 351 from 850 parcel), LAN node routing
+(phone at `192.168.0.118` → Big Daddy `ws://192.168.0.118:18210`).
+
+### Bug triage + fixes (2026-06-28 late evening, sig #001)
+
+Consolidated findings from two Claude Pro accounts (desktop + browser) that had drifted.
+Loaded session findings, console evidence, and VPS handoff notes. Diagnosed four bugs:
+
+1. **Send-to-self output 0 vanishes — ROOT CAUSE FOUND, FIX APPLIED.** Traced through
+   `buildSendTx` → `buildOwnerSignedTx` → `deriveScriptHashHex` → `deriveRedeemScript`. All
+   derivation code is correct. The asymmetry: output 0 uses `recipientPubkey` (from the "To"
+   input field) while output 1 uses `inputOwner` (from the wallet key). For send-to-self, these
+   should match but came from different sources. Console diagnostic confirmed derivation is
+   deterministic — the key pasted into "To" didn't match `myKey.pubHex`. Fix: self-send
+   normalization in `doSend()` — if `xonly(to) === xonly(myKey.pubHex)`, force `to` to
+   `xonly(myKey.pubHex)`. **Needs live test.**
+2. **Restore flow missing passphrase save — NOT A BUG.** `prepDone()` hides the save box when
+   `window.isSecureContext === false`. Entity 3 (phone) accessed via HTTP over LAN IP
+   (`192.168.0.118`), which is not a secure context, so `crypto.subtle` is unavailable. Resolves
+   when phone uses `https://bitphoque.org` (HTTPS = secure context).
+3. **Refresh button appears broken — NOT A BUG.** `refreshAll()` is correctly wired
+   (`onclick="refreshAll()"` in plain `<script>` block, global scope). No `console.log` on the
+   success path — "no console output" is expected when it works. Likely appeared broken due to
+   phantom parcels from bug #1.
+4. **Listing descriptor below the fold — FIXED.** Added `out.scrollIntoView({behavior:'smooth',
+   block:'end'})` after tx confirmation text in `submitPendingTx()`.
+
+Also established: session signature system for cross-account status doc synchronization.
+
+### VPS + PUBLIC DEPLOY — DONE (2026-06-28)
 
 **Hetzner CX33** (8GB RAM / 4 vCPU / 80GB, Helsinki, Ubuntu 24.04). IP: `89.167.32.239`.
 
@@ -71,12 +107,25 @@ auto-claim vs manual, card aggregation, multi-parcel send.
   kaspad v2.0.1 (VPS, TN10, --utxoindex, systemd service)
 ```
 
-Wallet static files: cPanel (`outlawpolitics.org/BitPhoque/`).
-Node RPC: Hetzner VPS. Completely separate.
+**Static hosting** also on VPS via Caddy: `bitphoque.org` + `www.bitphoque.org` →
+`/var/www/bitphoque`. No separate web host needed.
+
+**Deploy workflow:** edit locally → move to `C:\bitphoque\web\` →
+`cd /d C:\bitphoque\web && scp <file> root@89.167.32.239:/var/www/bitphoque/`
+
+**SSH key auth configured** — no password prompt for ssh/scp to VPS.
 
 SSH: `ssh root@89.167.32.239`. Full operational details in `vps_handoff.md`.
 
-**IBD complete (2026-06-28).** Node synced — 300M UTXOs imported, wallet connects live.
+**Node sync status (2026-06-28):** Bandaid applied: +8G swapfile (12G total swap),
+`TimeoutStopSec=300`, `LimitNOFILE=65536`. Node alive and syncing at last check: ~200
+blocks/10s with UTXO validation, 3.6G RSS, 1.5G swap used, headers complete, blocks catching
+up. No OOM, no stalls. CX42 (16GB, 16.40 EUR/mo) is the upgrade if bandaid fails.
+
+**wallet.html auto-detect:** `location.hostname === "127.0.0.1"` → Big Daddy
+(`ws://127.0.0.1:18210`); `192.168.0.118` → LAN Big Daddy (`ws://192.168.0.118:18210`);
+else → VPS (`wss://node.outlawpolitics.org`). wRPC timeout bumped to 30s (300M UTXO set
+needs headroom).
 
 ---
 
@@ -85,7 +134,7 @@ SSH: `ssh root@89.167.32.239`. Full operational details in `vps_handoff.md`.
 BitPhoque is a covenant-based, native-Layer-1 fungible token on Kaspa TN10 — a practice run for
 mainnet — built on silverscript covenants (`binding=cov` N-to-M plumbing), deliberately NOT the
 indexer-based KRC-20 path. Phonetic play on "out of f**ks to give," seal mascot, fixed supply, no
-trusted coordinator. Site: https://www.outlawpolitics.org/BitPhoque/
+trusted coordinator. Site: https://bitphoque.org/
 
 ---
 
@@ -209,8 +258,19 @@ splice → `blake2b` → P2SH). Different scripts, different addresses. Wallet d
 - **Wallet v2 + listing descriptors (2026-06-28):** wallet_v2.html published as wallet.html.
   Listing descriptor emit on Sell, auto-fill on Buy, KAS collapsible, Get Started on lander.
   VPS IBD completed. Commit `9406efb`.
+- **bitphoque.org hosting (2026-06-28):** DNS (Namecheap A records) → Hetzner. Caddy site
+  block for static serving. SSH key auth. Deploy via scp. wallet.html auto-detect node URL +
+  30s timeout. Operating baseline updated (3 additions). VPS node restarted after post-import
+  stall.
 - **VPS upgrade (2026-06-27):** CX22 → CX33 after kaspad OOM during IBD.
 - **Claim harness EngineFlags fix (2026-06-27):** added `zk_hardening_enabled: true`.
+- **Cross-device testing (2026-06-28 evening):** Sell→Buy proven cross-device. max(price,floor)
+  fix. Auto-merge in Send. LAN node detect. Send-to-self bug found (output 0 vanishes).
+  Commits `95edb06`, `96fe14b`.
+- **Bug triage + fixes (2026-06-28 late, sig #001):** Consolidated two drifted accounts.
+  Send-to-self root cause: key source mismatch, not derivation bug. Self-send normalization
+  fix + listing descriptor scroll fix applied. Restore passphrase and refresh button
+  investigated — both not bugs. Session signature system established.
 
 ---
 
@@ -237,8 +297,8 @@ C:\bitphoque\
     (+ reject tests, sale harnesses, keygen, merge, split-transfer)
   web\
     wallet.html                        <- the wallet (v2, card-based UI)
-    wallet_old.html                    <- pre-v2 backup (delete after testing)
-    fix_price.ps1                      <- one-shot edit script (delete after testing)
+    wallet_old.html                    <- pre-v2 backup (DELETE — deferred cleanup)
+    fix_price.ps1                      <- one-shot edit script (DELETE — deferred cleanup)
     bitphoque_p2sh.js                  <- in-browser P2SH derivation
     bitphoque_sighash.js               <- sighash (keyed blake2b)
     bitphoque_sigscript.js             <- ABI sigscript builder
@@ -296,12 +356,25 @@ Own git repo (branch `master`). Not yet pushed to GitHub.
 - [x] CLI feature-complete
 - [x] VPS deployed — Hetzner CX33, Caddy TLS, `wss://node.outlawpolitics.org`
 - [x] VPS IBD complete — node synced, 300M UTXOs
-- [x] Site published to cPanel
+- [x] Site published — `bitphoque.org` on Hetzner (Caddy static + TLS)
 - [x] Wallet v2 published (card-based UI, listing descriptors, KAS collapsible, Get Started)
+- [x] `max(price, CLAIM_PAYMENT)` fix in `buildClaimTx` (commit `95edb06`)
+- [x] Auto-merge wiring in Send panel (commit `96fe14b`)
+- [x] Hetzner swap bandaid applied (+8G swapfile, 12G total, systemd tweaks)
+- [x] Send-to-self root cause identified + normalization fix applied (sig #001)
+- [x] Listing descriptor scroll fix applied (sig #001)
+- [x] Restore passphrase save investigated — secure-context gate, not a bug (sig #001)
+- [x] Refresh button investigated — not broken, no console.log on success path (sig #001)
+- [x] Session signature system established (sig #001)
+- [ ] **Live-test send-to-self fix** — do a send-to-self, confirm both outputs appear
+- [ ] **Deploy wallet.html to VPS** — scp after send-to-self fix is tested
+- [ ] Hetzner node: confirm sync completes (was ~200 blocks/10s at last check, healthy)
+- [ ] Update hardcoded `127.0.0.1:8080` links in wallet/lander to `https://bitphoque.org`
+- [ ] cPanel: evaluate whether still needed (outlawpolitics.org has other content?)
 - [ ] Multi-entity testing (Entity1–4 cross-device send/claim/list)
-- [ ] Listing bulletin board — static JSON on cPanel, wallet POSTs on Sell, GETs on Buy
+- [ ] Listing bulletin board — static JSON on VPS, wallet POSTs on Sell, GETs on Buy
 - [ ] Parcel picker UX (dropdown from tracked parcels)
-- [ ] `max(price, CLAIM_PAYMENT)` fix in `buildClaimTx`
+- [ ] Cache busting — `?v=<version>` on dynamic `import()` paths (deferred)
 - [ ] SMS Twilio node-monitor
 - [ ] Original-token zero-pubkey owner quirk (observed, not blocking)
 - [ ] Auction — separate future build (stateful/temporal)
@@ -310,6 +383,13 @@ Own git repo (branch `master`). Not yet pushed to GitHub.
 - [ ] Make public on GitHub (clean repo name + README + secret-sweep)
 - [ ] D: build-clone bin sweep (recopy all 14 canonical harnesses → clone, rebuild)
 - [ ] Delete `C:\_RETIRED_kaspa-tn12` (file-handle release pending)
-- [ ] Prune dead `import { decodeDescriptor }` at wallet.html line ~75
-- [ ] Update shared panel banner ("Prototype — node-free…") — now false
 - [ ] Clean up `wallet_old.html` from `web\`
+- [ ] Clean up `fix_price.ps1` from `web\`
+
+---
+
+## SESSION SIGNATURES
+
+_Append-only. Newest first. Format: seq | datetime TZ | agent | trees | scope | head._
+
+—sig #001 | 2026-06-28 23:02 EST | browser | trees: bitphoque | scope: consolidated two drifted accounts, diagnosed send-to-self bug (key source mismatch not derivation), self-send normalization fix, listing descriptor scroll fix, restore/refresh investigated (not bugs), session signature system established | head: 9e9640f
