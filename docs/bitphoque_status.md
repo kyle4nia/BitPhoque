@@ -369,22 +369,22 @@ Own git repo (branch `master`). Not yet pushed to GitHub.
 - [x] Update hardcoded `127.0.0.1:8080` links -- already clean (sig #002)
 - [x] Clean up `wallet_old.html` from `web\` -- already gone (sig #002)
 - [x] Clean up `fix_price.ps1` from `web\` -- already gone (sig #002)
-- [ ] Hetzner node: confirm sync completes (16% IBD at sig #002, healthy, ~7-8h remaining)
+- [ ] Hetzner node: confirm sync completes (91% IBD at sig #003, healthy)
 - [ ] cPanel: evaluate whether still needed (outlawpolitics.org has other content?)
 - [ ] Multi-entity testing (Entity1-4 cross-device send/claim/list)
-- [ ] Listing bulletin board -- static JSON on VPS, wallet POSTs on Sell, GETs on Buy
+- [x] Listing bulletin board -- Python service on VPS (systemd), Caddy /api/* proxy, wallet Browse/POST, lazy phoque message (sig #003, commit `1fb7837`)
 - [ ] Parcel picker UX (dropdown from tracked parcels)
 - [ ] Cache busting -- `?v=<version>` on dynamic `import()` paths (deferred)
 - [ ] SMS Twilio node-monitor
-- [x] Original-token zero-pubkey owner quirk -- tested v3 genesis, owner baked correctly, not reproducible (throwaway genesis 0c81fda9, cleaned up)
+- [x] Original-token zero-pubkey owner quirk -- tested v3 genesis, owner baked correctly, not reproducible (throwaway genesis 0c81fda9, cleaned up, sig #003)
 - [ ] Auction -- separate future build (stateful/temporal)
 - [ ] Mainnet: clear `bitphoque_mainnet_checklist.md`
   - NOTE: re-genesis produces a new `covenant_id`; sweep `3baed5a3...` in ALL JS + harnesses
+- [x] Contract mainnet review — all resolved in v4 (`bitphoque_sale_v4.sil`): F1 strict-increasing confirmed as production design, caps 3/3 confirmed, price>0 guard added, amount>0 guard added, minter branch stripped, identifierType stripped. See `bitphoque_mainnet_checklist.md` items 5/7/8 for downstream work blocked on V1 compile.
 - [ ] Make public on GitHub (clean repo name + README + secret-sweep)
-  - Strip minter branch from .sil before publishing (dead code in deployment, social engineering risk if forked with isMinter=true). Covenant_id changes = re-genesis required, so strip in source only, publish stripped version, keep deployed TN10 contract as-is until mainnet re-genesis.
+  - Minter branch already stripped in v4 source (`bitphoque_sale_v4.sil`). TN10 continues on v3 contract as-is; mainnet uses v4. Publish v4 source (no minter, no fork risk).
 - [ ] D: build-clone bin sweep (recopy all 14 canonical harnesses -> clone, rebuild)
 - [ ] Delete `C:\_RETIRED_kaspa-tn12` (file-handle release pending)
-- [ ] Contract mainnet review: F1 strict-increasing vs per-output accounting, caps 3/3 sizing, price=0 wallet guard, minter branch strip — do BEFORE re-genesis
 
 ---
 
@@ -401,3 +401,10 @@ CLOSING: Send-to-self proven live (107+42 both visible). wallet.html deployed to
 DRIFT: Opening assumed deferred deletes and link cleanup were actual work items -- all three were already resolved before this session. The real work was just the self-send test and VPS deploy. No misdiagnosis on the send-to-self fix itself -- it worked as described in sig #001. IBD is a wait, not a task. | head: 03d6bdf
 
 ---sig #001 | 2026-06-28 23:02 EST | browser | trees: bitphoque | scope: consolidated two drifted accounts, diagnosed send-to-self bug (key source mismatch not derivation), self-send normalization fix, listing descriptor scroll fix, restore/refresh investigated (not bugs), session signature system established | head: 9e9640f
+---sig #003 | 2026-06-29 ~11:00 EST | desktop | trees: bitphoque | scope: VPS node check (91% IBD), v3 genesis owner field test (not reproducible, item closed), bulletin board (Python service + Caddy proxy + wallet integration), lazy phoque message | head: 1fb7837
+
+OPENING ASSESSMENT: VPS node was at 16% IBD (sig #002). Zero-pubkey quirk was open with no detail. Bulletin board was an open item. Plan: check node, investigate quirk, build bulletin.
+
+CLOSING: VPS node at 91% IBD, healthy. Zero-pubkey quirk closed — throwaway v3 genesis confirmed owner baked correctly (tx 0c81fda9, cleaned up). Bulletin board live: Python service on VPS (systemd), Caddy /api/* proxy, wallet Sell POSTs listing on confirm, Buy has Browse button with tappable cards, absolute URLs work from any node. Lazy phoque message for stale listings.
+
+DRIFT: Zero-pubkey quirk took less time than expected — single genesis+inspect cycle settled it. Bulletin board went smoothly — no compile issues, no CORS problems. The only surprise was relative vs absolute fetch URLs (local wallet couldn't reach /api/listings), fixed in-session.

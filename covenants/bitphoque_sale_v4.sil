@@ -1,0 +1,74 @@
+contract BitPhoque(byte[32] genesisPk, int genesisAmount, bool genesisForSale, int genesisPrice, int maxCovIns, int maxCovOuts) {
+    byte[32] ownerIdentifier = genesisPk;
+    int amount = genesisAmount;
+    bool forSale = genesisForSale;
+    int price = genesisPrice;
+    // Per-input authorization: either the owner signs (normal transfer / listing),
+    // OR the input is for-sale and the tx pays >= price to the owner (sale claim).
+    //
+    // For-sale inputs must name STRICTLY-INCREASING payment-output indices.
+    // This is the production design (not a shortcut): each seller gets a dedicated
+    // payment output, so two for-sale inputs can never share a single payment.
+    // One payment output per seller = zero ambiguity about who got paid.
+    // lastSaleWitness starts at -1 so the first for-sale input (witness >= 0)
+    // always passes; each subsequent one must exceed the previous.
+    function checkAuth(State[] prevStates, sig[] sigs, byte[] witnesses) {
+        int lastSaleWitness = -1;
+        for(i, 0, prevStates.length, maxCovIns) {
+            if(!prevStates[i].forSale){
+                require(checkSig(sigs[i], prevStates[i].ownerIdentifier));
+            } else {
+                require(prevStates[i].price > 0);
+                int w = int(witnesses[i]);
+                require(w > lastSaleWitness);
+                lastSaleWitness = w;
+                byte[34] sellerLock = new ScriptPubKeyP2PK(prevStates[i].ownerIdentifier);
+                require(tx.outputs[witnesses[i]].scriptPubKey == byte[](sellerLock));
+                require(tx.outputs[witnesses[i]].value >= prevStates[i].price);
+            }
+        }
+    }
+    // Conservation: total input amount == total output amount. Unconditional.
+    // No minter role exists — supply is fixed at genesis, forever.
+    function checkAmounts(State[] prevStates, State[] newStates) {
+        int totalIn = 0;
+        for(i, 0, prevStates.length, maxCovIns) {
+            totalIn = totalIn + prevStates[i].amount;
+        }
+        int totalOut = 0;
+        for(i, 0, newStates.length, maxCovOuts) {
+            totalOut = totalOut + newStates[i].amount;
+        }
+        require(totalIn == totalOut);
+    }
+    // No zero-amount outputs: prevents junk parcels cluttering the UTXO set.
+    function checkPositiveAmounts(State[] newStates) {
+        for(i, 0, newStates.length, maxCovOuts) {
+            require(newStates[i].amount > 0);
+        }
+    }
+    // Sale-state rule (the listing/claim separation):
+    //  - LISTING (owner-signed, all inputs NOT for-sale): for-sale outputs ALLOWED.
+    //  - CLAIM (any input IS for-sale, payment-authorized): no output may be for-sale
+    //    (anti-double-claim: a claimed UTXO must not stay on the market).
+    function checkSaleState(State[] prevStates, State[] newStates){
+        bool anyInputForSale = false;
+        for(i, 0, prevStates.length, maxCovIns) {
+            if(prevStates[i].forSale){
+                anyInputForSale = true;
+            }
+        }
+        if(anyInputForSale){
+            for(j, 0, newStates.length, maxCovOuts) {
+                require(!newStates[j].forSale);
+            }
+        }
+    }
+    #[covenant(binding = cov, from = maxCovIns, to = maxCovOuts)]
+    function transfer(State[] prevStates, State[] newStates, sig[] sigs, byte[] witnesses) {
+        checkAuth(prevStates, sigs, witnesses);
+        checkAmounts(prevStates, newStates);
+        checkPositiveAmounts(newStates);
+        checkSaleState(prevStates, newStates);
+    }
+}

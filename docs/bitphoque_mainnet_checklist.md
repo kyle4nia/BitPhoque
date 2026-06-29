@@ -40,7 +40,7 @@ and an attacker with money and patience is actively trying to take the whole sup
   * a malformed / wrong-length input MUST fail.
   The KCC20 reference suite proves the CONTRACT rejects bad input; we must prove OUR
   HARNESS does too. Accept-only is half-proven. The rejection test is the only real proof
-  the gate works.
+  the gate works. See also item 8 for v4-specific rejection tests.
 
 ### 4. Compiler version
 - **TN10 shortcut:** compiled against `tn10-toc3` silverc (pre-stable).
@@ -52,13 +52,35 @@ and an attacker with money and patience is actively trying to take the whole sup
   * the official V1 release tag itself.
   Re-baseline BitPhoque against V1 and re-run all verification once it lands.
 
-### 5. Contract identity & supply finality
-- **TN10 shortcut:** contract still self-identifies as `KCC20`; supply = 42069 placeholder.
+### 5. Contract identity, supply finality & source hardening
+- **TN10 shortcut:** contract self-identifies as `KCC20`; carries dead `isMinter` +
+  `identifierType` state fields; no price-floor or zero-amount guard; supply = 42069
+  placeholder.
 - **Mainnet requirement:** before genesis, the contract is renamed/reviewed as `BitPhoque`
   (changes compiled bytes -> re-baseline), the supply number is FINAL (it can never change
   after genesis), and the contract has had a SECOND set of eyes / external review. A solo
   source-read is right for a no-value testnet PoC; a token holding real value warrants more
   scrutiny than one person reading the compiler once.
+- **v4 source changes (all done — `bitphoque_sale_v4.sil`):**
+  * [x] Renamed `KCC20` -> `BitPhoque`.
+  * [x] Stripped `isMinter` state + `genesisIsMinter` ctor param. Conservation is now
+    unconditional. `checkMintingTransfer()` deleted entirely. Eliminates fork-with-minter
+    risk and shrinks script.
+  * [x] Stripped `identifierType` state + `genesisIdentifierType` ctor param +
+    `IDENTIFIER_PUBKEY` constant. Dead flexibility — only pubkey-type ever existed, never
+    validated. Removes 1 byte per state, shrinks script.
+  * [x] Added `require(prevStates[i].price > 0)` in the forSale branch of `checkAuth`.
+    Free listing = normal transfer, not the sale path.
+  * [x] Added `checkPositiveAmounts()` — `require(newStates[i].amount > 0)` for all
+    outputs. Prevents junk zero-phoque parcels.
+  * [x] Updated F1 comment: strict-increasing is the production design, not a testnet
+    shortcut. One payment output per seller, no ambiguity.
+  * [x] Caps confirmed at 3/3 (no change needed).
+- **v4 state layout (4 fields, 49 bytes — down from 6 fields, 51 bytes):**
+  `ownerIdentifier(32B) | amount(8B LE) | forSale(1B) | price(8B LE)`
+- **NOT YET DONE:** compile v4 against silverscript V1 (blocked on V1 release); update
+  all downstream code for new state layout (item 7 below); second set of eyes; supply
+  number finalized.
 
 ### 6. Funding vs ownership role separation
 - **TN10 shortcut:** acceptable to self-fund (token key pays its own genesis).
@@ -67,19 +89,47 @@ and an attacker with money and patience is actively trying to take the whole sup
   necessarily the token issuer. The owner key (air-gapped) should not also be a hot
   fee-paying key.
 
+### 7. v4 state layout — downstream code update  [BLOCKED ON V1 COMPILE]
+- **What changed:** v4 drops `identifierType` and `isMinter` from state. The on-wire state
+  layout goes from 6 fields / 51 bytes to 4 fields / 49 bytes. Every piece of code that
+  builds or reads sigscripts must be updated to match v4's layout.
+- **Files that need updating (do all at once, after V1 compile confirms v4 bytecode):**
+  * [ ] `bitphoque_sigscript.js` — state transposition (drop identifierType + isMinter)
+  * [ ] `bitphoque_descriptor.js` — descriptor codec (field count, offsets, byte layout)
+  * [ ] `bitphoque_cli.rs` — CLI sigscript builder (state field order + ctor args)
+  * [ ] `bitphoque_compiled_real.json` — ctor args (drop genesisIdentifierType +
+    genesisIsMinter)
+  * [ ] All `.rs` harnesses that build sigscripts (genesis, split, merge, claim, sale,
+    inspect)
+  * [ ] `wallet.html` — any inline state-building or state-reading code
+- **Verification:** after updating, re-prove the full accept+reject suite (item 3) against
+  v4 bytecode. The new guards add two new rejection tests:
+  * a listing with `price=0` MUST fail (covenant rejects);
+  * a transfer producing a `amount=0` output MUST fail (covenant rejects).
+
+### 8. Rejection tests for v4 guards  [BLOCKED ON V1 COMPILE]
+- In addition to item 3's existing rejection tests, v4 adds two new covenant-level
+  invariants that MUST have harness-level rejection tests:
+  * [ ] `price=0` listing attempt -> covenant rejects (checkAuth price>0 guard).
+  * [ ] `amount=0` output attempt -> covenant rejects (checkPositiveAmounts guard).
+  * [ ] Zero-amount split (e.g. split 100 into 100+0) -> covenant rejects.
+  These are not optional. An untested guard is the same as no guard.
+
 ---
 
 ## Mainnet launch sequence (the ceremony — none of this is done yet)
 
-1. [ ] silverscript V1 released; BitPhoque recompiled + re-baselined against it.
-2. [ ] Contract renamed to `BitPhoque`, reviewed, second set of eyes.
-3. [ ] Supply number FINAL (decide before genesis; cannot change after).
-4. [ ] Owner key generated AIR-GAPPED on KasSigner; pubkey extracted; privkey never leaves.
-5. [ ] ctor built with the air-gapped pubkey; real redeem script + mainnet P2SH derived.
-6. [ ] Genesis tx built UNSIGNED; full local VM verify PASSES; rejection tests PASS.
-7. [ ] Sighash handed to air-gapped signer; signature returned; attached.
-8. [ ] Dry-run reviewed; THEN broadcast to mainnet. covenant_id is now FOREVER.
-9. [ ] Transfer harness proven (accept + reject) on TN10 FIRST, re-verified against V1.
+1. [ ] silverscript V1 released; `bitphoque_sale_v4.sil` compiled + re-baselined against it.
+2. [ ] v4 state layout update applied to all downstream code (item 7).
+3. [ ] Contract reviewed, second set of eyes.
+4. [ ] Supply number FINAL (decide before genesis; cannot change after).
+5. [ ] Full accept+reject verification suite passes (items 3 + 8) against v4 bytecode.
+6. [ ] Owner key generated AIR-GAPPED on KasSigner; pubkey extracted; privkey never leaves.
+7. [ ] ctor built with the air-gapped pubkey; real redeem script + mainnet P2SH derived.
+8. [ ] Genesis tx built UNSIGNED; full local VM verify PASSES; rejection tests PASS.
+9. [ ] Sighash handed to air-gapped signer; signature returned; attached.
+10. [ ] Dry-run reviewed; THEN broadcast to mainnet. covenant_id is now FOREVER.
+11. [ ] Transfer harness proven (accept + reject) on TN10 FIRST, re-verified against V1.
 
 ---
 
