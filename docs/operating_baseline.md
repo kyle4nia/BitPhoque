@@ -168,7 +168,14 @@ live in the project's status doc, not here.)_
   tree): `cd /d <tree> && git status`. Anything real and untracked gets added and committed
   with a descriptive message. Stray duplicates get flagged for deletion (after confirming
   canonical-and-committed).
-
+- **Three-part session record.** Every session produces three parts in the status doc's
+  session signatures section: (1) **Opening assessment** — written at session start, states
+  what we believe the current state is and what the plan is, before any work. (2) **Closing
+  sig** — the existing format (seq, datetime, agent, trees, scope, head). (3) **Drift
+  notes** — what actually happened vs what the opening assumed, where the opening was wrong,
+  what surprised us. The drift notes are the real value — they train future sessions to spot
+  the same class of misdiagnosis. All three parts are append-only under the session's sig
+  number.
 ---
 
 ## The lens: always view through "self-erecting"
