@@ -32,6 +32,7 @@
 
 import { base58check } from './vendor/scure-base/index.js';
 import { sha256 } from './vendor/noble-hashes/sha2.js';
+import { COVENANT_ID_HEX } from './bitphoque_config.js';
 
 // base58check(sha256) => checksum = sha256(sha256(payload))[0..4], byte-for-byte
 // identical to Rust bs58 .with_check(). Verified by round-trip against the chain.
@@ -41,8 +42,8 @@ export const DESC_LEN = 118;
 export const DESC_VERSION = 1;
 
 // v3 covenant_id — the integrity tie. Descriptors for any other token are refused.
-export const V3_COVENANT_ID =
-  '3baed5a39ed95e6aa62a0d8d46aae39a8d832d4f900e5a6a351dca4fbc326458';
+// Covenant ID imported from bitphoque_config.js
+export const V3_COVENANT_ID = COVENANT_ID_HEX;
 
 // --- hex helpers ---
 const toHex = (u8) =>

@@ -23,6 +23,7 @@
    is a constraint, not a free lunch. A fuller version would compile in-WASM.
    ============================================================================ */
 import { blake2b } from './vendor/noble-hashes/blake2.js';
+import { NETWORK } from './bitphoque_config.js';
 
 // --- the captured v3 redeem-script template (parcel A: owner buyer1, amt 3000, fs true, price 500000) ---
 // Operand slots are overwritten by deriveRedeemScript(); the rest is invariant boilerplate.
@@ -61,7 +62,7 @@ function scriptHash(redeemScript){ return blake2b(redeemScript, { dkLen: 32 }); 
 // Derive the P2SH bech32 address for a parcel. Uses the wallet's proven kasEncode (version 8 = ScriptHash).
 // kasEncode is expected on window.KASPA.encode (already vendored & verified vs P2PK vector + KasWare).
 function deriveP2SHAddress(owner, amount, forSale, price, network){
-  const net = network || (window.KASPA && window.KASPA.network) || 'kaspatest';
+  const net = network || (window.KASPA && window.KASPA.network) || NETWORK;
   const rs = deriveRedeemScript(owner, amount, forSale, price);
   const h = scriptHash(rs);
   return window.KASPA.encode(net, 8, Array.from(h));   // version 8 = ScriptHash

@@ -817,7 +817,7 @@ async function refreshBalance(){
   let derived;
   try {
     const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js');
-    const net = (window.KASPA && window.KASPA.network) || 'kaspatest';
+    const net = (window.KASPA && window.KASPA.network) || window.KASPA.network;
     derived = parcels.map(p=>({
       p,
       addr: deriveP2SHAddress(
@@ -887,7 +887,7 @@ async function receiveParcel(descriptorString){
 
   const addr = deriveP2SHAddress(
     xonly(d.ownerPubkey), d.amount, d.forSale, d.price,
-    'kaspatest'
+    window.KASPA.network
   );
   const wantOutpoint = d.txid + ":" + d.outputIndex;
 
@@ -1046,8 +1046,8 @@ async function doSend(){
       const p0 = h[0], p1 = h[1];
       const [t0,i0] = p0.outpoint.split(':');
       const [t1,i1] = p1.outpoint.split(':');
-      const a0 = deriveP2SHAddress(xonly(myKey.pubHex), BigInt(p0.covenant_amount), false, 0n, 'kaspatest');
-      const a1 = deriveP2SHAddress(xonly(myKey.pubHex), BigInt(p1.covenant_amount), false, 0n, 'kaspatest');
+      const a0 = deriveP2SHAddress(xonly(myKey.pubHex), BigInt(p0.covenant_amount), false, 0n, window.KASPA.network);
+      const a1 = deriveP2SHAddress(xonly(myKey.pubHex), BigInt(p1.covenant_amount), false, 0n, window.KASPA.network);
       let v0, v1;
       try {
         const m0 = await wrpcCall("getUtxosByAddresses", {addresses:[a0]});
@@ -1082,7 +1082,7 @@ async function doSend(){
       });
       saveParcels(); renderBalance();
       out.textContent = 'Merged ' + p0.covenant_amount + ' + ' + p1.covenant_amount + ' = ' + ma + ' phoques.\nWaiting for confirmation...';
-      const maddr = deriveP2SHAddress(xonly(myKey.pubHex), BigInt(ma), false, 0n, 'kaspatest');
+      const maddr = deriveP2SHAddress(xonly(myKey.pubHex), BigInt(ma), false, 0n, window.KASPA.network);
       let confirmed = false;
       for(let att = 0; att < 30; att++){
         await new Promise(r => setTimeout(r, 2000));
@@ -1105,7 +1105,7 @@ async function doSend(){
   out.textContent = 'Looking up on chain...';
 
   const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js');
-  const inputAddr = deriveP2SHAddress(xonly(myKey.pubHex), BigInt(iamt), false, 0n, 'kaspatest');
+  const inputAddr = deriveP2SHAddress(xonly(myKey.pubHex), BigInt(iamt), false, 0n, window.KASPA.network);
   let inputValue;
   try {
     const msg = await wrpcCall("getUtxosByAddresses", {addresses:[inputAddr]});
@@ -1235,7 +1235,7 @@ async function doSell(){
   out.textContent = 'Looking up on chain...';
 
   const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js');
-  const inputAddr = deriveP2SHAddress(xonly(myKey.pubHex), BigInt(iamt), false, 0n, 'kaspatest');
+  const inputAddr = deriveP2SHAddress(xonly(myKey.pubHex), BigInt(iamt), false, 0n, window.KASPA.network);
   let inputValue;
   try {
     const msg = await wrpcCall("getUtxosByAddresses", {addresses:[inputAddr]});
@@ -1396,7 +1396,7 @@ async function doBuy(){
 
   // 1) confirm the for-sale UTXO
   const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js');
-  const covAddr = deriveP2SHAddress(xonly(seller), BigInt(amt), true, BigInt(price), 'kaspatest');
+  const covAddr = deriveP2SHAddress(xonly(seller), BigInt(amt), true, BigInt(price), window.KASPA.network);
   let covValue;
   try {
     const msg = await wrpcCall("getUtxosByAddresses", {addresses:[covAddr]});

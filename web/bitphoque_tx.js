@@ -14,12 +14,13 @@ import { calcSchnorrSignatureHash, SIG_HASH_ALL, hexToBytes, bytesToHex } from '
 import { buildSigScript } from './bitphoque_sigscript.js';
 import { deriveRedeemScript, deriveScriptHashHex } from './bitphoque_p2sh.js';
 import { schnorr } from './vendor/noble-curves/secp256k1.js';
+import { COVENANT_ID_HEX } from './bitphoque_config.js';
 
 // --- constants ---------------------------------------------------------------
 const FEE = 700_000n;
 const MIN_OUT_VALUE = 1_000_000n;
 const COMPUTE_BUDGET = 24;                 // checked_covering_script_units(240000)
-const COVENANT_ID_HEX = '3baed5a39ed95e6aa62a0d8d46aae39a8d832d4f900e5a6a351dca4fbc326458';
+// COVENANT_ID_HEX imported from bitphoque_config.js
 const COVENANT_ID_BYTES = hexToBytes(COVENANT_ID_HEX);
 const SUBNETWORK_NATIVE_HEX = '0000000000000000000000000000000000000000';
 
