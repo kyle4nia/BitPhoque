@@ -483,6 +483,14 @@
       <button class="btn ghost" onclick="openBuy()">Buy</button>
     </div>
 
+    <div class="primary-btns" style="margin-top:-8px">
+      <button class="btn ghost" style="border:none;font-size:0.85rem;opacity:0.7" onclick="openSent()">Sent receipts</button>
+    </div>
+
+    <div class="primary-btns" style="margin-top:-8px">
+      <button class="btn ghost" style="border:none;font-size:0.85rem;opacity:0.7" onclick="openSent()">Sent receipts</button>
+    </div>
+
     <div class="node-bar" id="nodeBar">
       <span class="dot checking" id="nodeDot"></span>
       <span id="nodeText">Checking node...</span>
@@ -533,6 +541,7 @@
 </div>
 
 <script>
+const CACHE_V = '?v=2';
 /* ---- BIP-39 wrappers (proven) ---- */
 function generateMnemonic(){
   if(!window.BIP39?.ready) throw new Error("BIP39_NOT_LOADED");
@@ -659,28 +668,41 @@ function saveParcels(){
   } catch(e){ console.warn('[parcels] load failed:', e); }
 })();
 
+let sentReceipts = [];
+function saveSentReceipts(){
+  try { localStorage.setItem('bitphoque_sent', JSON.stringify(sentReceipts)); }
+  catch(e){ console.warn('[sent] save failed:', e); }
+}
+(function loadSentReceipts(){
+  try {
+    const raw = localStorage.getItem('bitphoque_sent');
+    if(raw) sentReceipts = JSON.parse(raw);
+  } catch(e){ sentReceipts = []; }
+})();
+
 function fmtBalance(){
-  const total = parcels.reduce((a,p)=>a + BigInt(p.amount_pups||0), 0n);
+  const total = parcels.filter(isOwn).reduce((a,p)=>a + BigInt(p.amount_pups||0), 0n);
   const phoques = total / PUPS_PER_PHOQUE;
   const pups    = total % PUPS_PER_PHOQUE;
-  return { phoques, pups, total, count: parcels.length };
+  return { phoques, pups, total, count: parcels.filter(isOwn).length };
 }
 function groupThousands(bi){ return bi.toString().replace(/\B(?=(\d{3})+(?!\d))/g,','); }
 function shortId(hex){ return (hex||'').slice(0,6)+'...'+hex.slice(-4); }
+function isOwn(p){ return myKey && xonly(p.owner) === xonly(myKey.pubHex); }
 function kasFromSompi(s){ return (Number(s)/1e8).toFixed(8).replace(/\.?0+$/,''); }
 
 let kasBalance = null;  // sompi, null = unknown
 
 function renderBalance(){
-  const total = parcels.reduce((a,p) => a + BigInt(p.covenant_amount||0), 0n);
+  const total = parcels.filter(isOwn).reduce((a,p) => a + BigInt(p.covenant_amount||0), 0n);
   document.getElementById('heroNum').textContent = groupThousands(total);
   renderCards();
   renderKasInfo();
 }
 
 function renderCards(){
-  const held = parcels.filter(p => !p.forSale);
-  const listed = parcels.filter(p => p.forSale);
+  const held = parcels.filter(p => isOwn(p) && !p.forSale);
+  const listed = parcels.filter(p => isOwn(p) && p.forSale);
   let html = '';
 
   if(held.length > 0){
@@ -816,7 +838,7 @@ async function refreshBalance(){
 
   let derived;
   try {
-    const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js');
+    const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js' + CACHE_V);
     const net = (window.KASPA && window.KASPA.network) || window.KASPA.network;
     derived = parcels.map(p=>({
       p,
@@ -881,8 +903,8 @@ async function refreshBalance(){
 }
 
 async function receiveParcel(descriptorString){
-  const {decodeDescriptor} = await import('./bitphoque_descriptor.js');
-  const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js');
+  const {decodeDescriptor} = await import('./bitphoque_descriptor.js' + CACHE_V);
+  const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js' + CACHE_V);
   const d = decodeDescriptor(descriptorString.trim());
 
   const addr = deriveP2SHAddress(
@@ -996,7 +1018,7 @@ function closeStory(){
 
 /* ---- SEND ---- */
 function openSend(){
-  const held = parcels.filter(p => !p.forSale);
+  const held = parcels.filter(p => isOwn(p) && !p.forSale);
   const totalHeld = held.reduce((a,p) => a + BigInt(p.covenant_amount||0), 0n);
   openStory(
     '<div class="story-head"><h3>Send phoques</h3><button class="x" onclick="closeStory()">&times;</button></div>' +
@@ -1024,7 +1046,7 @@ async function doSend(){
   if(!myKey){ out.textContent = 'Wallet not ready -- go back and unlock.'; return; }
   if(xonly(to) === xonly(myKey.pubHex)) to = xonly(myKey.pubHex);
 
-  const held = parcels.filter(p => !p.forSale);
+  const held = parcels.filter(p => isOwn(p) && !p.forSale);
   let pick = held.find(p => parseInt(p.covenant_amount)===amt)
           || held.filter(p => parseInt(p.covenant_amount)>=amt)
                .sort((a,b) => parseInt(a.covenant_amount)-parseInt(b.covenant_amount))[0];
@@ -1036,10 +1058,10 @@ async function doSend(){
       return;
     }
     out.textContent = 'Merging groups to cover ' + amt + ' phoques...';
-    const {buildMergeTx} = await import('./bitphoque_tx.js');
-    const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js');
+    const {buildMergeTx} = await import('./bitphoque_tx.js' + CACHE_V);
+    const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js' + CACHE_V);
     while(true){
-      const h = parcels.filter(p => !p.forSale).sort((a,b) => parseInt(b.covenant_amount) - parseInt(a.covenant_amount));
+      const h = parcels.filter(p => isOwn(p) && !p.forSale).sort((a,b) => parseInt(b.covenant_amount) - parseInt(a.covenant_amount));
       const big = h.find(p => parseInt(p.covenant_amount) >= amt);
       if(big){ pick = big; break; }
       if(h.length < 2){ out.textContent = 'Not enough groups to merge.'; return; }
@@ -1104,7 +1126,7 @@ async function doSend(){
 
   out.textContent = 'Looking up on chain...';
 
-  const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js');
+  const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js' + CACHE_V);
   const inputAddr = deriveP2SHAddress(xonly(myKey.pubHex), BigInt(iamt), false, 0n, window.KASPA.network);
   let inputValue;
   try {
@@ -1117,7 +1139,7 @@ async function doSend(){
 
   out.textContent = 'Building transaction...';
 
-  const {buildSendTx} = await import('./bitphoque_tx.js');
+  const {buildSendTx} = await import('./bitphoque_tx.js' + CACHE_V);
   let result;
   try {
     result = buildSendTx({
@@ -1143,6 +1165,32 @@ async function doSend(){
     : 'Sending ' + amt + ' phoques to ' + shortId(to) + ', keeping ' + (iamt - amt);
   out.textContent = 'Ready to send.\n\n' + summary + '\nFee: 0.007 TKAS\n\nTap "Confirm and send" to broadcast.';
   document.getElementById('storySubmitBtn').style.display = 'block';
+}
+
+/* ---- SENT RECEIPTS ---- */
+function openSent(){
+  const items = sentReceipts.slice().reverse();
+  let body = '';
+  if(!items.length){
+    body = '<p style="opacity:0.6;margin-top:18px">No sent receipts yet. They appear here after you send or list phoques.</p>';
+  } else {
+    for(const r of items){
+      const d = new Date(r.ts);
+      const when = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+      const label = r.forSale ? 'Listed' : 'Sent';
+      body += '<div style="border:1px solid var(--hair);border-radius:10px;padding:12px;margin-top:10px;word-break:break-all;font-size:0.85rem">' +
+        '<div style="font-weight:600;margin-bottom:4px">' + label + ' ' + r.amount + ' phoques &rarr; ' + shortId(r.recipientPubkey) + '</div>' +
+        '<div style="opacity:0.6;font-size:0.78rem;margin-bottom:6px">' + when + ' &middot; tx ' + r.txid.slice(0,8) + '</div>' +
+        '<div style="background:var(--bg);border-radius:6px;padding:8px;font-family:monospace;font-size:0.72rem;line-height:1.4">' + r.descriptor + '</div>' +
+        '<button class="btn ghost" style="margin-top:6px;font-size:0.78rem;padding:4px 12px" onclick="copyKey(\'' + r.descriptor + '\', this)">Copy code</button>' +
+        '</div>';
+    }
+  }
+  openStory(
+    '<div class="story-head"><h3>Sent receipts</h3><button class="x" onclick="closeStory()">&times;</button></div>' +
+    '<p class="story-lede">Codes from past sends. Share with the recipient so they can find and claim their phoques.</p>' +
+    body
+  );
 }
 
 /* ---- RECEIVE ---- */
@@ -1174,7 +1222,7 @@ function openReceive(){
   (async()=>{
     const el = document.getElementById('recvQr');
     if(el && pubkey){
-      try { const {qrSvg} = await import('./bitphoque_qr.js'); el.innerHTML = qrSvg(pubkey, 160); } catch(e){}
+      try { const {qrSvg} = await import('./bitphoque_qr.js' + CACHE_V); el.innerHTML = qrSvg(pubkey, 160); } catch(e){}
     }
   })();
 }
@@ -1193,7 +1241,7 @@ async function doReceive(){
 
 /* ---- SELL (list for sale) ---- */
 function openSell(){
-  const held = parcels.filter(p => !p.forSale);
+  const held = parcels.filter(p => isOwn(p) && !p.forSale);
   const totalHeld = held.reduce((a,p) => a + BigInt(p.covenant_amount||0), 0n);
   openStory(
     '<div class="story-head"><h3>Sell phoques</h3><button class="x" onclick="closeStory()">&times;</button></div>' +
@@ -1221,7 +1269,7 @@ async function doSell(){
   if(priceSompi <= 0){ out.textContent = 'Enter a positive price.'; return; }
   if(!myKey){ out.textContent = 'Wallet not ready.'; return; }
 
-  const held = parcels.filter(p => !p.forSale);
+  const held = parcels.filter(p => isOwn(p) && !p.forSale);
   let pick = held.find(p => parseInt(p.covenant_amount)===amt)
           || held.filter(p => parseInt(p.covenant_amount)>=amt)
                .sort((a,b) => parseInt(a.covenant_amount)-parseInt(b.covenant_amount))[0];
@@ -1234,7 +1282,7 @@ async function doSell(){
 
   out.textContent = 'Looking up on chain...';
 
-  const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js');
+  const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js' + CACHE_V);
   const inputAddr = deriveP2SHAddress(xonly(myKey.pubHex), BigInt(iamt), false, 0n, window.KASPA.network);
   let inputValue;
   try {
@@ -1251,7 +1299,7 @@ async function doSell(){
   let result;
 
   if(isPartial){
-    const {buildOwnerSignedTx} = await import('./bitphoque_tx.js');
+    const {buildOwnerSignedTx} = await import('./bitphoque_tx.js' + CACHE_V);
     try {
       result = buildOwnerSignedTx({
         inputTxId: txid, inputIndex: idx, inputValue,
@@ -1272,7 +1320,7 @@ async function doSell(){
       ]
     };
   } else {
-    const {buildListTx} = await import('./bitphoque_tx.js');
+    const {buildListTx} = await import('./bitphoque_tx.js' + CACHE_V);
     try {
       result = buildListTx({
         inputTxId: txid, inputIndex: idx, inputValue,
@@ -1305,7 +1353,7 @@ async function browseBulletin(){
     const resp = await fetch('https://bitphoque.org/api/listings');
     const items = await resp.json();
     if(!items.length){ list.innerHTML='<p style="color:var(--muted,#888)">No listings yet. Be the first to sell!</p>'; return; }
-    const {decodeDescriptor} = await import('./bitphoque_descriptor.js');
+    const {decodeDescriptor} = await import('./bitphoque_descriptor.js' + CACHE_V);
     let html = '';
     for(const item of items){
       try {
@@ -1362,7 +1410,7 @@ async function decodeListing(){
   const hint = document.getElementById('b_codeHint');
   if(!code){ hint.textContent=''; return; }
   try {
-    const {decodeDescriptor} = await import('./bitphoque_descriptor.js');
+    const {decodeDescriptor} = await import('./bitphoque_descriptor.js' + CACHE_V);
     const d = decodeDescriptor(code);
     if(!d.forSale){ hint.textContent='This is a receive code, not a listing. Paste it into Receive instead.'; return; }
     document.getElementById('b_seller').value = d.ownerPubkey;
@@ -1395,7 +1443,7 @@ async function doBuy(){
   out.textContent = 'Checking listing on chain...';
 
   // 1) confirm the for-sale UTXO
-  const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js');
+  const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js' + CACHE_V);
   const covAddr = deriveP2SHAddress(xonly(seller), BigInt(amt), true, BigInt(price), window.KASPA.network);
   let covValue;
   try {
@@ -1408,7 +1456,7 @@ async function doBuy(){
 
   // 2) auto-pick a funding UTXO
   out.textContent = 'Finding KAS for payment...';
-  const {CLAIM_FEE, CLAIM_PAYMENT} = await import('./bitphoque_tx.js');
+  const {CLAIM_FEE, CLAIM_PAYMENT} = await import('./bitphoque_tx.js' + CACHE_V);
   const minFund = CLAIM_PAYMENT + CLAIM_FEE;
   let fundTxId, fundIndex, fundValue;
   try {
@@ -1428,7 +1476,7 @@ async function doBuy(){
 
   // 3) build + sign
   out.textContent = 'Building transaction...';
-  const {buildClaimTx} = await import('./bitphoque_tx.js');
+  const {buildClaimTx} = await import('./bitphoque_tx.js' + CACHE_V);
   let result;
   try {
     result = buildClaimTx({
@@ -1488,8 +1536,8 @@ async function submitPendingTx(){
     let extra='';
     if(window._pendingDesc && txid!=='(see response)'){
       try {
-        const {encodeDescriptor} = await import('./bitphoque_descriptor.js');
-        const {COVENANT_ID_HEX} = await import('./bitphoque_tx.js');
+        const {encodeDescriptor} = await import('./bitphoque_descriptor.js' + CACHE_V);
+        const {COVENANT_ID_HEX} = await import('./bitphoque_tx.js' + CACHE_V);
         const pd=window._pendingDesc;
         const desc = encodeDescriptor({
           covenantId: COVENANT_ID_HEX,
@@ -1503,6 +1551,8 @@ async function submitPendingTx(){
         if(pd.forSale){
           try { fetch('https://bitphoque.org/api/listings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({descriptor:desc,txid:txid})}); } catch(e){}
         }
+        sentReceipts.push({ descriptor: desc, recipientPubkey: pd.recipientPubkey, amount: pd.sendAmount.toString(), txid: txid, forSale: !!pd.forSale, ts: Date.now() });
+        saveSentReceipts();
         extra = '\n\n' + (pd.forSale ? 'Share this listing code with buyers (they paste it into Buy)' : 'Give this code to the recipient (they paste it into Receive)') + ':\n'+desc;
       } catch(e){ extra='\n\n(Code generation failed: '+(e.message||e)+')'; }
     }
@@ -1522,7 +1572,7 @@ function copyKey(text, el){
   if(el){ const t=el.textContent; el.textContent='Copied'; setTimeout(()=>el.textContent=t,1400); }
 }
 
-function resetAll(){ seed=[]; verifyBlanks=[]; parcels=[]; saveParcels(); myKey=null; kasBalance=null; closeStory(); show('welcome'); }
+function resetAll(){ seed=[]; verifyBlanks=[]; parcels=[]; saveParcels(); sentReceipts=[]; saveSentReceipts(); myKey=null; kasBalance=null; closeStory(); show('welcome'); }
 
 /* ---- encrypted persistence UI (proven) ---- */
 function ppStrength(){

@@ -390,21 +390,16 @@ Own git repo (branch `master`). Not yet pushed to GitHub.
 - [x] Update hardcoded `127.0.0.1:8080` links -- already clean (sig #002)
 - [x] Clean up `wallet_old.html` from `web\` -- already gone (sig #002)
 - [x] Clean up `fix_price.ps1` from `web\` -- already gone (sig #002)
+### Deployment-critical (testnet trial)
 - [ ] Hetzner node: confirm sync completes (91% IBD at sig #003, healthy)
-- [ ] cPanel: evaluate whether still needed (outlawpolitics.org has other content?)
 - [ ] Multi-entity testing (Entity1-4 cross-device send/claim/list)
-- [x] Listing bulletin board -- Python service on VPS (systemd), Caddy /api/* proxy, wallet Browse/POST, lazy phoque message (sig #003, commit `1fb7837`)
-- [ ] Parcel picker UX (dropdown from tracked parcels)
-- [x] Config extraction -- `bitphoque_config.js`, all modules + wallet.html wired (commit `52d6f24`, sig #005)
-- [x] Deployment structure -- `testnet.bitphoque.org` live, Caddy + TLS (sig #005)
-- [x] VPS volume resize 150G -> 200G, addpeer to Big Daddy (sig #005)
-- [ ] Cache busting -- `?v=<version>` on dynamic `import()` paths (next session priority)
+
+### Not needed for deployment
+- [ ] cPanel: evaluate whether still needed (outlawpolitics.org has other content?)
 - [ ] SMS Twilio node-monitor
-- [x] Original-token zero-pubkey owner quirk -- tested v3 genesis, owner baked correctly, not reproducible (throwaway genesis 0c81fda9, cleaned up, sig #003)
 - [ ] Auction -- separate future build (stateful/temporal)
 - [ ] Mainnet: clear `bitphoque_mainnet_checklist.md`
   - NOTE: re-genesis produces a new `covenant_id`; sweep `3baed5a3...` in ALL JS + harnesses
-- [x] Contract mainnet review — all resolved in v4 (`bitphoque_sale_v4.sil`): F1 strict-increasing confirmed as production design, caps 3/3 confirmed, price>0 guard added, amount>0 guard added, minter branch stripped, identifierType stripped. See `bitphoque_mainnet_checklist.md` items 5/7/8 for downstream work blocked on V1 compile.
 - [ ] Make public on GitHub (clean repo name + README + secret-sweep)
   - Minter branch already stripped in v4 source (`bitphoque_sale_v4.sil`). TN10 continues on v3 contract as-is; mainnet uses v4. Publish v4 source (no minter, no fork risk).
 - [ ] D: build-clone bin sweep (recopy all 14 canonical harnesses -> clone, rebuild)
