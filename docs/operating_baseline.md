@@ -83,19 +83,56 @@ self-contained: this baseline + that project's status doc, no cross-tree pointer
 
 ---
 
-## Script-based edits for large files
+## Script-based edits (the PRIMARY edit mechanism)
 
-When a file is too large to re-deliver whole (token cost, download time), Claude delivers a
-small `.ps1` (preferred) or `.py` script that performs the surgical edit — find-and-replace,
-insert, or delete — against the CANONICAL copy. The user runs it, verifies the result, then
-deletes the script. This avoids the three bad alternatives: re-delivering the entire file,
+This is the default way Claude edits files -- not a fallback. For any file the user already
+has on disk, deliver a small `.ps1` script that performs surgical find-and-replace against
+the CANONICAL copy. The user downloads it, runs it, verifies, deletes it. This avoids the
+three bad alternatives: re-delivering the entire file (token cost, download overhead),
 hand-editing (slow, error-prone), and multi-line terminal pastes (VS Code reversal problem).
-One-shot edit scripts are disposable — add a cleanup line to the status doc's open items
-immediately so the script doesn't linger. (This pattern was adopted after a large wallet.html
-session proved it faster and more reliable than any alternative.)
+
+### Agent checklist for every .ps1 edit script
+
+1. **Pattern:** `Get-Content $f -Raw` -> `.Replace()` chain -> `Set-Content $f -NoNewline`.
+   Always `-Raw` (single string, not array). Always `-NoNewline` (don't add a trailing
+   newline).
+
+2. **Idempotency -- the re-run trap.** Design every `.Replace()` so the TARGET STRING is
+   CONSUMED by the replacement. If the old string still exists after the edit, running the
+   script twice will double-insert. Before delivering, mentally run the script twice and ask:
+   does the second run change anything? If yes, the target string survived and the script is
+   NOT safe. (This was proven the hard way: a duplicate `.ps1` run silently doubled a
+   function and a push() call, requiring a dedup cleanup pass.)
+
+3. **Line endings.** Claude's container creates files with LF. Windows source files have CRLF.
+   PowerShell's `.Replace()` is exact-match -- wrong line endings = SILENT failure (no error,
+   no edit, no warning). In double-quoted PowerShell strings, use `` `r`n `` for CRLF. When
+   matching across lines, always use `` `r`n `` between them, not just `` `n ``. If unsure
+   about the target file's line endings, test with a single-line replace first.
+
+4. **Target uniqueness.** `.Replace()` is global -- it replaces EVERY occurrence. If the
+   target string appears in 5 places, all 5 change. This is correct when you want a global
+   update (e.g. adding an owner filter to every `parcels.filter()`). It is WRONG when you
+   want to edit only one site. For single-site edits, include enough surrounding context in
+   the target to make it unique.
+
+5. **Verify after running.** Always follow the script with a `findstr` or count command to
+   confirm the edit landed and didn't duplicate. Example:
+   `findstr /c:"CACHE_V" wallet.html` (spot-check presence) or
+   `findstr /c:"sentReceipts.push" wallet.html | find /c /v ""` (count occurrences).
+
+6. **Delete after running.** Scripts are disposable. Provide a `del` command immediately
+   after verification. If the user doesn't delete it in-session, add it to the status doc's
+   open items so it doesn't linger.
+
+7. **Delivery command.** Always provide the full run command with `cd /d` prefix:
+   `cd /d <PROJECT> && powershell -ExecutionPolicy Bypass -File %USERPROFILE%\Downloads\<script>.ps1`
+
+8. **One logical change per script.** Multiple related `.Replace()` calls in one script is
+   fine (e.g. adding a function + updating all call sites). Unrelated changes should be
+   separate scripts so a failure in one doesn't block the other.
 
 ---
-
 ## Standing technical discipline
 
 _(Substitute the current project's root path for `<PROJECT>` below. Each project is its own

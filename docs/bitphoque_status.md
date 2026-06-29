@@ -132,7 +132,7 @@ with 100+ validated. Volume resized 150G -> 200G (66G free at 26% UTXO validatio
 
 SSH: `ssh root@89.167.32.239`. Full operational details in `vps_handoff.md`.
 
-**Node sync status (2026-06-29):** UTXO validation at 26%, ~300 blocks/10s via Big Daddy addpeer.
+**Node sync status (2026-06-29):** UTXO validation ongoing, 71% volume (56G free), ~200 blocks/10s via Big Daddy addpeer.
 +8G swapfile (12G total swap), `TimeoutStopSec=300`, `LimitNOFILE=65536`. No OOM, no stalls.
 Volume resized 150G -> 200G (66G free). CX42 (16GB, 16.40 EUR/mo) is the upgrade if bandaid fails.
 
@@ -391,7 +391,11 @@ Own git repo (branch `master`). Not yet pushed to GitHub.
 - [x] Clean up `wallet_old.html` from `web\` -- already gone (sig #002)
 - [x] Clean up `fix_price.ps1` from `web\` -- already gone (sig #002)
 ### Deployment-critical (testnet trial)
-- [ ] Hetzner node: confirm sync completes (91% IBD at sig #003, healthy)
+- [x] Sent receipts persistence -- localStorage + Sent receipts panel, descriptors saved on encode (commit `f1c6bdc`, sig #006)
+- [x] Owner filtering -- isOwn() guard on all parcel selection, multi-key wallet fix (commit `f1c6bdc`, sig #006)
+
+### Deployment-critical (testnet trial)
+- [ ] Hetzner node: confirm sync completes (71% volume, syncing healthy at sig #006)
 - [ ] Multi-entity testing (Entity1-4 cross-device send/claim/list)
 
 ### Not needed for deployment
@@ -410,6 +414,14 @@ Own git repo (branch `master`). Not yet pushed to GitHub.
 ## SESSION SIGNATURES
 
 _Append-only. Newest first. Format: seq | datetime TZ | agent | trees | scope | head._
+
+---sig #006 | 2026-06-29 ~16:30 EST | desktop | trees: bitphoque | scope: cache busting (CACHE_V), sent receipts persistence, owner filtering for multi-key wallets | head: f1c6bdc
+
+OPENING ASSESSMENT: Cache busting was flagged as next priority (sig #005). VPS node still syncing. No known bugs. Plan: add cache busting to all dynamic imports.
+
+CLOSING: Cache busting done (CACHE_V constant + 18 imports). Discovered and fixed two bugs during testing: (1) lost descriptor problem (send window closes = descriptor gone forever) -- fixed with sentReceipts localStorage persistence + Sent receipts panel; (2) multi-key wallet contamination (parcels from Entity 1 key visible/selectable when unlocked with owner key) -- fixed with isOwn() filter on all parcel selection points. Both deployed to bitphoque.org + testnet.bitphoque.org. VPS node healthy, 71% volume, syncing.
+
+DRIFT: Cache busting was straightforward. Bulk of session was unplanned bug work from live testing. Sent receipts emerged from lost-descriptor question. Owner filtering emerged from send failure tracing to mixed-key parcels in shared localStorage. Double-run of .ps1 script caused duplication requiring dedup -- lesson: edit scripts whose target strings survive the first run will double-insert on re-run. What appeared to be identical receive codes were actually different -- they share a long base58 prefix (first 33 bytes = version + covenant_id are constant).
 
 ---sig #002 | 2026-06-29 00:00 EST | desktop | trees: bitphoque, oracle-protocol
 
