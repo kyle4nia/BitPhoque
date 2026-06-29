@@ -1,47 +1,47 @@
-# BitPhoque — Status
+# BitPhoque -- Status
 
 _Read `operating_baseline.md` alongside this doc. BitPhoque lives in its own tree (`C:\bitphoque`)
-and its own git repo — separate from oracle-protocol. End-of-session checkpoint covers both trees._
+and its own git repo -- separate from oracle-protocol. End-of-session checkpoint covers both trees._
 
 _The on-chain tx ledger (every confirmed txid) and session-by-session history live in
 `bitphoque_history.md`. Start here; reach for history only to look up a past fact._
 
 ---
 
-## WHERE WE ARE (2026-06-28)
+## WHERE WE ARE (2026-06-29)
 
 The web wallet is a **spending wallet**. Every layer of the write seam is proven against ground
 truth and live on TN10.
 
 - **Onboarding:** BIP-39 12-word, real entropy (`@scure/bip39`), AES-GCM encrypted persistence,
-  HD key derivation (`m/44'/111111'/0'/0/0` → secp256k1 x-only → Kaspa bech32), cross-checked vs
+  HD key derivation (`m/44'/111111'/0'/0/0` -> secp256k1 x-only -> Kaspa bech32), cross-checked vs
   KasWare.
-- **Read side:** `refreshBalance()` — per-parcel P2SH derivation (template splice,
-  `bitphoque_p2sh.js`) → `getUtxosByAddresses` over JSON wRPC (`wss://node.outlawpolitics.org`) →
-  covenant filter → reconcile + prune.
-- **Write side (PROVEN LIVE):** sighash (`bitphoque_sighash.js`) → schnorr sign (`@noble/curves`)
-  → ABI sigscript (`bitphoque_sigscript.js`) → JSON submit via `wrpcCall("submitTransaction")`.
-  **Live mined tx `4f3d791f`** — wallet sent 1000 phoques, node accepted.
-- **Panels wired:** send, split, list, partial-list, claim, merge — all real build→sign→submit.
+- **Read side:** `refreshBalance()` -- per-parcel P2SH derivation (template splice,
+  `bitphoque_p2sh.js`) -> `getUtxosByAddresses` over JSON wRPC (`wss://node.outlawpolitics.org`) ->
+  covenant filter -> reconcile + prune.
+- **Write side (PROVEN LIVE):** sighash (`bitphoque_sighash.js`) -> schnorr sign (`@noble/curves`)
+  -> ABI sigscript (`bitphoque_sigscript.js`) -> JSON submit via `wrpcCall("submitTransaction")`.
+  **Live mined tx `4f3d791f`** -- wallet sent 1000 phoques, node accepted.
+- **Panels wired:** send, split, list, partial-list, claim, merge -- all real build->sign->submit.
   Claim panel proven live (commit `70e9f96`): 3 txs (`d941a074`, `a8bc5081`, `77d595d8`).
   Merge panel proven live (commit `b04c041`).
-- **CLI:** feature-complete — import / balance / list / split / merge / partial-list / claim /
+- **CLI:** feature-complete -- import / balance / list / split / merge / partial-list / claim /
   send / receive. All proven on-chain.
-- **Audit:** `bitphoque_audit_2026-06-25.md` — no fund-loss or supply-break vector found.
+- **Audit:** `bitphoque_audit_2026-06-25.md` -- no fund-loss or supply-break vector found.
 
-### Wallet v2 — PUBLISHED (2026-06-28)
+### Wallet v2 -- PUBLISHED (2026-06-28)
 
 Wallet v2 replaces the original `wallet.html`. Card-based UI, no protocol jargon.
 Published at `https://bitphoque.org/wallet.html` (Hetzner VPS, Caddy static serving).
 
 Commit `9406efb` covers the full session:
-- Sompi→KAS: Buy panel price input now takes KAS, converts internally. No user-facing sompi.
+- Sompi->KAS: Buy panel price input now takes KAS, converts internally. No user-facing sompi.
 - **Listing descriptor emit (Sell):** when a list tx confirms, wallet encodes a parcel descriptor
-  with `forSale: true` + price. Uses the existing 118B descriptor codec — no new format. Submit
+  with `forSale: true` + price. Uses the existing 118B descriptor codec -- no new format. Submit
   handler label is context-aware ("Share this listing code with buyers" vs "Give this code to
   the recipient").
 - **Listing code auto-fill (Buy):** new "Listing code" field at top of Buy panel. Paste a
-  descriptor → `decodeListing()` decodes via `bitphoque_descriptor.js`, auto-fills seller key,
+  descriptor -> `decodeListing()` decodes via `bitphoque_descriptor.js`, auto-fills seller key,
   txid, index, amount, price. Detects receive-vs-listing codes. Manual entry still works below.
 - **KAS-for-fees collapsible:** home screen shows "Need KAS for fees?" dropdown with wallet
   address + faucet link. Shows even when node is unreachable (`kasBalance === null`).
@@ -52,48 +52,46 @@ Commit `9406efb` covers the full session:
 Prior commits: `2c4f55c` (seal resize, welcome screen, QR, collapsibles, Receive panel
 pubkey+QR, audio), `39b8b88` (trademark on seal, powered-by-Kaspa banner).
 
-**Deferred cleanup in `web\`:** `wallet_old.html` (pre-v2 backup) — delete after tested.
-
 **Wallet v2 design spec** at `docs/bitphoque_wallet_v2_design.md`. Open design questions:
 auto-claim vs manual, card aggregation, multi-parcel send.
 
 ### Cross-device testing + claim/send fixes (2026-06-28 evening)
 
 Commit `95edb06`: max(price, CLAIM_PAYMENT) fix in `buildClaimTx`, mojibake cleanup, LAN node
-detect (`192.168.0.118` → Big Daddy). Commit `96fe14b`: auto-merge wiring in Send panel
+detect (`192.168.0.118` -> Big Daddy). Commit `96fe14b`: auto-merge wiring in Send panel
 (chain 2-at-a-time when no single parcel covers the send amount).
 
-Proven live this session: Sell→Buy via listing code cross-device (Entity 1 → Entity 3, 5 KAS
-price), Send + implicit split (Entity 1 → Entity 3, 351 from 850 parcel), LAN node routing
-(phone at `192.168.0.118` → Big Daddy `ws://192.168.0.118:18210`).
+Proven live this session: Sell->Buy via listing code cross-device (Entity 1 -> Entity 3, 5 KAS
+price), Send + implicit split (Entity 1 -> Entity 3, 351 from 850 parcel), LAN node routing
+(phone at `192.168.0.118` -> Big Daddy `ws://192.168.0.118:18210`).
 
 ### Bug triage + fixes (2026-06-28 late evening, sig #001)
 
 Consolidated findings from two Claude Pro accounts (desktop + browser) that had drifted.
 Loaded session findings, console evidence, and VPS handoff notes. Diagnosed four bugs:
 
-1. **Send-to-self output 0 vanishes — ROOT CAUSE FOUND, FIX APPLIED.** Traced through
-   `buildSendTx` → `buildOwnerSignedTx` → `deriveScriptHashHex` → `deriveRedeemScript`. All
-   derivation code is correct. The asymmetry: output 0 uses `recipientPubkey` (from the "To"
-   input field) while output 1 uses `inputOwner` (from the wallet key). For send-to-self, these
-   should match but came from different sources. Console diagnostic confirmed derivation is
-   deterministic — the key pasted into "To" didn't match `myKey.pubHex`. Fix: self-send
-   normalization in `doSend()` — if `xonly(to) === xonly(myKey.pubHex)`, force `to` to
-   `xonly(myKey.pubHex)`. **Needs live test.**
-2. **Restore flow missing passphrase save — NOT A BUG.** `prepDone()` hides the save box when
+1. **Send-to-self output 0 vanishes -- ROOT CAUSE FOUND, FIX APPLIED, PROVEN LIVE (sig #002).**
+   Traced through `buildSendTx` -> `buildOwnerSignedTx` -> `deriveScriptHashHex` ->
+   `deriveRedeemScript`. All derivation code is correct. The asymmetry: output 0 uses
+   `recipientPubkey` (from the "To" input field) while output 1 uses `inputOwner` (from the
+   wallet key). For send-to-self, these should match but came from different sources. Console
+   diagnostic confirmed derivation is deterministic -- the key pasted into "To" didn't match
+   `myKey.pubHex`. Fix: self-send normalization in `doSend()` -- if `xonly(to) === xonly(myKey.pubHex)`,
+   force `to` to `xonly(myKey.pubHex)`.
+2. **Restore flow missing passphrase save -- NOT A BUG.** `prepDone()` hides the save box when
    `window.isSecureContext === false`. Entity 3 (phone) accessed via HTTP over LAN IP
    (`192.168.0.118`), which is not a secure context, so `crypto.subtle` is unavailable. Resolves
    when phone uses `https://bitphoque.org` (HTTPS = secure context).
-3. **Refresh button appears broken — NOT A BUG.** `refreshAll()` is correctly wired
+3. **Refresh button appears broken -- NOT A BUG.** `refreshAll()` is correctly wired
    (`onclick="refreshAll()"` in plain `<script>` block, global scope). No `console.log` on the
-   success path — "no console output" is expected when it works. Likely appeared broken due to
+   success path -- "no console output" is expected when it works. Likely appeared broken due to
    phantom parcels from bug #1.
-4. **Listing descriptor below the fold — FIXED.** Added `out.scrollIntoView({behavior:'smooth',
+4. **Listing descriptor below the fold -- FIXED.** Added `out.scrollIntoView({behavior:'smooth',
    block:'end'})` after tx confirmation text in `submitPendingTx()`.
 
 Also established: session signature system for cross-account status doc synchronization.
 
-### VPS + PUBLIC DEPLOY — DONE (2026-06-28)
+### VPS + PUBLIC DEPLOY -- DONE (2026-06-28)
 
 **Hetzner CX33** (8GB RAM / 4 vCPU / 80GB, Helsinki, Ubuntu 24.04). IP: `89.167.32.239`.
 
@@ -107,43 +105,42 @@ Also established: session signature system for cross-account status doc synchron
   kaspad v2.0.1 (VPS, TN10, --utxoindex, systemd service)
 ```
 
-**Static hosting** also on VPS via Caddy: `bitphoque.org` + `www.bitphoque.org` →
+**Static hosting** also on VPS via Caddy: `bitphoque.org` + `www.bitphoque.org` ->
 `/var/www/bitphoque`. No separate web host needed.
 
-**Deploy workflow:** edit locally → move to `C:\bitphoque\web\` →
+**Deploy workflow:** edit locally -> move to `C:\bitphoque\web\` ->
 `cd /d C:\bitphoque\web && scp <file> root@89.167.32.239:/var/www/bitphoque/`
 
-**SSH key auth configured** — no password prompt for ssh/scp to VPS.
+**SSH key auth configured** -- no password prompt for ssh/scp to VPS.
 
 SSH: `ssh root@89.167.32.239`. Full operational details in `vps_handoff.md`.
 
-**Node sync status (2026-06-28):** Bandaid applied: +8G swapfile (12G total swap),
-`TimeoutStopSec=300`, `LimitNOFILE=65536`. Node alive and syncing at last check: ~200
-blocks/10s with UTXO validation, 3.6G RSS, 1.5G swap used, headers complete, blocks catching
-up. No OOM, no stalls. CX42 (16GB, 16.40 EUR/mo) is the upgrade if bandaid fails.
+**Node sync status (2026-06-29):** IBD at 16%, healthy, ~200 blocks/10s with UTXO validation.
++8G swapfile (12G total swap), `TimeoutStopSec=300`, `LimitNOFILE=65536`. No OOM, no stalls.
+CX42 (16GB, 16.40 EUR/mo) is the upgrade if bandaid fails.
 
-**wallet.html auto-detect:** `location.hostname === "127.0.0.1"` → Big Daddy
-(`ws://127.0.0.1:18210`); `192.168.0.118` → LAN Big Daddy (`ws://192.168.0.118:18210`);
-else → VPS (`wss://node.outlawpolitics.org`). wRPC timeout bumped to 30s (300M UTXO set
+**wallet.html auto-detect:** `location.hostname === "127.0.0.1"` -> Big Daddy
+(`ws://127.0.0.1:18210`); `192.168.0.118` -> LAN Big Daddy (`ws://192.168.0.118:18210`);
+else -> VPS (`wss://node.outlawpositics.org`). wRPC timeout bumped to 30s (300M UTXO set
 needs headroom).
 
 ---
 
 ## What this is (one sentence)
 
-BitPhoque is a covenant-based, native-Layer-1 fungible token on Kaspa TN10 — a practice run for
-mainnet — built on silverscript covenants (`binding=cov` N-to-M plumbing), deliberately NOT the
+BitPhoque is a covenant-based, native-Layer-1 fungible token on Kaspa TN10 -- a practice run for
+mainnet -- built on silverscript covenants (`binding=cov` N-to-M plumbing), deliberately NOT the
 indexer-based KRC-20 path. Phonetic play on "out of f**ks to give," seal mascot, fixed supply, no
 trusted coordinator. Site: https://bitphoque.org/
 
 ---
 
-## DESIGN — SETTLED
+## DESIGN -- SETTLED
 
 - **Architecture:** per-UTXO balance (real token, not a single-UTXO ledger). Conservation-enforced.
 - **Ownership:** per-UTXO signature, `IDENTIFIER_PUBKEY=0x00` (plain checkSig).
 - **Supply:** FIXED at genesis, NO minter. 42,069 phoques. `genesisIsMinter=false`.
-- **Subdivision — BitPups.** 1 phoque = 100,000,000 BitPups (8 dp). TN10 minted as whole units
+- **Subdivision -- BitPups.** 1 phoque = 100,000,000 BitPups (8 dp). TN10 minted as whole units
   (needs re-genesis for mainnet sub-unit headroom).
 - **Sale model (v3):** per-UTXO `forSale` + `price`. Listing = owner-signed. Claim =
   payment-authorized. F1 fix: strict-increasing payment-output indices.
@@ -156,11 +153,11 @@ trusted coordinator. Site: https://bitphoque.org/
 
 ## THE CONTRACTS
 
-### Original token — `covenants/bitphoque.sil` (DEPLOYED)
+### Original token -- `covenants/bitphoque.sil` (DEPLOYED)
 Copied from `kcc20.sil`. State: ownerIdentifier + identifierType + amount + isMinter.
 ABI: `__leader_transfer` + `__delegate_transfer`.
 
-### Sale token v3 — `covenants/bitphoque_sale_v3.sil` (LIVE)
+### Sale token v3 -- `covenants/bitphoque_sale_v3.sil` (LIVE)
 Extends with forSale/price. Script 2793 bytes.
 covenant_id `3baed5a39ed95e6aa62a0d8d46aae39a8d832d4f900e5a6a351dca4fbc326458`.
 Caps 3/3 baked at genesis. F1 fix: strict-increasing payment-output indices.
@@ -175,9 +172,9 @@ cargo run --bin silverc -- C:\bitphoque\covenants\<file>.sil --ctor C:\bitphoque
 ## CONSENSUS RULES
 
 1. v1/Toccata txs use ComputeBudget for input mass, NOT SigopCount.
-2. Covenant input: 111,261 script units → ComputeBudget(11). Plus ~100k for plain P2PK → also ComputeBudget(11).
-3. KIP-9 dust penalty: pay non-dust amounts (≥100M sompi for claims).
-4. Fee floors: genesis 200k; transfer 400k; list/split 700k; claim 900k; merge 1.3M; 2×2 claim 1.5M.
+2. Covenant input: 111,261 script units -> ComputeBudget(11). Plus ~100k for plain P2PK -> also ComputeBudget(11).
+3. KIP-9 dust penalty: pay non-dust amounts (>=100M sompi for claims).
+4. Fee floors: genesis 200k; transfer 400k; list/split 700k; claim 900k; merge 1.3M; 2x2 claim 1.5M.
 5. v1 needs ComputeBudget on EVERY input including plain P2PK.
 
 ### Claim ABI
@@ -204,7 +201,7 @@ wrpcCall("submitTransaction", {
                sequence: 0, sigOpCount: 0, computeBudget: 24 }],
     outputs: [{ value, scriptPublicKey: "0000aa20<hash>87",
                 covenant: {authorizingInput: 0, covenantId (hex)} }],
-    lockTime: 0, subnetworkId: "00…00" (40 hex), gas: 0, payload: "", mass: 0
+    lockTime: 0, subnetworkId: "00...00" (40 hex), gas: 0, payload: "", mass: 0
   },
   allowOrphan: false
 })
@@ -212,7 +209,7 @@ wrpcCall("submitTransaction", {
 
 ### Node quirks
 - Address-index lags tx-index by a few seconds. Mitigation: 3 retries, 3s apart.
-- No by-outpoint UTXO query — `get_utxos_by_addresses` only, filter client-side.
+- No by-outpoint UTXO query -- `get_utxos_by_addresses` only, filter client-side.
 
 ---
 
@@ -225,52 +222,55 @@ wrpcCall("submitTransaction", {
 - **VPS node:** Hetzner CX33, `89.167.32.239`. `wss://node.outlawpolitics.org`.
   SSH: `ssh root@89.167.32.239`. Details in `vps_handoff.md`.
 - **Build clone:** `D:\Tocatta_Projects\kaspa-tn12\silverscript`.
-  **Recopy canonical→clone before running any harness from D:**.
+  **Recopy canonical->clone before running any harness from D:**.
 - **NODE addr rule:** every `.rs` `const NODE` = `127.0.0.1:16210`. No machine IPs.
 
 ### Test entities (PUBLIC keys only)
 
 | Entity | Label | Address | Pubkey (hex) | TKAS |
 |--------|-------|---------|-------------|------|
-| 1 | phoque (webapp) | `kaspatest:qzcpdfrm…` | `1602d48f…` | ~2,999 |
+| 1 | phoque (webapp) | `kaspatest:qzcpdfrm...` | `1602d48f...` | ~2,999 |
 | 2 | kasware | same as Entity 1 (same seed) | same | ~2,999 |
-| 3 | phonePhoques (phone) | `kaspatest:qzhl95s2…` | `15fe5a41…` | 1,000 |
-| 4 | tabletphoques (tablet) | `kaspatest:qpx2a6yx…` | `0995dd10…` | 1,000 |
+| 3 | phonePhoques (phone) | `kaspatest:qzhl95s2...` | `15fe5a41...` | 1,000 |
+| 4 | tabletphoques (tablet) | `kaspatest:qpx2a6yx...` | `0995dd10...` | 1,000 |
 
-**Legacy key labels** (in harness source + `.key` files): buyer1 `8c02c20a…`, buyer2 `5d338aa5…`,
-buyer3 `267496ce…`.
+**Legacy key labels** (in harness source + `.key` files): buyer1 `8c02c20a...`, buyer2 `5d338aa5...`,
+buyer3 `267496ce...`.
 
 - **Faucet:** min 1000 TKAS/request, 24h cap 100k.
 
 ### Genesis vs parcel P2SH
-Genesis = route-1 (`blake2b(entire compiled script)` → P2SH). Parcels = route-2 (template
-splice → `blake2b` → P2SH). Different scripts, different addresses. Wallet derives route-2 only.
+Genesis = route-1 (`blake2b(entire compiled script)` -> P2SH). Parcels = route-2 (template
+splice -> `blake2b` -> P2SH). Different scripts, different addresses. Wallet derives route-2 only.
 
 ---
 
 ## KEY HISTORY (detail in `bitphoque_history.md`)
 
 - **Toolchain split (2026-06-26):** 2-field vs 3-field `EngineFlags` mismatch. Fixed via
-  `[patch]` block in `D:\…\silverscript\Cargo.toml` redirecting all kaspa crates to local
-  3-field `rusty-kaspa`. Green-path proven: CLI send → web Receive → parcel confirmed.
+  `[patch]` block in `D:\...\silverscript\Cargo.toml` redirecting all kaspa crates to local
+  3-field `rusty-kaspa`. Green-path proven: CLI send -> web Receive -> parcel confirmed.
 - **Node addr sweep (2026-06-27):** all 14 `.rs` harnesses repointed from stale machine IPs
   to `127.0.0.1:16210`. Commit `e3f6628`.
 - **Wallet v2 + listing descriptors (2026-06-28):** wallet_v2.html published as wallet.html.
   Listing descriptor emit on Sell, auto-fill on Buy, KAS collapsible, Get Started on lander.
   VPS IBD completed. Commit `9406efb`.
-- **bitphoque.org hosting (2026-06-28):** DNS (Namecheap A records) → Hetzner. Caddy site
+- **bitphoque.org hosting (2026-06-28):** DNS (Namecheap A records) -> Hetzner. Caddy site
   block for static serving. SSH key auth. Deploy via scp. wallet.html auto-detect node URL +
   30s timeout. Operating baseline updated (3 additions). VPS node restarted after post-import
   stall.
-- **VPS upgrade (2026-06-27):** CX22 → CX33 after kaspad OOM during IBD.
+- **VPS upgrade (2026-06-27):** CX22 -> CX33 after kaspad OOM during IBD.
 - **Claim harness EngineFlags fix (2026-06-27):** added `zk_hardening_enabled: true`.
-- **Cross-device testing (2026-06-28 evening):** Sell→Buy proven cross-device. max(price,floor)
+- **Cross-device testing (2026-06-28 evening):** Sell->Buy proven cross-device. max(price,floor)
   fix. Auto-merge in Send. LAN node detect. Send-to-self bug found (output 0 vanishes).
   Commits `95edb06`, `96fe14b`.
 - **Bug triage + fixes (2026-06-28 late, sig #001):** Consolidated two drifted accounts.
   Send-to-self root cause: key source mismatch, not derivation bug. Self-send normalization
   fix + listing descriptor scroll fix applied. Restore passphrase and refresh button
-  investigated — both not bugs. Session signature system established.
+  investigated -- both not bugs. Session signature system established.
+- **Send-to-self proven + deploy (2026-06-29, sig #002):** Self-send live-tested (107+42 both
+  visible). wallet.html redeployed to VPS. Deferred cleanup resolved. Three-part session
+  record added to operating baseline (both trees). Commit `03d6bdf`.
 
 ---
 
@@ -280,9 +280,9 @@ splice → `blake2b` → P2SH). Different scripts, different addresses. Wallet d
 C:\bitphoque\
   .gitignore                           <- *.key + wallet.json
   bitphoque_owner.key                  <- original/funding signer (GITIGNORED)
-  bitphoque_buyer1.key                 <- buyer1 8c02c20a… (GITIGNORED)
-  bitphoque_buyer2.key                 <- buyer2 5d338aa5… (GITIGNORED)
-  bitphoque_buyer3.key                 <- buyer3 267496ce… (GITIGNORED)
+  bitphoque_buyer1.key                 <- buyer1 8c02c20a... (GITIGNORED)
+  bitphoque_buyer2.key                 <- buyer2 5d338aa5... (GITIGNORED)
+  bitphoque_buyer3.key                 <- buyer3 267496ce... (GITIGNORED)
   wallet.json                          <- CLI parcel state (GITIGNORED)
   covenants\
     bitphoque_sale_v3.sil              <- LIVE covenant source (F1 fix)
@@ -297,8 +297,6 @@ C:\bitphoque\
     (+ reject tests, sale harnesses, keygen, merge, split-transfer)
   web\
     wallet.html                        <- the wallet (v2, card-based UI)
-    wallet_old.html                    <- pre-v2 backup (DELETE — deferred cleanup)
-    fix_price.ps1                      <- one-shot edit script (DELETE — deferred cleanup)
     bitphoque_p2sh.js                  <- in-browser P2SH derivation
     bitphoque_sighash.js               <- sighash (keyed blake2b)
     bitphoque_sigscript.js             <- ABI sigscript builder
@@ -308,7 +306,7 @@ C:\bitphoque\
     kaspa-logo.png                     <- Kaspa logo for powered-by banner
     phoque2.wav                        <- audio for lander button
     vendor/                            <- @scure/bip39, @scure/bip32, @noble/curves,
-                                          @noble/hashes, qrcode-generator.mjs — all vendored
+                                          @noble/hashes, qrcode-generator.mjs -- all vendored
   docs\
     bitphoque_status.md                <- this file
     bitphoque_history.md               <- on-chain tx ledger + session history
@@ -326,18 +324,18 @@ Own git repo (branch `master`). Not yet pushed to GitHub.
 
 ## REFERENCE (adapted sources)
 
-- `kcc20.sil` — token contract. `kcc20-minter.sil` — deliberately NOT used.
-- `covenant_escrow.sil` / `covenant_mecenas.sil` — output-payment-inspection patterns.
-- `kcc20_tests.rs` + `common.rs` — leader/delegate sigscript, local-test pattern.
-- `crypto/txscript/src/lib.rs` + `script_builder.rs` — element cap + with_flags.
-- `consensus/core/src/mass/mod.rs` — calc_storage_mass, ComputeBudget, script-units.
-- `consensus/core/src/hashing/sighash.rs` — calc_schnorr_signature_hash.
-- `consensus/core/src/hashing/hashers.rs` — TransactionSigningHash key.
-- `silverscript-lang/src/compiler/mod.rs` — build_sig_script_for_covenant_decl.
+- `kcc20.sil` -- token contract. `kcc20-minter.sil` -- deliberately NOT used.
+- `covenant_escrow.sil` / `covenant_mecenas.sil` -- output-payment-inspection patterns.
+- `kcc20_tests.rs` + `common.rs` -- leader/delegate sigscript, local-test pattern.
+- `crypto/txscript/src/lib.rs` + `script_builder.rs` -- element cap + with_flags.
+- `consensus/core/src/mass/mod.rs` -- calc_storage_mass, ComputeBudget, script-units.
+- `consensus/core/src/hashing/sighash.rs` -- calc_schnorr_signature_hash.
+- `consensus/core/src/hashing/hashers.rs` -- TransactionSigningHash key.
+- `silverscript-lang/src/compiler/mod.rs` -- build_sig_script_for_covenant_decl.
 
 ---
 
-## PARKED DESIGN — see `bitphoque_swap_covenant_design.md`
+## PARKED DESIGN -- see `bitphoque_swap_covenant_design.md`
 
 1. Gas-tank fee sizing (buyer 900k/claim, lister 700k/listing).
 2. Wallet sends pups + dust (derive dust floor from KIP-9).
@@ -345,46 +343,48 @@ Own git repo (branch `master`). Not yet pushed to GitHub.
 4. "Boques" = colloquial for phoques; denomination story.
 5. Price-escalating emission = step bonding curve.
 6. Wallet clarity (KAS vs phoque disambiguation, unit-confusion audit).
-7. Key naming — legacy buyer1/2/3 rename sweep deferred.
+7. Key naming -- legacy buyer1/2/3 rename sweep deferred.
 
 ---
 
 ## OPEN ITEMS
 
-- [x] Onboarding, read side, write side — all proven live
-- [x] All panels wired — send, split, list, partial-list, claim, merge
+- [x] Onboarding, read side, write side -- all proven live
+- [x] All panels wired -- send, split, list, partial-list, claim, merge
 - [x] CLI feature-complete
-- [x] VPS deployed — Hetzner CX33, Caddy TLS, `wss://node.outlawpolitics.org`
-- [x] VPS IBD complete — node synced, 300M UTXOs
-- [x] Site published — `bitphoque.org` on Hetzner (Caddy static + TLS)
+- [x] VPS deployed -- Hetzner CX33, Caddy TLS, `wss://node.outlawpolitics.org`
+- [x] VPS IBD complete -- node synced, 300M UTXOs
+- [x] Site published -- `bitphoque.org` on Hetzner (Caddy static + TLS)
 - [x] Wallet v2 published (card-based UI, listing descriptors, KAS collapsible, Get Started)
 - [x] `max(price, CLAIM_PAYMENT)` fix in `buildClaimTx` (commit `95edb06`)
 - [x] Auto-merge wiring in Send panel (commit `96fe14b`)
 - [x] Hetzner swap bandaid applied (+8G swapfile, 12G total, systemd tweaks)
 - [x] Send-to-self root cause identified + normalization fix applied (sig #001)
 - [x] Listing descriptor scroll fix applied (sig #001)
-- [x] Restore passphrase save investigated — secure-context gate, not a bug (sig #001)
-- [x] Refresh button investigated — not broken, no console.log on success path (sig #001)
+- [x] Restore passphrase save investigated -- secure-context gate, not a bug (sig #001)
+- [x] Refresh button investigated -- not broken, no console.log on success path (sig #001)
 - [x] Session signature system established (sig #001)
-- [ ] **Live-test send-to-self fix** — do a send-to-self, confirm both outputs appear
-- [ ] **Deploy wallet.html to VPS** — scp after send-to-self fix is tested
-- [ ] Hetzner node: confirm sync completes (was ~200 blocks/10s at last check, healthy)
-- [ ] Update hardcoded `127.0.0.1:8080` links in wallet/lander to `https://bitphoque.org`
+- [x] **Live-test send-to-self fix** -- proven live, both outputs visible (sig #002)
+- [x] **Deploy wallet.html to VPS** -- deployed (sig #002)
+- [x] Update hardcoded `127.0.0.1:8080` links -- already clean (sig #002)
+- [x] Clean up `wallet_old.html` from `web\` -- already gone (sig #002)
+- [x] Clean up `fix_price.ps1` from `web\` -- already gone (sig #002)
+- [ ] Hetzner node: confirm sync completes (16% IBD at sig #002, healthy, ~7-8h remaining)
 - [ ] cPanel: evaluate whether still needed (outlawpolitics.org has other content?)
-- [ ] Multi-entity testing (Entity1–4 cross-device send/claim/list)
-- [ ] Listing bulletin board — static JSON on VPS, wallet POSTs on Sell, GETs on Buy
+- [ ] Multi-entity testing (Entity1-4 cross-device send/claim/list)
+- [ ] Listing bulletin board -- static JSON on VPS, wallet POSTs on Sell, GETs on Buy
 - [ ] Parcel picker UX (dropdown from tracked parcels)
-- [ ] Cache busting — `?v=<version>` on dynamic `import()` paths (deferred)
+- [ ] Cache busting -- `?v=<version>` on dynamic `import()` paths (deferred)
 - [ ] SMS Twilio node-monitor
-- [ ] Original-token zero-pubkey owner quirk (observed, not blocking)
-- [ ] Auction — separate future build (stateful/temporal)
+- [x] Original-token zero-pubkey owner quirk -- tested v3 genesis, owner baked correctly, not reproducible (throwaway genesis 0c81fda9, cleaned up)
+- [ ] Auction -- separate future build (stateful/temporal)
 - [ ] Mainnet: clear `bitphoque_mainnet_checklist.md`
-  - NOTE: re-genesis produces a new `covenant_id`; sweep `3baed5a3…` in ALL JS + harnesses
+  - NOTE: re-genesis produces a new `covenant_id`; sweep `3baed5a3...` in ALL JS + harnesses
 - [ ] Make public on GitHub (clean repo name + README + secret-sweep)
-- [ ] D: build-clone bin sweep (recopy all 14 canonical harnesses → clone, rebuild)
+  - Strip minter branch from .sil before publishing (dead code in deployment, social engineering risk if forked with isMinter=true). Covenant_id changes = re-genesis required, so strip in source only, publish stripped version, keep deployed TN10 contract as-is until mainnet re-genesis.
+- [ ] D: build-clone bin sweep (recopy all 14 canonical harnesses -> clone, rebuild)
 - [ ] Delete `C:\_RETIRED_kaspa-tn12` (file-handle release pending)
-- [ ] Clean up `wallet_old.html` from `web\`
-- [ ] Clean up `fix_price.ps1` from `web\`
+- [ ] Contract mainnet review: F1 strict-increasing vs per-output accounting, caps 3/3 sizing, price=0 wallet guard, minter branch strip — do BEFORE re-genesis
 
 ---
 
@@ -392,4 +392,12 @@ Own git repo (branch `master`). Not yet pushed to GitHub.
 
 _Append-only. Newest first. Format: seq | datetime TZ | agent | trees | scope | head._
 
-—sig #001 | 2026-06-28 23:02 EST | browser | trees: bitphoque | scope: consolidated two drifted accounts, diagnosed send-to-self bug (key source mismatch not derivation), self-send normalization fix, listing descriptor scroll fix, restore/refresh investigated (not bugs), session signature system established | head: 9e9640f
+---sig #002 | 2026-06-29 00:00 EST | desktop | trees: bitphoque, oracle-protocol
+
+OPENING ASSESSMENT: Believed send-to-self fix was applied but untested (top blocker), VPS wallet.html was stale, VPS node syncing but unconfirmed, two deferred deletes pending (wallet_old.html, fix_price.ps1), hardcoded 127.0.0.1:8080 links needed updating. Plan: live-test self-send, deploy to VPS, check node, clean up deferred items.
+
+CLOSING: Send-to-self proven live (107+42 both visible). wallet.html deployed to VPS via scp. VPS node healthy at 16% IBD (~7-8h remaining). Three-part session record added to operating baseline (both trees committed). Stale dated file session_findings_2026-06-28.md deleted. Deferred cleanup items all resolved (wallet_old.html already gone, fix_price.ps1 already gone, hardcoded links already clean).
+
+DRIFT: Opening assumed deferred deletes and link cleanup were actual work items -- all three were already resolved before this session. The real work was just the self-send test and VPS deploy. No misdiagnosis on the send-to-self fix itself -- it worked as described in sig #001. IBD is a wait, not a task. | head: 03d6bdf
+
+---sig #001 | 2026-06-28 23:02 EST | browser | trees: bitphoque | scope: consolidated two drifted accounts, diagnosed send-to-self bug (key source mismatch not derivation), self-send normalization fix, listing descriptor scroll fix, restore/refresh investigated (not bugs), session signature system established | head: 9e9640f

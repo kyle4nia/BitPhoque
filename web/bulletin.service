@@ -1,0 +1,13 @@
+[Unit]
+Description=BitPhoque Listing Bulletin Board
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /root/bulletin/bulletin.py
+WorkingDirectory=/root/bulletin
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

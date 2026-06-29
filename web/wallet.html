@@ -1287,12 +1287,47 @@ async function doSell(){
   }
 
   window._pendingSendTx = result.txJson;
-  window._pendingDesc = null;
+  window._pendingDesc = { recipientPubkey: owner, sendAmount: BigInt(amt), outputIndex: 0, forSale: true, price: BigInt(priceSompi) };
 
   out.textContent = 'Ready to list.\n\n' + amt + ' phoques for sale at ' + priceKas + ' KAS' +
     (isPartial ? '\n' + (iamt - amt) + ' phoques kept in wallet' : '') +
     '\nFee: 0.007 TKAS\n\nTap "Confirm listing" to broadcast.';
   document.getElementById('storySubmitBtn').style.display = 'block';
+}
+
+/* ---- BULLETIN BOARD ---- */
+async function browseBulletin(){
+  const list = document.getElementById('bulletinList');
+  if(list.style.display !== 'none'){ list.style.display='none'; return; }
+  list.innerHTML = '<p style="color:var(--muted,#888)">Loading listings...</p>';
+  list.style.display = 'block';
+  try {
+    const resp = await fetch('https://bitphoque.org/api/listings');
+    const items = await resp.json();
+    if(!items.length){ list.innerHTML='<p style="color:var(--muted,#888)">No listings yet. Be the first to sell!</p>'; return; }
+    const {decodeDescriptor} = await import('./bitphoque_descriptor.js');
+    let html = '';
+    for(const item of items){
+      try {
+        const d = decodeDescriptor(item.descriptor);
+        if(!d.forSale) continue;
+        const kas = (Number(d.price) / 100000000).toFixed(2);
+        html += '<div style="border:1px solid var(--accent,#e94560);border-radius:8px;padding:10px;margin-bottom:8px;cursor:pointer" onclick="pickListing(\''+item.descriptor.replace(/'/g,"\\'")+'\')">' +
+          '<b>'+d.amount+' phoques</b> — '+kas+' KAS' +
+          '<br><span style="font-size:0.8em;color:var(--muted,#888)">'+new Date(item.timestamp*1000).toLocaleString()+'</span>' +
+          '</div>';
+      } catch(e){ /* skip bad descriptors */ }
+    }
+    if(!html) html='<p style="color:var(--muted,#888)">No valid listings found.</p>';
+    list.innerHTML = html;
+  } catch(e){
+    list.innerHTML = '<p style="color:#e94560">Could not reach bulletin board: '+(e.message||e)+'</p>';
+  }
+}
+function pickListing(desc){
+  const codeField = document.getElementById('b_code');
+  if(codeField){ codeField.value = desc; decodeListing(); }
+  document.getElementById('bulletinList').style.display='none';
 }
 
 /* ---- BUY (claim a listing) ---- */
@@ -1303,6 +1338,8 @@ function openBuy(){
     '<label>Listing code</label>' +
     '<input class="fld" id="b_code" placeholder="Paste a listing code to auto-fill" autocomplete="off" spellcheck="false" oninput="decodeListing()">' +
     '<div class="hint" id="b_codeHint" style="margin-bottom:12px"></div>' +
+    '<button class="btn" style="margin-bottom:16px;background:var(--card-bg,#1a1a2e);border:1px solid var(--accent,#e94560)" onclick="browseBulletin()">Browse listings</button>' +
+    '<div id="bulletinList" style="display:none;margin-bottom:16px"></div>' +
     '<label>Seller\'s key</label>' +
     '<input class="fld" id="b_seller" placeholder="Seller\'s public key" autocomplete="off" spellcheck="false">' +
     '<label>Listing ID</label>' +
@@ -1365,7 +1402,7 @@ async function doBuy(){
     const msg = await wrpcCall("getUtxosByAddresses", {addresses:[covAddr]});
     const entries = (msg.params&&msg.params.entries)||[];
     const match = entries.find(e=>e.outpoint&&e.outpoint.transactionId===txid&&e.outpoint.index===idx);
-    if(!match){ out.textContent = 'Listing not found on chain. It may have already been bought, or the details are wrong.'; return; }
+    if(!match){ out.textContent = 'This listing has already been claimed. Don\'t be a lazy phoque next time! 🦭'; return; }
     covValue = BigInt(match.utxoEntry.amount);
   } catch(e){ out.textContent = 'Node unreachable: '+(e.message||e); return; }
 
@@ -1458,11 +1495,14 @@ async function submitPendingTx(){
           covenantId: COVENANT_ID_HEX,
           ownerPubkey: pd.recipientPubkey,
           amount: pd.sendAmount,
-          forSale: false,
-          price: 0n,
+          forSale: !!pd.forSale,
+          price: pd.price || 0n,
           txid: txid,
           outputIndex: pd.outputIndex,
         });
+        if(pd.forSale){
+          try { fetch('https://bitphoque.org/api/listings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({descriptor:desc,txid:txid})}); } catch(e){}
+        }
         extra = '\n\n' + (pd.forSale ? 'Share this listing code with buyers (they paste it into Buy)' : 'Give this code to the recipient (they paste it into Receive)') + ':\n'+desc;
       } catch(e){ extra='\n\n(Code generation failed: '+(e.message||e)+')'; }
     }
