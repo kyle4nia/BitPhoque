@@ -91,6 +91,23 @@ Loaded session findings, console evidence, and VPS handoff notes. Diagnosed four
 
 Also established: session signature system for cross-account status doc synchronization.
 
+### Config extraction + deployment structure (2026-06-29, sig #005)
+
+Commit `52d6f24`: new `bitphoque_config.js` module (NETWORK, COVENANT_ID_HEX,
+COVENANT_ID_SHORT, WRPC_URL_PUBLIC). All scattered hardcoded values extracted:
+`bitphoque_tx.js` imports COVENANT_ID_HEX, `bitphoque_descriptor.js` imports
+COVENANT_ID_HEX, `bitphoque_p2sh.js` imports NETWORK, `wallet.html` 9 'kaspatest'
+literals reduced to 1 (line 61 config point) + 1 COVENANT_ID (line 649). To flip
+networks: change `bitphoque_config.js` + 2 wallet.html lines.
+
+Deployment structure: `testnet.bitphoque.org` (Caddy site block, `/var/www/bitphoque-testnet/`)
++ `bitphoque.org` (becomes mainnet at launch). Both HTTPS, both live. Same code, one config
+difference at flip time.
+
+VPS node: `--addpeer=47.135.159.199:16211` added to kaspad service (Big Daddy P2P feed,
+port-forwarded). Sync rate jumped from 198 blocks/10s with 0 UTXO-validated to 300+/10s
+with 100+ validated. Volume resized 150G -> 200G (66G free at 26% UTXO validation).
+
 ### VPS + PUBLIC DEPLOY -- DONE (2026-06-28)
 
 **Hetzner CX33** (8GB RAM / 4 vCPU / 80GB, Helsinki, Ubuntu 24.04). IP: `89.167.32.239`.
@@ -106,7 +123,7 @@ Also established: session signature system for cross-account status doc synchron
 ```
 
 **Static hosting** also on VPS via Caddy: `bitphoque.org` + `www.bitphoque.org` ->
-`/var/www/bitphoque`. No separate web host needed.
+`/var/www/bitphoque`; `testnet.bitphoque.org` -> `/var/www/bitphoque-testnet/`. No separate web host needed.
 
 **Deploy workflow:** edit locally -> move to `C:\bitphoque\web\` ->
 `cd /d C:\bitphoque\web && scp <file> root@89.167.32.239:/var/www/bitphoque/`
@@ -115,9 +132,9 @@ Also established: session signature system for cross-account status doc synchron
 
 SSH: `ssh root@89.167.32.239`. Full operational details in `vps_handoff.md`.
 
-**Node sync status (2026-06-29):** IBD at 16%, healthy, ~200 blocks/10s with UTXO validation.
+**Node sync status (2026-06-29):** UTXO validation at 26%, ~300 blocks/10s via Big Daddy addpeer.
 +8G swapfile (12G total swap), `TimeoutStopSec=300`, `LimitNOFILE=65536`. No OOM, no stalls.
-CX42 (16GB, 16.40 EUR/mo) is the upgrade if bandaid fails.
+Volume resized 150G -> 200G (66G free). CX42 (16GB, 16.40 EUR/mo) is the upgrade if bandaid fails.
 
 **wallet.html auto-detect:** `location.hostname === "127.0.0.1"` -> Big Daddy
 (`ws://127.0.0.1:18210`); `192.168.0.118` -> LAN Big Daddy (`ws://192.168.0.118:18210`);
@@ -268,6 +285,9 @@ splice -> `blake2b` -> P2SH). Different scripts, different addresses. Wallet der
   Send-to-self root cause: key source mismatch, not derivation bug. Self-send normalization
   fix + listing descriptor scroll fix applied. Restore passphrase and refresh button
   investigated -- both not bugs. Session signature system established.
+- **Config extraction + deployment structure (2026-06-29, sig #005):** `bitphoque_config.js`
+  created, all modules + wallet.html wired to single config surface. `testnet.bitphoque.org`
+  deployed (Caddy + TLS). VPS node addpeer to Big Daddy, volume 150G->200G. Commit `52d6f24`.
 - **Send-to-self proven + deploy (2026-06-29, sig #002):** Self-send live-tested (107+42 both
   visible). wallet.html redeployed to VPS. Deferred cleanup resolved. Three-part session
   record added to operating baseline (both trees). Commit `03d6bdf`.
@@ -297,6 +317,7 @@ C:\bitphoque\
     (+ reject tests, sale harnesses, keygen, merge, split-transfer)
   web\
     wallet.html                        <- the wallet (v2, card-based UI)
+    bitphoque_config.js                <- network config (testnet/mainnet flip)
     bitphoque_p2sh.js                  <- in-browser P2SH derivation
     bitphoque_sighash.js               <- sighash (keyed blake2b)
     bitphoque_sigscript.js             <- ABI sigscript builder
@@ -374,7 +395,10 @@ Own git repo (branch `master`). Not yet pushed to GitHub.
 - [ ] Multi-entity testing (Entity1-4 cross-device send/claim/list)
 - [x] Listing bulletin board -- Python service on VPS (systemd), Caddy /api/* proxy, wallet Browse/POST, lazy phoque message (sig #003, commit `1fb7837`)
 - [ ] Parcel picker UX (dropdown from tracked parcels)
-- [ ] Cache busting -- `?v=<version>` on dynamic `import()` paths (deferred)
+- [x] Config extraction -- `bitphoque_config.js`, all modules + wallet.html wired (commit `52d6f24`, sig #005)
+- [x] Deployment structure -- `testnet.bitphoque.org` live, Caddy + TLS (sig #005)
+- [x] VPS volume resize 150G -> 200G, addpeer to Big Daddy (sig #005)
+- [ ] Cache busting -- `?v=<version>` on dynamic `import()` paths (next session priority)
 - [ ] SMS Twilio node-monitor
 - [x] Original-token zero-pubkey owner quirk -- tested v3 genesis, owner baked correctly, not reproducible (throwaway genesis 0c81fda9, cleaned up, sig #003)
 - [ ] Auction -- separate future build (stateful/temporal)
@@ -408,3 +432,11 @@ OPENING ASSESSMENT: VPS node was at 16% IBD (sig #002). Zero-pubkey quirk was op
 CLOSING: VPS node at 91% IBD, healthy. Zero-pubkey quirk closed — throwaway v3 genesis confirmed owner baked correctly (tx 0c81fda9, cleaned up). Bulletin board live: Python service on VPS (systemd), Caddy /api/* proxy, wallet Sell POSTs listing on confirm, Buy has Browse button with tappable cards, absolute URLs work from any node. Lazy phoque message for stale listings.
 
 DRIFT: Zero-pubkey quirk took less time than expected — single genesis+inspect cycle settled it. Bulletin board went smoothly — no compile issues, no CORS problems. The only surprise was relative vs absolute fetch URLs (local wallet couldn't reach /api/listings), fixed in-session.
+---sig #005 | 2026-06-29 ~14:00 EST | desktop | trees: bitphoque | scope: config extraction (bitphoque_config.js), deployment structure (testnet.bitphoque.org), VPS addpeer + volume resize | head: 52d6f24
+OPENING ASSESSMENT: VPS node syncing slowly (91% header, 0 UTXO-validated). Config values hardcoded across 4 JS files + wallet.html. No testnet/mainnet deployment separation. Volume at 83% (25G free). Plan: speed up sync via addpeer, extract config, set up deployment structure.
+CLOSING: VPS syncing at 300+ blocks/10s with 100+ UTXO-validated via Big Daddy addpeer. Config extraction complete (1 config file, 3 modules + wallet wired). testnet.bitphoque.org live with TLS. Volume resized 150G->200G. Cache busting flagged as next priority.
+DRIFT: VPS UTXO validation restart (5% then climbing) was unexpected -- restart resets validation counter even though headers were 91%. Disk math showed volume would run out (~3G margin) so volume resize was unplanned but necessary. Config extraction and deployment structure went smoothly with no surprises.
+---sig #004 | 2026-06-29 ~12:00 EST | desktop | trees: bitphoque | scope: contract mainnet review — v4 covenant source, mainnet checklist expansion | head: 48b7674
+OPENING ASSESSMENT: Contract had four open review items flagged in the status doc (F1 strict-increasing vs per-output accounting, caps 3/3 sizing, price=0 wallet guard, minter branch strip). Mainnet checklist existed but didn't detail specific source changes. Plan: resolve all four, draft v4 covenant, update checklist.
+CLOSING: All four items resolved. Two additional issues found and fixed (amount>0 guard, identifierType strip). bitphoque_sale_v4.sil delivered to covenants\. Mainnet checklist expanded with items 5/7/8 and launch sequence updated to 11 steps. Status doc contract review item checked off. Everything remaining is blocked on silverscript V1 release.
+DRIFT: No misdiagnosis. The four flagged items were real and resolved as expected. Two bonus items emerged from reading the source (zero-amount outputs, dead identifierType field) — neither was tracked before this session. No surprises, no blockers hit.
