@@ -1030,10 +1030,71 @@ async function doSend(){
 
   if(!pick){
     const totalHeld = held.reduce((a,p) => a + BigInt(p.covenant_amount||0), 0n);
-    out.textContent = totalHeld >= BigInt(amt)
-      ? 'No single group has ' + amt + ' phoques. You have ' + held.length + ' groups totaling ' + groupThousands(totalHeld) + ', but combining isn\'t supported yet.'
-      : 'You only have ' + groupThousands(totalHeld) + ' phoques.';
-    return;
+    if(totalHeld < BigInt(amt)){
+      out.textContent = 'You only have ' + groupThousands(totalHeld) + ' phoques.';
+      return;
+    }
+    out.textContent = 'Merging groups to cover ' + amt + ' phoques...';
+    const {buildMergeTx} = await import('./bitphoque_tx.js');
+    const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js');
+    while(true){
+      const h = parcels.filter(p => !p.forSale).sort((a,b) => parseInt(b.covenant_amount) - parseInt(a.covenant_amount));
+      const big = h.find(p => parseInt(p.covenant_amount) >= amt);
+      if(big){ pick = big; break; }
+      if(h.length < 2){ out.textContent = 'Not enough groups to merge.'; return; }
+      const p0 = h[0], p1 = h[1];
+      const [t0,i0] = p0.outpoint.split(':');
+      const [t1,i1] = p1.outpoint.split(':');
+      const a0 = deriveP2SHAddress(xonly(myKey.pubHex), BigInt(p0.covenant_amount), false, 0n, 'kaspatest');
+      const a1 = deriveP2SHAddress(xonly(myKey.pubHex), BigInt(p1.covenant_amount), false, 0n, 'kaspatest');
+      let v0, v1;
+      try {
+        const m0 = await wrpcCall("getUtxosByAddresses", {addresses:[a0]});
+        const e0 = ((m0.params&&m0.params.entries)||[]).find(e=>e.outpoint&&e.outpoint.transactionId===t0&&e.outpoint.index===parseInt(i0));
+        if(!e0) throw new Error('group ' + t0.slice(0,8) + ' not found on chain');
+        v0 = BigInt(e0.utxoEntry.amount);
+        const m1 = await wrpcCall("getUtxosByAddresses", {addresses:[a1]});
+        const e1 = ((m1.params&&m1.params.entries)||[]).find(e=>e.outpoint&&e.outpoint.transactionId===t1&&e.outpoint.index===parseInt(i1));
+        if(!e1) throw new Error('group ' + t1.slice(0,8) + ' not found on chain');
+        v1 = BigInt(e1.utxoEntry.amount);
+      } catch(e){ out.textContent = 'Merge lookup failed: '+(e.message||e); return; }
+      let mr;
+      try {
+        mr = buildMergeTx({
+          in0TxId: t0, in0Index: parseInt(i0), in0Value: v0, in0Amount: p0.covenant_amount,
+          in1TxId: t1, in1Index: parseInt(i1), in1Value: v1, in1Amount: p1.covenant_amount,
+          ownerPubkey: xonly(myKey.pubHex), privkeyHex: myKey.privHex,
+        });
+      } catch(e){ out.textContent = 'Merge build failed: '+(e.message||e); return; }
+      let mid;
+      try {
+        const r = await wrpcCall("submitTransaction", mr.txJson);
+        mid = (r.params&&r.params.transactionId)||(r.transactionId)||null;
+        if(!mid){ out.textContent = 'Merge returned no transaction ID.'; return; }
+      } catch(e){ out.textContent = 'Merge rejected: '+(e.message||e); return; }
+      const ma = String(BigInt(p0.covenant_amount) + BigInt(p1.covenant_amount));
+      parcels = parcels.filter(p => p.outpoint !== p0.outpoint && p.outpoint !== p1.outpoint);
+      parcels.push({
+        owner: xonly(myKey.pubHex), covenant_amount: ma,
+        amount_pups: (BigInt(ma) * 100000000n).toString(),
+        forSale: false, price: '0', outpoint: mid + ':0',
+      });
+      saveParcels(); renderBalance();
+      out.textContent = 'Merged ' + p0.covenant_amount + ' + ' + p1.covenant_amount + ' = ' + ma + ' phoques.\nWaiting for confirmation...';
+      const maddr = deriveP2SHAddress(xonly(myKey.pubHex), BigInt(ma), false, 0n, 'kaspatest');
+      let confirmed = false;
+      for(let att = 0; att < 30; att++){
+        await new Promise(r => setTimeout(r, 2000));
+        try {
+          const chk = await wrpcCall("getUtxosByAddresses", {addresses:[maddr]});
+          const ent = ((chk.params&&chk.params.entries)||[]).find(e=>e.outpoint&&e.outpoint.transactionId===mid&&e.outpoint.index===0);
+          if(ent){ confirmed = true; break; }
+        } catch(e){}
+        out.textContent = 'Merged ' + p0.covenant_amount + ' + ' + p1.covenant_amount + ' = ' + ma + '.\nWaiting for confirmation (' + (att+1) + '/30)...';
+      }
+      if(!confirmed){ out.textContent = 'Merge tx ' + mid.slice(0,8) + ' submitted but not confirmed after 60s. Refresh and retry.'; return; }
+    }
+    out.textContent = 'Merge complete. Building send...';
   }
 
   const iamt = parseInt(pick.covenant_amount);
