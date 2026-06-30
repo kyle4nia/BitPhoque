@@ -108,6 +108,17 @@ VPS node: `--addpeer=47.135.159.199:16211` added to kaspad service (Big Daddy P2
 port-forwarded). Sync rate jumped from 198 blocks/10s with 0 UTXO-validated to 300+/10s
 with 100+ validated. Volume resized 150G -> 200G (66G free at 26% UTXO validation).
 
+### Parcel registry -- LIVE (2026-06-30, sig #007)
+
+Bulletin board extended into parcel registry. Server: `POST /api/parcels` registers
+output parcels (deduped by outpoint), `GET /api/parcels?owner=<pubkey>` returns all
+known parcels for an owner. Wallet: `discoverParcels()` queries registry on every
+refresh, validates each candidate on-chain before adding. `registerParcels()` POSTs
+output parcels on every tx confirm. `refreshBalance()` seeds registry with all confirmed
+parcels on every refresh. Fresh wallet restored from seed phrase discovers held phoques
+automatically -- no descriptors needed. Brute-force scan (1-42,069 amounts, 500/batch)
+used for one-time bootstrap. Commit `ba57407`.
+
 ### VPS + PUBLIC DEPLOY -- DONE (2026-06-28)
 
 **Hetzner CX33** (8GB RAM / 4 vCPU / 80GB, Helsinki, Ubuntu 24.04). IP: `89.167.32.239`.
@@ -285,6 +296,9 @@ splice -> `blake2b` -> P2SH). Different scripts, different addresses. Wallet der
   Send-to-self root cause: key source mismatch, not derivation bug. Self-send normalization
   fix + listing descriptor scroll fix applied. Restore passphrase and refresh button
   investigated -- both not bugs. Session signature system established.
+- **Parcel registry (2026-06-30, sig #007):** bulletin.py extended with /api/parcels.
+  Wallet discovers parcels from registry on open, seeds on refresh, registers on tx
+  confirm. Brute-force scan bootstrapped 3 parcels for Entity 1. Commit `ba57407`.
 - **Config extraction + deployment structure (2026-06-29, sig #005):** `bitphoque_config.js`
   created, all modules + wallet.html wired to single config surface. `testnet.bitphoque.org`
   deployed (Caddy + TLS). VPS node addpeer to Big Daddy, volume 150G->200G. Commit `52d6f24`.
@@ -393,6 +407,7 @@ Own git repo (branch `master`). Not yet pushed to GitHub.
 ### Deployment-critical (testnet trial)
 - [x] Sent receipts persistence -- localStorage + Sent receipts panel, descriptors saved on encode (commit `f1c6bdc`, sig #006)
 - [x] Owner filtering -- isOwn() guard on all parcel selection, multi-key wallet fix (commit `f1c6bdc`, sig #006)
+- [x] Parcel registry live -- discover on open, seed on refresh, register on confirm (commit `ba57407`, sig #007)
 
 ### Deployment-critical (testnet trial)
 - [ ] Hetzner node: confirm sync completes (71% volume, syncing healthy at sig #006)
@@ -414,6 +429,14 @@ Own git repo (branch `master`). Not yet pushed to GitHub.
 ## SESSION SIGNATURES
 
 _Append-only. Newest first. Format: seq | datetime TZ | agent | trees | scope | head._
+
+---sig #007 | 2026-06-30 ~09:00 EST | desktop | trees: bitphoque | scope: parcel registry (bulletin.py + wallet discover/register/seed), bootstrap scan | head: ba57407
+
+OPENING ASSESSMENT: VPS node synced. Wallet shows KAS balance on open but not phoque state. Suspected missing refresh-on-open call. Plan: wire phoque refresh on wallet open.
+
+CLOSING: Root cause was architectural: KAS lives at one P2PK address, but each phoque parcel has a unique P2SH (owner+amount+forSale+price). No single address to scan. Built parcel registry: bulletin.py extended with /api/parcels (POST to register, GET by owner). Wallet wired with discoverParcels() on refresh, registerParcels() on tx confirm, and seed-on-refresh in refreshBalance(). Bootstrap required brute-force scan (42,069 addresses, 500/batch) since no wallet had parcels in localStorage to seed. 3 parcels found for Entity 1 (35+1+3000). Fresh wallet restore from seed confirmed working -- parcels appear automatically.
+
+DRIFT: Initial assumption (missing refresh-on-open) was wrong -- refreshAll() already fires on unlock. Real issue was that refreshBalance() is a validator, not a scanner. Pivoted from simple wiring fix to full registry feature. Bulletin board server endpoint worked immediately; wallet-side wiring landed clean but seed POST was silent (no console logging), requiring manual diagnostics to confirm. LocalStorage was empty in all browsers, so CLI wallet.json and brute-force scan were the only bootstrap paths.
 
 ---sig #006 | 2026-06-29 ~16:30 EST | desktop | trees: bitphoque | scope: cache busting (CACHE_V), sent receipts persistence, owner filtering for multi-key wallets | head: f1c6bdc
 
