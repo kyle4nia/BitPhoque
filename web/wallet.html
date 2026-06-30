@@ -892,6 +892,11 @@ async function refreshBalance(){
   }
   parcels = kept;
   saveParcels();
+  // seed registry with all confirmed parcels (server dedupes by outpoint)
+  try {
+    const rp = kept.map(p => { const [t,i] = p.outpoint.split(':'); return {owner:p.owner, amount:p.covenant_amount, forSale:!!p.forSale, price:p.price||'0', txid:t, index:parseInt(i)}; });
+    if(rp.length) fetch('https://bitphoque.org/api/parcels', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({parcels:rp})});
+  } catch(e){}
 
   renderBalance();
   setBtn(label);
@@ -988,10 +993,82 @@ function updateNodeStatus(connected){
   }
 }
 
+function registerParcels(txid, parcelArr){
+  if(!parcelArr || !parcelArr.length) return;
+  const payload = parcelArr.map(a => ({
+    owner: a.owner,
+    amount: a.covenant_amount || a.amount,
+    forSale: !!a.forSale,
+    price: a.price || '0',
+    txid: txid,
+    index: a.outputIndex,
+  }));
+  try {
+    fetch('https://bitphoque.org/api/parcels', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({parcels: payload})
+    });
+  } catch(e){ console.warn('[register] POST failed:', e); }
+}
+
+async function discoverParcels(){
+  if(!myKey) return;
+  try {
+    const resp = await fetch('https://bitphoque.org/api/parcels?owner=' + myKey.pubHex);
+    if(!resp.ok) return;
+    const remote = await resp.json();
+    if(!Array.isArray(remote) || remote.length === 0) return;
+    const known = new Set(parcels.map(p => p.outpoint));
+    const candidates = remote.filter(r => {
+      const op = r.txid + ':' + r.index;
+      return !known.has(op);
+    });
+    if(candidates.length === 0) return;
+    const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js' + CACHE_V);
+    const net = window.KASPA.network;
+    const withAddr = candidates.map(c => ({
+      c,
+      outpoint: c.txid + ':' + c.index,
+      addr: deriveP2SHAddress(xonly(c.owner), BigInt(c.amount), !!c.forSale, BigInt(c.price || 0), net)
+    }));
+    const addresses = [...new Set(withAddr.map(w => w.addr))];
+    const msg = await wrpcCall("getUtxosByAddresses", { addresses });
+    const entries = (msg.params && msg.params.entries) || msg.entries || [];
+    const liveOps = new Set();
+    for(const e of entries){
+      const ue = e.utxoEntry || {}, op = e.outpoint || {};
+      const cid = ue.covenantId || "";
+      if(cid && cid.startsWith(COVENANT_ID))
+        liveOps.add(op.transactionId + ":" + op.index);
+    }
+    let added = 0;
+    for(const {c, outpoint} of withAddr){
+      if(!liveOps.has(outpoint)) continue;
+      parcels.push({
+        owner: c.owner,
+        covenant_amount: c.amount.toString(),
+        amount_pups: (BigInt(c.amount) * 100000000n).toString(),
+        forSale: !!c.forSale,
+        price: (c.price || '0').toString(),
+        outpoint: outpoint,
+      });
+      added++;
+    }
+    if(added > 0){
+      saveParcels();
+      console.log('[discover] added ' + added + ' parcel(s) from registry');
+    }
+  } catch(e){
+    console.warn('[discover] registry check failed:', e);
+  }
+}
+
 async function refreshAll(){
   const btn = document.getElementById('refreshBtn');
   if(btn) btn.textContent = 'Checking...';
   try {
+    await discoverParcels();
     await Promise.all([refreshBalance(), refreshKasBalance()]);
   } catch(e){ console.error('[refreshAll]', e); }
   if(btn) btn.textContent = 'Refresh';
@@ -1527,6 +1604,7 @@ async function submitPendingTx(){
       }
       saveParcels();
       renderBalance();
+      if (upd.add && upd.add.length) registerParcels(txid, upd.add);
     }
     window._pendingParcelUpdate = null;
     let extra='';
