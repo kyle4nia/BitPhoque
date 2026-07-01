@@ -776,7 +776,7 @@ function renderKasInfo(){
         '<div style="margin-top:8px;line-height:1.5">' +
         'Every action costs a small KAS fee. Send KAS to your wallet address:<br>' +
         '<span style="font-size:11px;word-break:break-all;user-select:all">' + myKey.address + '</span><br>' +
-        '<span style="font-size:11px">On testnet, get free TKAS from <a href="https://faucet.kaspa.org" target="_blank" rel="noopener" style="color:var(--ink)">faucet.kaspa.org</a></span>' +
+        '<span style="font-size:11px">On testnet, get free TKAS from <a href="https://faucet-tn10.kaspanet.io/" target="_blank" rel="noopener" style="color:var(--ink)">faucet-tn10.kaspanet.io</a></span>' +
         '</div></details>';
     } else { el.innerHTML = ''; }
     return;
@@ -793,7 +793,7 @@ function renderKasInfo(){
       '<div style="margin-top:8px;line-height:1.5">' +
       'Every action costs a small KAS fee. Send KAS to your wallet address:<br>' +
       '<span style="font-size:11px;word-break:break-all;user-select:all">' + myKey.address + '</span><br>' +
-      '<span style="font-size:11px">On testnet, get free TKAS from <a href="https://faucet.kaspa.org" target="_blank" rel="noopener" style="color:var(--ink)">faucet.kaspa.org</a></span>' +
+      '<span style="font-size:11px">On testnet, get free TKAS from <a href="https://faucet-tn10.kaspanet.io/" target="_blank" rel="noopener" style="color:var(--ink)">faucet-tn10.kaspanet.io</a></span>' +
       '</div></details>';
   }
   el.innerHTML = html;
@@ -1564,7 +1564,6 @@ async function doSell(){
 }
 
 /* ---- BULLETIN BOARD ---- */
-const _soldAt = {};
 async function browseBulletin(){
   const list = document.getElementById('bulletinList');
   if(list.style.display !== 'none'){ list.style.display='none'; return; }
@@ -1598,22 +1597,24 @@ async function browseBulletin(){
       const outpoint = d.txid + ':' + d.outputIndex;
       const live = entries.some(function(e){ return e.outpoint && e.outpoint.transactionId === d.txid && e.outpoint.index === d.outputIndex; });
       if(live){
-        delete _soldAt[outpoint];
         const kas = (Number(d.price) / 100000000).toFixed(2);
         html += '<div style="border:1px solid var(--accent,#e94560);border-radius:8px;padding:10px;margin-bottom:8px;cursor:pointer" onclick="pickListing(\''+item.descriptor.replace(/'/g,"\\'")+'\')">' +
           '<b>'+d.amount+' phoques</b> \u2014 '+kas+' KAS' +
           '<br><span style="font-size:0.8em;color:var(--muted,#888)">'+new Date(item.timestamp*1000).toLocaleString()+'</span>' +
           '</div>';
       } else {
-        if(!_soldAt[outpoint]) _soldAt[outpoint] = Date.now();
-        const elapsed = Date.now() - _soldAt[outpoint];
-        if(elapsed < 300000){
-          const kas = (Number(d.price) / 100000000).toFixed(2);
-          html += '<div style="border:1px solid var(--muted,#888);border-radius:8px;padding:10px;margin-bottom:8px;opacity:0.6">' +
-            '<s>'+d.amount+' phoques \u2014 '+kas+' KAS</s>' +
-            '<br><span style="font-size:0.85em">SOLD \u2014 too slow, ya lazy phoque! \uD83E\uDDAD</span>' +
-            '</div>';
+        if(!item.sold_at){
+          fetch('https://bitphoque.org/api/listings/sold', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({descriptor:item.descriptor})
+          }).catch(function(){});
         }
+        const kas = (Number(d.price) / 100000000).toFixed(2);
+        html += '<div style="border:1px solid var(--muted,#888);border-radius:8px;padding:10px;margin-bottom:8px;opacity:0.6">' +
+          '<s>'+d.amount+' phoques \u2014 '+kas+' KAS</s>' +
+          '<br><span style="font-size:0.85em">SOLD \u2014 too slow, ya lazy phoque! \uD83E\uDDAD</span>' +
+          '</div>';
       }
     }
     if(!html) html='<p style="color:var(--muted,#888)">No listings right now. Check back soon!</p>';

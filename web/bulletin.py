@@ -20,6 +20,7 @@ PORT = 8500
 DATA_FILE = "/root/bulletin/listings.json"
 MAX_LISTINGS = 1000  # drop oldest on overflow
 MAX_BODY = 4096      # reject absurdly large POSTs
+SOLD_RETENTION_SECONDS = 7 * 24 * 3600  # keep sold listings visible 1 week, then prune
 
 def load_listings():
     if not os.path.exists(DATA_FILE):
@@ -35,6 +36,14 @@ def save_listings(listings):
     with open(tmp, "w") as f:
         json.dump(listings, f)
     os.replace(tmp, DATA_FILE)
+
+def prune_sold_listings():
+    global listings
+    now = int(time.time())
+    kept = [l for l in listings if not (l.get("sold_at") and now - l["sold_at"] > SOLD_RETENTION_SECONDS)]
+    if len(kept) != len(listings):
+        listings = kept
+        save_listings(listings)
 
 listings = load_listings()
 
@@ -69,6 +78,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/api/listings":
+            prune_sold_listings()
             self._json_response(200, listings)
         elif self.path == "/api/health":
             self._json_response(200, {"status": "ok", "count": len(listings)})
@@ -76,10 +86,14 @@ class Handler(BaseHTTPRequestHandler):
             self._json_response(404, {"error": "not found"})
 
     def do_POST(self):
-        if self.path != "/api/listings":
+        if self.path == "/api/listings":
+            self._handle_post_listing()
+        elif self.path == "/api/listings/sold":
+            self._handle_post_sold()
+        else:
             self._json_response(404, {"error": "not found"})
-            return
 
+    def _handle_post_listing(self):
         length = int(self.headers.get("Content-Length", 0))
         if length > MAX_BODY:
             self._json_response(413, {"error": "too large"})
@@ -109,6 +123,7 @@ class Handler(BaseHTTPRequestHandler):
             "descriptor": descriptor,
             "txid": txid,
             "timestamp": int(time.time()),
+            "sold_at": None,
         }
         listings.append(entry)
 
@@ -118,6 +133,34 @@ class Handler(BaseHTTPRequestHandler):
 
         save_listings(listings)
         self._json_response(201, {"status": "listed", "count": len(listings)})
+
+    def _handle_post_sold(self):
+        length = int(self.headers.get("Content-Length", 0))
+        if length > MAX_BODY:
+            self._json_response(413, {"error": "too large"})
+            return
+
+        try:
+            raw = self.rfile.read(length)
+            body = json.loads(raw)
+        except (json.JSONDecodeError, Exception):
+            self._json_response(400, {"error": "bad json"})
+            return
+
+        descriptor = body.get("descriptor", "").strip()
+        if not descriptor:
+            self._json_response(400, {"error": "missing descriptor"})
+            return
+
+        for existing in listings:
+            if existing.get("descriptor") == descriptor:
+                if not existing.get("sold_at"):
+                    existing["sold_at"] = int(time.time())
+                    save_listings(listings)
+                self._json_response(200, {"status": "sold", "sold_at": existing["sold_at"]})
+                return
+
+        self._json_response(404, {"error": "listing not found"})
 
     def do_DELETE(self):
         self._json_response(405, {"error": "not implemented — lazy approach, remember?"})

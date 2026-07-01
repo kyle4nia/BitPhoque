@@ -410,13 +410,18 @@ Own git repo (branch `master`). Not yet pushed to GitHub.
 - [x] Parcel registry live -- discover on open, seed on refresh, register on confirm (commit `ba57407`, sig #007)
 
 ### Deployment-critical (testnet trial)
-- [ ] Hetzner node: confirm sync completes (71% volume, syncing healthy at sig #006)
-- [ ] Multi-entity testing (Entity1-4 cross-device send/claim/list)
+- [x] Hetzner node: sync confirmed complete (sig #008)
+- [x] Multi-entity testing: OG->phone proven, OG->tablet diagnosed (descriptor data-entry issue, not code bug) (sig #008)
 
 ### Not needed for deployment
 - [ ] cPanel: evaluate whether still needed (outlawpolitics.org has other content?)
 - [ ] SMS Twilio node-monitor
 - [ ] Auction -- separate future build (stateful/temporal)
+- [x] Faucet URL updated to faucet-tn10.kaspanet.io (index.html + wallet.html, sig #009)
+- [x] Sold-listing 1-week server-side expiry (bulletin.py + wallet.html, deployed, sig #009)
+- [x] Contract confidence review: v3+v4+audit, high confidence on covenant logic (sig #009)
+- [ ] Mainnet node IBD (kaspad-mainnet.service on VPS, 38% headers at sig #009 — monitor)
+- [ ] v4 downstream code sync (sigscript_v4 done; descriptor OK; compiled_real/CLI/harnesses/wallet BLOCKED on V1 compile)
 - [ ] Mainnet: clear `bitphoque_mainnet_checklist.md`
   - NOTE: re-genesis produces a new `covenant_id`; sweep `3baed5a3...` in ALL JS + harnesses
 - [ ] Make public on GitHub (clean repo name + README + secret-sweep)
@@ -429,6 +434,23 @@ Own git repo (branch `master`). Not yet pushed to GitHub.
 ## SESSION SIGNATURES
 
 _Append-only. Newest first. Format: seq | datetime TZ | agent | trees | scope | head._
+---sig #009 | 2026-07-01 ~17:15 EST | desktop | trees: bitphoque | scope: housekeeping (faucet URL, sold-listing 1-week expiry), contract confidence review (v3+v4+audit), mainnet node spinup, v4 downstream sync start | head: 957c69d
+
+OPENING ASSESSMENT: Two housekeeping chores queued (faucet URL update, sold-listing expiry), then mainnet prep. Both deployment-critical testnet items were resolved in sig #008. Live wallet functional, VPS healthy. Plan: knock out housekeeping, then focus on mainnet readiness — contract review, VPS mainnet node, v4 code sync.
+
+CLOSING: Both housekeeping items shipped and deployed to VPS. Faucet URL updated to faucet-tn10.kaspanet.io across index.html + wallet.html (3 references). Sold-listing expiry redesigned from client-side in-memory guess (_soldAt, 5-min window) to server-authoritative 1-week retention: bulletin.py gained POST /api/listings/sold endpoint + prune_sold_listings() auto-cleanup on GET, wallet.html now reports sold listings to server on discovery (first-browser-to-notice pattern, idempotent). Full buy/sell/send/receive cycle confirmed working post-deploy.
+
+Contract confidence review: read v3 source line-by-line, independently confirmed all four core invariants (conservation, no-remint, no-relist-after-claim, no-double-claim). Found the same amount>0 gap the sig #004 session caught — confirmed closed in v4's checkPositiveAmounts(). Read the June 25 audit (history-blind, all findings reconciled or already resolved). Read v4 source, diffed against v3 — strict hardening, no new risk. Read mainnet checklist — comprehensive, correctly identifies silverscript V1 as the blocking dependency. Confidence: HIGH on covenant logic, LOW (correctly) on mainnet readiness (V1 compiler still unreleased, confirmed via search — repo README still says "experimental"). Toccata consensus hard fork activated on mainnet June 30 — separate from the compiler blocker.
+
+Mainnet node spun up on VPS: kaspad-mainnet.service (systemd, same v2.0.1 binary as TN10, no --archival, --utxoindex, loopback RPC only). Datadir auto-landed on the 200G block-storage volume via existing /root/.rusty-kaspa symlink. IBD healthy at 38% headers / 1.7G at session end. Toccata activation boundary correctly recognized during sync ([TOCC] log line). Mainnet default ports (16110/16111/17110/18110) confirmed free before start. VPS disk analysis: TN10 already pruned (no --archival flag), 104G is mostly the 300M-UTXO index, not retainable history. retention-period-days confirmed: unset = minimal pruning window (~30h at 10BPS), the flag only allows MORE retention not less. Mainnet UTXO set expected smaller than TN10's synthetic 300M.
+
+v4 downstream sync started: bitphoque_sigscript_v4.js delivered (4-field/49-byte state layout, identifierType + isMinter dropped, structural self-test passing in Node.js, full buildSigScript leader+delegate paths execute clean). Filed as _v4 side-by-side — does NOT overwrite v3, live testnet wallet unaffected. bitphoque_descriptor.js confirmed already v4-compatible (transport format never carried the dropped fields). bitphoque_compiled_real.json identified as compiler output (ctor args baked into bytecode) — gets completely replaced by V1 compile, no useful pre-build possible. Rust CLI + harnesses same story — blocked on V1, documented.
+
+Stray zero-byte `ssh` file in repo root deleted (mistyped redirect artifact). Deferred .ps1 scripts in Downloads cleaned during session.
+
+DRIFT: No major misdiagnosis. The sold-listing expiry required a deeper redesign than expected — the existing _soldAt was purely client-side in-memory with a 5-minute window, which meant "1 week from sale" was architecturally impossible without moving the timestamp to the server. Flagged this proactively before writing any code, user confirmed server-side approach. Contract review went smoothly — every gap I found independently was already caught by either the June 25 audit or the sig #004 session, which is the strongest signal the review process can produce (three independent passes converging). The compiled_real.json turned out to be the original KCC20 contract, not v3 — state_layout {start:1, len:46} doesn't match v3's forSale/price fields. The actual v3 compiled output either lives elsewhere or was used directly during genesis. Not a problem for mainnet (v4 gets a fresh compile), but worth noting. The F1 strict-increasing comment reframe in v4 (from "testnet shortcut" to "production design") was flagged as a documentation regression — user confirmed it was a deliberate decision recorded in the mainnet checklist, not an accidental slip.
+
+
 
 ---sig #007 | 2026-06-30 ~09:00 EST | desktop | trees: bitphoque | scope: parcel registry (bulletin.py + wallet discover/register/seed), bootstrap scan | head: ba57407
 
@@ -470,3 +492,23 @@ DRIFT: VPS UTXO validation restart (5% then climbing) was unexpected -- restart 
 OPENING ASSESSMENT: Contract had four open review items flagged in the status doc (F1 strict-increasing vs per-output accounting, caps 3/3 sizing, price=0 wallet guard, minter branch strip). Mainnet checklist existed but didn't detail specific source changes. Plan: resolve all four, draft v4 covenant, update checklist.
 CLOSING: All four items resolved. Two additional issues found and fixed (amount>0 guard, identifierType strip). bitphoque_sale_v4.sil delivered to covenants\. Mainnet checklist expanded with items 5/7/8 and launch sequence updated to 11 steps. Status doc contract review item checked off. Everything remaining is blocked on silverscript V1 release.
 DRIFT: No misdiagnosis. The four flagged items were real and resolved as expected. Two bonus items emerged from reading the source (zero-amount outputs, dead identifierType field) — neither was tracked before this session. No surprises, no blockers hit.
+Session #008 — 2026-06-30
+Completed:
+
+Hetzner node sync confirmed ✓ (last deployment-critical item)
+Multi-entity cross-device testing (OG → phone ✓, OG → tablet — diagnosed descriptor owner mismatch, confirmed data-entry issue not code bug)
+QR scan button on Send panel — BarcodeDetector API, zero dependencies, camera icon next to To field, auto-fills pubkey on scan
+QR UX refinement — smaller button (width:auto fix for .btn width:100%), persistent "✓ Key scanned" confirmation with key display (stays until Send or close)
+Contacts / address book — localStorage-backed, tappable name chips in Send panel, "+ Save contact" flow, inline manage/delete UI
+Auto-merge observed working cleanly in live cross-device testing
+Both deployment-critical items now resolved
+
+Found (non-critical):
+
+Wrong-device receive: entering a descriptor on a device whose pubkey doesn't match prints "received" but balance stays 0. No on-chain harm (UTXO stays at real owner's P2SH). Fix: compare descriptor.ownerPubkey vs xonly(myKey.pubHex) in doReceive(), reject on mismatch.
+
+Open items carried forward:
+
+Wrong-device receive reject message (UX polish)
+cPanel evaluation, SMS/Twilio monitor, auction, mainnet checklist, GitHub publication
+Contract mainnet review (F1 accounting, caps sizing, price=0 guard, minter branch strip)
