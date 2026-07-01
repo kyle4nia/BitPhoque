@@ -354,7 +354,7 @@
   <!-- ===== ONBOARDING SCREENS (proven, unchanged) ===== -->
 
   <section class="screen" id="s-welcome">
-    <h2 class="title">Would you like to always have a phoque?</h2>
+    <h2 class="title">Never run out of phoques again</h2>
     <p class="lede">A non-custodial wallet for BitPhoque. Your keys are generated on
       this device and never leave it -- no account, no server, no custodian.</p>
     <button class="choice" onclick="startCreate()">
@@ -484,6 +484,7 @@
     </div>
 
     <div class="primary-btns" style="margin-top:-8px">
+      <button class="btn ghost" style="border:none;font-size:0.85rem;opacity:0.7" onclick="openTxHistory()">Recent transactions</button>
       <button class="btn ghost" style="border:none;font-size:0.85rem;opacity:0.7" onclick="openSent()">Sent receipts</button>
     </div>
 
@@ -537,7 +538,7 @@
 </div>
 
 <script>
-const CACHE_V = '?v=2';
+const CACHE_V = '?v=3';
 /* ---- BIP-39 wrappers (proven) ---- */
 function generateMnemonic(){
   if(!window.BIP39?.ready) throw new Error("BIP39_NOT_LOADED");
@@ -674,6 +675,22 @@ function saveSentReceipts(){
     const raw = localStorage.getItem('bitphoque_sent');
     if(raw) sentReceipts = JSON.parse(raw);
   } catch(e){ sentReceipts = []; }
+})();
+
+let txHistory = [];
+function saveTxHistory(){
+  try { localStorage.setItem('bitphoque_txhistory', JSON.stringify(txHistory.slice(-50))); }
+  catch(e){ console.warn('[txhist] save failed:', e); }
+}
+function recordTx(txid, type, amount, counterparty){
+  txHistory.push({txid:txid, type:type, amount:String(amount), counterparty:counterparty||'', ts:Date.now()});
+  saveTxHistory();
+}
+(function loadTxHistory(){
+  try {
+    var raw = localStorage.getItem('bitphoque_txhistory');
+    if(raw) txHistory = JSON.parse(raw);
+  } catch(e){ txHistory = []; }
 })();
 
 function fmtBalance(){
@@ -1087,9 +1104,102 @@ function closeStory(){
   window._pendingSendTx = null;
   window._pendingDesc = null;
   window._pendingParcelUpdate = null;
+  if(typeof stopQrScan==='function') stopQrScan();
 }
 
-/* ---- SEND ---- */
+/* ---- SEND + QR SCAN + CONTACTS ---- */
+
+function getContacts(){ try { return JSON.parse(localStorage.getItem('bitphoque_contacts')||'[]'); } catch(e){ return []; } }
+function saveContactsLS(arr){ localStorage.setItem('bitphoque_contacts', JSON.stringify(arr)); }
+function addContact(name, pubkey){
+  var c = getContacts();
+  if(c.some(function(x){ return x.pubkey === pubkey; })) return false;
+  c.push({name: name, pubkey: pubkey});
+  saveContactsLS(c);
+  return true;
+}
+function removeContact(pubkey){
+  saveContactsLS(getContacts().filter(function(x){ return x.pubkey !== pubkey; }));
+}
+function pickContact(pubkey){
+  document.getElementById('s_to').value = pubkey;
+  stopQrScan();
+}
+function promptSaveContact(){
+  var key = (document.getElementById('s_to').value||'').trim();
+  if(!key || key.length !== 64){ alert('Enter or scan a 64-character public key first.'); return; }
+  if(getContacts().some(function(x){ return x.pubkey === key; })){ alert('This key is already saved.'); return; }
+  var name = prompt('Name for this contact:');
+  if(!name || !name.trim()) return;
+  addContact(name.trim(), key);
+  renderContacts();
+}
+function renderContacts(){
+  var el = document.getElementById('contactList');
+  if(!el) return;
+  var contacts = getContacts();
+  if(contacts.length === 0){ el.style.display = 'none'; return; }
+  el.style.display = 'flex';
+  var html = '';
+  for(var i = 0; i < contacts.length; i++){
+    html += '<button class="btn ghost sm" onclick="pickContact(\x27' + contacts[i].pubkey + '\x27)" style="width:auto;flex:none;padding:4px 10px;font-size:12px">' + contacts[i].name + '</button>';
+  }
+  html += '<button class="link" onclick="manageContacts()" style="font-size:11px;padding:2px 6px">manage</button>';
+  el.innerHTML = html;
+}
+function manageContacts(){
+  var el = document.getElementById('contactList');
+  if(!el) return;
+  var contacts = getContacts();
+  if(contacts.length === 0){ el.innerHTML = '<span style="font-size:12px;color:var(--muted)">No saved contacts.</span>'; return; }
+  var html = '';
+  for(var i = 0; i < contacts.length; i++){
+    html += '<div style="display:flex;align-items:center;gap:8px;margin:3px 0;width:100%">' +
+      '<span style="font-size:13px;font-weight:500;white-space:nowrap">' + contacts[i].name + '</span>' +
+      '<span style="font-size:10px;color:var(--muted);word-break:break-all;flex:1">' + contacts[i].pubkey.slice(0,16) + '...</span>' +
+      '<button class="link" onclick="removeContact(\x27' + contacts[i].pubkey + '\x27);renderContacts()" style="font-size:11px;color:#c44;padding:2px 4px">\u2715</button>' +
+      '</div>';
+  }
+  html += '<button class="link" onclick="renderContacts()" style="font-size:11px;margin-top:4px">done</button>';
+  el.innerHTML = html;
+}
+
+
+let _qrStream = null;
+async function scanQR(){
+  if(!('BarcodeDetector' in window)){
+    alert('QR scanning not supported in this browser. Paste the key manually.');
+    return;
+  }
+  const vf = document.getElementById('qrViewfinder');
+  const video = document.getElementById('qrVideo');
+  if(!vf || !video) return;
+  try {
+    _qrStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    video.srcObject = _qrStream; video.play(); vf.style.display = 'block';
+    const det = new BarcodeDetector({ formats: ['qr_code'] });
+    (async function loop(){
+      if(!_qrStream) return;
+      try {
+        const r = await det.detect(video);
+        if(r.length > 0){
+          var key = r[0].rawValue.trim();
+          document.getElementById('s_to').value = key;
+          if(_qrStream){ _qrStream.getTracks().forEach(function(t){ t.stop(); }); _qrStream = null; }
+          var vfEl = document.getElementById('qrViewfinder');
+          if(vfEl) vfEl.innerHTML = '<div style="padding:16px 0;font-size:15px;font-weight:500;color:var(--ink)">\u2713 Key scanned</div><div class="descbox" style="font-size:11px;word-break:break-all;margin:4px auto 0;max-width:260px">' + key + '</div>';
+          return;
+        }
+      } catch(e){}
+      requestAnimationFrame(loop);
+    })();
+  } catch(e){ alert('Camera access denied: ' + e.message); stopQrScan(); }
+}
+function stopQrScan(){
+  if(_qrStream){ _qrStream.getTracks().forEach(function(t){ t.stop(); }); _qrStream = null; }
+  const vf = document.getElementById('qrViewfinder'); if(vf) vf.style.display = 'none';
+}
+
 function openSend(){
   const held = parcels.filter(p => isOwn(p) && !p.forSale);
   const totalHeld = held.reduce((a,p) => a + BigInt(p.covenant_amount||0), 0n);
@@ -1097,8 +1207,10 @@ function openSend(){
     '<div class="story-head"><h3>Send phoques</h3><button class="x" onclick="closeStory()">&times;</button></div>' +
     '<p class="story-lede">Transfer phoques to someone else. Your key never leaves this device.</p>' +
     '<label>To</label>' +
-    '<input class="fld" id="s_to" placeholder="Recipient\'s public key" autocomplete="off" spellcheck="false">' +
-    '<div class="hint">Paste the key the recipient shared with you.</div>' +
+    '<div style="display:flex;gap:8px;align-items:stretch">' + '<input class="fld" id="s_to" placeholder="Recipient\'s public key" autocomplete="off" spellcheck="false" style="flex:1;margin:0">' + '<button type="button" class="btn ghost" onclick="scanQR()" style="flex:none;width:auto;padding:6px 10px;font-size:14px" title="Scan QR">&#x1F4F7;</button>' + '</div>' +
+    '<div id="qrViewfinder" style="display:none;margin:10px 0;text-align:center"><video id="qrVideo" autoplay playsinline style="width:220px;height:220px;object-fit:cover;border-radius:8px;border:2px solid var(--hair)"></video><div style="margin-top:6px"><button class="link" onclick="stopQrScan()">Cancel scan</button></div></div>' +
+    '<div id="contactList" style="display:none;flex-wrap:wrap;gap:6px;margin:8px 0;align-items:center"></div>' +
+    '<div class="hint">Pick a contact, scan, or paste. <span onclick="promptSaveContact()" style="font-size:14px;font-weight:600;text-decoration:underline;cursor:pointer;color:var(--ink)">+ Save contact</span></div>' +
     '<label>Amount</label>' +
     '<input class="fld" id="s_amt" type="number" placeholder="How many phoques?" min="1">' +
     '<div class="hint">' + (totalHeld > 0n ? groupThousands(totalHeld) + ' available to send' : 'No phoques to send') + '</div>' +
@@ -1106,6 +1218,7 @@ function openSend(){
     '<button class="btn submit-btn" id="storySubmitBtn" style="display:none" onclick="submitPendingTx()">Confirm and send</button>' +
     '<pre class="out" id="storyOut"></pre>'
   );
+  renderContacts();
 }
 
 async function doSend(){
@@ -1176,6 +1289,7 @@ async function doSend(){
         forSale: false, price: '0', outpoint: mid + ':0',
       });
       saveParcels(); renderBalance();
+      recordTx(mid, 'merge', ma, xonly(myKey.pubHex));
       out.textContent = 'Merged ' + p0.covenant_amount + ' + ' + p1.covenant_amount + ' = ' + ma + ' phoques.\nWaiting for confirmation...';
       const maddr = deriveP2SHAddress(xonly(myKey.pubHex), BigInt(ma), false, 0n, window.KASPA.network);
       let confirmed = false;
@@ -1240,6 +1354,39 @@ async function doSend(){
   document.getElementById('storySubmitBtn').style.display = 'block';
 }
 
+/* ---- RECENT TRANSACTIONS ---- */
+function openTxHistory(){
+  var items = txHistory.slice(-10).reverse();
+  var body = '';
+  if(!items.length){
+    body = '<p style="opacity:0.6;margin-top:18px">No transactions yet. They appear here after you send, buy, sell, or merge phoques.</p>';
+  } else {
+    var badges = {send:'\u2191 Sent', list:'\u25C6 Listed', buy:'\u2193 Bought', merge:'\u2194 Merged'};
+    var colors = {send:'#4a9', list:'#e94560', buy:'#49e', merge:'#a8a'};
+    for(var i = 0; i < items.length; i++){
+      var r = items[i];
+      var d = new Date(r.ts);
+      var when = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+      var badge = badges[r.type] || r.type;
+      var col = colors[r.type] || 'var(--ink)';
+      var cpty = r.counterparty ? '<div style="opacity:0.5;font-size:0.72rem;margin-top:2px">with ' + shortId(r.counterparty) + '</div>' : '';
+      body += '<div style="border:1px solid var(--hair);border-radius:10px;padding:12px;margin-top:10px;font-size:0.85rem">' +
+        '<div style="display:flex;justify-content:space-between;align-items:baseline">' +
+          '<span style="font-weight:600;color:'+col+'">'+badge+'</span>' +
+          '<span style="font-size:0.78rem;opacity:0.6">'+when+'</span>' +
+        '</div>' +
+        '<div style="margin-top:4px;font-weight:600">'+r.amount+' phoques</div>' +
+        cpty +
+        '<div style="margin-top:6px;font-family:monospace;font-size:0.7rem;word-break:break-all;opacity:0.7;user-select:all;cursor:pointer" onclick="copyKey(\''+r.txid+'\', this)" title="Tap to copy full txid">' + r.txid + '</div>' +
+        '</div>';
+    }
+  }
+  openStory(
+    '<div class="story-head"><h3>Recent transactions</h3><button class="x" onclick="closeStory()">&times;</button></div>' +
+    '<p class="story-lede">Your last 10 on-chain transactions. Tap any ID to copy it for a block explorer.</p>' +
+    body
+  );
+}
 /* ---- SENT RECEIPTS ---- */
 function openSent(){
   const items = sentReceipts.slice().reverse();
@@ -1417,6 +1564,7 @@ async function doSell(){
 }
 
 /* ---- BULLETIN BOARD ---- */
+const _soldAt = {};
 async function browseBulletin(){
   const list = document.getElementById('bulletinList');
   if(list.style.display !== 'none'){ list.style.display='none'; return; }
@@ -1427,19 +1575,48 @@ async function browseBulletin(){
     const items = await resp.json();
     if(!items.length){ list.innerHTML='<p style="color:var(--muted,#888)">No listings yet. Be the first to sell!</p>'; return; }
     const {decodeDescriptor} = await import('./bitphoque_descriptor.js' + CACHE_V);
-    let html = '';
+    const {deriveP2SHAddress} = await import('./bitphoque_p2sh.js' + CACHE_V);
+    const decoded = [];
+    const addrSet = new Set();
     for(const item of items){
       try {
         const d = decodeDescriptor(item.descriptor);
         if(!d.forSale) continue;
-        const kas = (Number(d.price) / 100000000).toFixed(2);
-        html += '<div style="border:1px solid var(--accent,#e94560);border-radius:8px;padding:10px;margin-bottom:8px;cursor:pointer" onclick="pickListing(\''+item.descriptor.replace(/'/g,"\\'")+'\')">' +
-          '<b>'+d.amount+' phoques</b> — '+kas+' KAS' +
-          '<br><span style="font-size:0.8em;color:var(--muted,#888)">'+new Date(item.timestamp*1000).toLocaleString()+'</span>' +
-          '</div>';
+        const addr = deriveP2SHAddress(xonly(d.ownerPubkey), BigInt(d.amount), true, BigInt(d.price), window.KASPA.network);
+        decoded.push({item, d, addr});
+        addrSet.add(addr);
       } catch(e){ /* skip bad descriptors */ }
     }
-    if(!html) html='<p style="color:var(--muted,#888)">No valid listings found.</p>';
+    if(!decoded.length){ list.innerHTML='<p style="color:var(--muted,#888)">No valid listings found.</p>'; return; }
+    let entries = [];
+    try {
+      const msg = await wrpcCall("getUtxosByAddresses", {addresses:[...addrSet]});
+      entries = (msg.params && msg.params.entries) || [];
+    } catch(e){ /* node down — show all as live */ }
+    let html = '';
+    for(const {item, d} of decoded){
+      const outpoint = d.txid + ':' + d.outputIndex;
+      const live = entries.some(function(e){ return e.outpoint && e.outpoint.transactionId === d.txid && e.outpoint.index === d.outputIndex; });
+      if(live){
+        delete _soldAt[outpoint];
+        const kas = (Number(d.price) / 100000000).toFixed(2);
+        html += '<div style="border:1px solid var(--accent,#e94560);border-radius:8px;padding:10px;margin-bottom:8px;cursor:pointer" onclick="pickListing(\''+item.descriptor.replace(/'/g,"\\'")+'\')">' +
+          '<b>'+d.amount+' phoques</b> \u2014 '+kas+' KAS' +
+          '<br><span style="font-size:0.8em;color:var(--muted,#888)">'+new Date(item.timestamp*1000).toLocaleString()+'</span>' +
+          '</div>';
+      } else {
+        if(!_soldAt[outpoint]) _soldAt[outpoint] = Date.now();
+        const elapsed = Date.now() - _soldAt[outpoint];
+        if(elapsed < 300000){
+          const kas = (Number(d.price) / 100000000).toFixed(2);
+          html += '<div style="border:1px solid var(--muted,#888);border-radius:8px;padding:10px;margin-bottom:8px;opacity:0.6">' +
+            '<s>'+d.amount+' phoques \u2014 '+kas+' KAS</s>' +
+            '<br><span style="font-size:0.85em">SOLD \u2014 too slow, ya lazy phoque! \uD83E\uDDAD</span>' +
+            '</div>';
+        }
+      }
+    }
+    if(!html) html='<p style="color:var(--muted,#888)">No listings right now. Check back soon!</p>';
     list.innerHTML = html;
   } catch(e){
     list.innerHTML = '<p style="color:#e94560">Could not reach bulletin board: '+(e.message||e)+'</p>';
@@ -1530,21 +1707,27 @@ async function doBuy(){
   // 2) auto-pick a funding UTXO
   out.textContent = 'Finding KAS for payment...';
   const {CLAIM_FEE, CLAIM_PAYMENT} = await import('./bitphoque_tx.js' + CACHE_V);
-  const minFund = CLAIM_PAYMENT + CLAIM_FEE;
-  let fundTxId, fundIndex, fundValue;
+  const actualPayment = BigInt(price) > CLAIM_PAYMENT ? BigInt(price) : CLAIM_PAYMENT;
+  const minFund = actualPayment + CLAIM_FEE;
+  let fundingUtxos;
   try {
     const msg = await wrpcCall("getUtxosByAddresses", {addresses:[myKey.address]});
     const entries = (msg.params&&msg.params.entries)||[];
-    const suitable = entries
-      .filter(e=>BigInt(e.utxoEntry.amount)>minFund)
-      .sort((a,b)=>{ const av=BigInt(a.utxoEntry.amount), bv=BigInt(b.utxoEntry.amount); return av<bv?-1:av>bv?1:0; });
-    if(!suitable.length){
-      const need = kasFromSompi(minFund * 3n);
-      out.textContent = 'Not enough KAS. Send at least ' + need + ' KAS to:\n' + myKey.address;
+    const sorted = entries
+      .filter(e=>BigInt(e.utxoEntry.amount)>0n)
+      .sort((a,b)=>{ const av=BigInt(a.utxoEntry.amount), bv=BigInt(b.utxoEntry.amount); return av>bv?-1:av<bv?1:0; });
+    fundingUtxos = [];
+    let totalFund = 0n;
+    for(const e of sorted){
+      fundingUtxos.push({txId:e.outpoint.transactionId, index:e.outpoint.index, value:BigInt(e.utxoEntry.amount)});
+      totalFund += BigInt(e.utxoEntry.amount);
+      if(totalFund > minFund) break;
+    }
+    if(totalFund <= minFund){
+      const need = kasFromSompi(minFund);
+      out.textContent = 'Not enough KAS. You need at least ' + need + ' KAS.\nYour address:\n' + myKey.address;
       return;
     }
-    const pick=suitable[0];
-    fundTxId=pick.outpoint.transactionId; fundIndex=pick.outpoint.index; fundValue=BigInt(pick.utxoEntry.amount);
   } catch(e){ out.textContent = 'Node unreachable: '+(e.message||e); return; }
 
   // 3) build + sign
@@ -1556,7 +1739,7 @@ async function doBuy(){
       covTxId: txid, covIndex: idx, covValue,
       sellerPubkey: xonly(seller), buyerPubkey: xonly(myKey.pubHex),
       amount: BigInt(amt), price: BigInt(price),
-      fundTxId, fundIndex, fundValue,
+      fundingUtxos: fundingUtxos,
       buyerPrivkeyHex: myKey.privHex,
     });
   } catch(e){ out.textContent = 'Build failed: '+(e.message||e); return; }
@@ -1585,6 +1768,13 @@ async function submitPendingTx(){
     const msg = await wrpcCall("submitTransaction", window._pendingSendTx);
     const txid = (msg.params&&msg.params.transactionId)||(msg.transactionId)||'(see response)';
     window._pendingSendTx=null;
+    if(txid !== '(see response)'){
+      var pd = window._pendingDesc;
+      var tp = pd ? (pd.forSale ? 'list' : 'send') : 'buy';
+      var am = pd ? pd.sendAmount.toString() : ((window._pendingParcelUpdate&&window._pendingParcelUpdate.add&&window._pendingParcelUpdate.add[0]) ? window._pendingParcelUpdate.add[0].covenant_amount : '?');
+      var cp = pd ? (pd.recipientPubkey||'') : '';
+      recordTx(txid, tp, am, cp);
+    }
     if (window._pendingParcelUpdate && txid !== '(see response)') {
       const upd = window._pendingParcelUpdate;
       if (upd.remove && upd.remove.length)

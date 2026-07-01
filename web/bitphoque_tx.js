@@ -328,29 +328,34 @@ function buildClaimTx(params) {
   const {
     covTxId, covIndex, covValue,
     sellerPubkey, buyerPubkey, amount, price,
-    fundTxId, fundIndex, fundValue, buyerPrivkeyHex,
+    buyerPrivkeyHex,
   } = params;
 
-  const payment = BigInt(price) > CLAIM_PAYMENT ? BigInt(price) : CLAIM_PAYMENT;
-  if (BigInt(fundValue) <= payment + CLAIM_FEE)
-    throw new Error('funding ' + fundValue + ' <= payment+fee ' + (payment + CLAIM_FEE));
+  // Support both old single-UTXO API and new multi-UTXO API
+  var fundingUtxos;
+  if (params.fundingUtxos) {
+    fundingUtxos = params.fundingUtxos;
+  } else {
+    fundingUtxos = [{ txId: params.fundTxId, index: params.fundIndex, value: BigInt(params.fundValue) }];
+  }
+
+  var totalFundValue = fundingUtxos.reduce(function(s, u){ return s + BigInt(u.value); }, 0n);
+  var payment = BigInt(price) > CLAIM_PAYMENT ? BigInt(price) : CLAIM_PAYMENT;
+  if (totalFundValue <= payment + CLAIM_FEE)
+    throw new Error('funding ' + totalFundValue + ' <= payment+fee ' + (payment + CLAIM_FEE));
 
   // --- scriptPubKeys ---------------------------------------------------------
-  // input 0: the for-sale covenant P2SH (seller-owned, forSale=true, price)
-  const covSpkHash = deriveScriptHashHex(sellerPubkey, BigInt(amount), true, BigInt(price));
-  const covSpk = makeSpk(covSpkHash);
-  // input 1: buyer's plain P2PK funding UTXO
-  const buyerP2pk = makeP2pk(buyerPubkey);
-  // output 0: token -> buyer, covenant P2SH (buyer-owned, forSale=false, price 0)
-  const tokenSpkHash = deriveScriptHashHex(buyerPubkey, BigInt(amount), false, 0n);
-  const tokenSpk = makeSpk(tokenSpkHash);
-  // output 1: payment -> seller P2PK ; output 2: change -> buyer P2PK
-  const sellerP2pk = makeP2pk(sellerPubkey);
+  var covSpkHash = deriveScriptHashHex(sellerPubkey, BigInt(amount), true, BigInt(price));
+  var covSpk = makeSpk(covSpkHash);
+  var buyerP2pk = makeP2pk(buyerPubkey);
+  var tokenSpkHash = deriveScriptHashHex(buyerPubkey, BigInt(amount), false, 0n);
+  var tokenSpk = makeSpk(tokenSpkHash);
+  var sellerP2pk = makeP2pk(sellerPubkey);
 
-  const changeValue = BigInt(fundValue) - payment - CLAIM_FEE;
+  var changeValue = totalFundValue - payment - CLAIM_FEE;
 
   // --- outputs (ORDER MATTERS: token, payment, change) -----------------------
-  const outputs = [
+  var outputs = [
     { // 0: token -> buyer (covenant)
       value: BigInt(covValue),
       scriptPubKeyVersion: 0,
@@ -371,40 +376,44 @@ function buildClaimTx(params) {
     },
   ];
 
-  // --- unsigned 2-input tx for the buyer's sighash (signed at index 1) -------
-  const tx = {
+  // --- build inputs: covenant + N funding ------------------------------------
+  var txInputs = [
+    { prevTxId: hexToBytes(covTxId), prevIndex: covIndex, sequence: 0n },
+  ];
+  var utxoEntries = [
+    { amount: BigInt(covValue), scriptPubKeyVersion: 0, scriptPubKey: covSpk },
+  ];
+  for (var fi = 0; fi < fundingUtxos.length; fi++) {
+    var u = fundingUtxos[fi];
+    txInputs.push({ prevTxId: hexToBytes(u.txId), prevIndex: u.index, sequence: 0n });
+    utxoEntries.push({ amount: BigInt(u.value), scriptPubKeyVersion: 0, scriptPubKey: buyerP2pk });
+  }
+
+  var tx = {
     version: 1,
-    inputs: [
-      { prevTxId: hexToBytes(covTxId),  prevIndex: covIndex,  sequence: 0n },
-      { prevTxId: hexToBytes(fundTxId), prevIndex: fundIndex, sequence: 0n },
-    ],
-    outputs,
+    inputs: txInputs,
+    outputs: outputs,
     lockTime: 0n,
     subnetworkId: new Uint8Array(20),
     gas: 0n,
     payload: new Uint8Array(0),
   };
 
-  // UTXO entries, one per input, SAME ORDER. (No covenant field needed here  -- 
-  // the sighash hashes each input's scriptPubKey, not its covenant binding;
-  // the covenant_id lives on the token OUTPUT, already in `outputs` above.)
-  const utxoEntries = [
-    { amount: BigInt(covValue),  scriptPubKeyVersion: 0, scriptPubKey: covSpk },
-    { amount: BigInt(fundValue), scriptPubKeyVersion: 0, scriptPubKey: buyerP2pk },
-  ];
-
-  // --- sighash for INPUT 1 (the buyer's plain funding input) -----------------
-  const sigHash = calcSchnorrSignatureHash(tx, 1, utxoEntries, SIG_HASH_ALL);
-  const sig = schnorr.sign(sigHash, hexToBytes(buyerPrivkeyHex));
-  const sigWithType = new Uint8Array(65);
-  sigWithType.set(sig, 0);
-  sigWithType[64] = SIG_HASH_ALL;
-  const in1Sigscript = buildPlainSig(sigWithType); // just a single sig push
+  // --- sign each funding input (indices 1..N) --------------------------------
+  var fundingSigscripts = [];
+  var firstSigHash, firstSigWithType;
+  for (var si = 0; si < fundingUtxos.length; si++) {
+    var sigHash = calcSchnorrSignatureHash(tx, si + 1, utxoEntries, SIG_HASH_ALL);
+    var sig = schnorr.sign(sigHash, hexToBytes(buyerPrivkeyHex));
+    var sigWithType = new Uint8Array(65);
+    sigWithType.set(sig, 0);
+    sigWithType[64] = SIG_HASH_ALL;
+    fundingSigscripts.push(buildPlainSig(sigWithType));
+    if (si === 0) { firstSigHash = sigHash; firstSigWithType = sigWithType; }
+  }
 
   // --- INPUT 0 covenant leader sigscript -------------------------------------
-  // new-state: buyer-owned, forSale=false, price 0 ; dummy 65-zero sig ;
-  // witness = single byte [paymentOutputIndex] ; leader ; redeem push.
-  const newState = {
+  var newState = {
     owner: hexToBytes(buyerPubkey),
     identifierType: 0,
     amount: BigInt(amount),
@@ -412,37 +421,41 @@ function buildClaimTx(params) {
     forSale: false,
     price: 0n,
   };
-  const dummySig = new Uint8Array(65); // all zero  --  for-sale branch is payment-authorized
-  const witnesses = new Uint8Array([PAYMENT_OUTPUT_INDEX]);
-  const covRedeem = deriveRedeemScript(sellerPubkey, BigInt(amount), true, BigInt(price));
-  const in0Sigscript = buildSigScript([newState], [dummySig], witnesses, covRedeem, true);
+  var dummySig = new Uint8Array(65);
+  var witnesses = new Uint8Array([PAYMENT_OUTPUT_INDEX]);
+  var covRedeem = deriveRedeemScript(sellerPubkey, BigInt(amount), true, BigInt(price));
+  var in0Sigscript = buildSigScript([newState], [dummySig], witnesses, covRedeem, true);
 
-  // --- JSON for submitTransaction (2 inputs) ---------------------------------
-  const txJson = {
+  // --- JSON for submitTransaction --------------------------------------------
+  var jsonInputs = [
+    { // 0: covenant
+      previousOutpoint: { transactionId: covTxId, index: covIndex },
+      signatureScript: bytesToHex(in0Sigscript),
+      sequence: 0,
+      sigOpCount: 0,
+      computeBudget: COMPUTE_BUDGET,
+    },
+  ];
+  for (var ji = 0; ji < fundingUtxos.length; ji++) {
+    jsonInputs.push({
+      previousOutpoint: { transactionId: fundingUtxos[ji].txId, index: fundingUtxos[ji].index },
+      signatureScript: bytesToHex(fundingSigscripts[ji]),
+      sequence: 0,
+      sigOpCount: 0,
+      computeBudget: 11,
+    });
+  }
+
+  var txJson = {
     transaction: {
       version: 1,
-      inputs: [
-        { // 0: covenant, unsigned-spend (sigscript carries ABI + redeem, no real sig)
-          previousOutpoint: { transactionId: covTxId, index: covIndex },
-          signatureScript: bytesToHex(in0Sigscript),
-          sequence: 0,
-          sigOpCount: 0,
-          computeBudget: COMPUTE_BUDGET,
-        },
-        { // 1: buyer plain funding, signed
-          previousOutpoint: { transactionId: fundTxId, index: fundIndex },
-          signatureScript: bytesToHex(in1Sigscript),
-          sequence: 0,
-          sigOpCount: 0,
-          computeBudget: 11,
-        },
-      ],
-      outputs: outputs.map((o) => ({
+      inputs: jsonInputs,
+      outputs: outputs.map(function(o) { return {
         value: Number(o.value),
         scriptPublicKey: spkJsonHex(0, o.scriptPubKey),
         covenant: o.covenant ? { authorizingInput: 0, covenantId: COVENANT_ID_HEX } : null,
         verboseData: null,
-      })),
+      }; }),
       lockTime: 0,
       subnetworkId: SUBNETWORK_NATIVE_HEX,
       gas: 0,
@@ -454,15 +467,14 @@ function buildClaimTx(params) {
   };
 
   return {
-    txJson,
-    sigHashHex: bytesToHex(sigHash),
-    sigHex: bytesToHex(sigWithType),
+    txJson: txJson,
+    sigHashHex: bytesToHex(firstSigHash),
+    sigHex: bytesToHex(firstSigWithType),
     sigscriptLen: in0Sigscript.length,
     paymentValue: Number(payment),
     changeValue: Number(changeValue),
   };
 }
-
 // A plain P2PK sigscript is just the signature pushed (OP_DATA-len framing).
 // (buildSigScript is covenant-ABI only; the buyer's funding input is plain.)
 function buildPlainSig(sig65) {
