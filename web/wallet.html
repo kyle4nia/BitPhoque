@@ -1417,7 +1417,7 @@ function openSent(){
   }
   openStory(
     '<div class="story-head"><h3>Sent receipts</h3><button class="x" onclick="closeStory()">&times;</button></div>' +
-    '<p class="story-lede">Codes from past sends. Share with the recipient so they can find and claim their phoques.</p>' +
+    '<p class="story-lede">Backup codes from past sends. If a recipient cannot find their phoques after refreshing, share the relevant code.</p>' +
     body
   );
 }
@@ -1487,7 +1487,7 @@ function openReceive(){
   const pubkey = myKey ? xonly(myKey.pubHex) : '';
   openStory(
     '<div class="story-head"><h3>Receive phoques</h3><button class="x" onclick="closeStory()">&times;</button></div>' +
-    '<p class="story-lede">Share your key with the sender, then paste the code they give you back.</p>' +
+    '<p class="story-lede">Share your key with the sender. After they send, close this and tap Refresh.</p>' +
     '<div style="text-align:center;margin:16px 0">' +
       '<div style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px">Your key</div>' +
       '<div id="recvQr" style="margin:0 auto;width:160px"></div>' +
@@ -1498,13 +1498,13 @@ function openReceive(){
       '<div style="font-size:14px;color:var(--ink);font-weight:500;margin-bottom:8px">How it works</div>' +
       '<div style="font-size:13px;color:var(--muted);line-height:1.8">' +
         '1. Share your key above with the sender.<br>' +
-        '2. They send phoques and give you a code back.<br>' +
-        '3. Paste that code below and tap Claim.' +
+        '2. They send phoques to your key.<br>' +
+        '3. Close this panel and tap <b>Refresh</b> on the home screen.' +
       '</div>' +
     '</div>' +
-    '<label>Code from sender</label>' +
-    '<textarea class="fld" id="r_desc" placeholder="Paste the code here..." rows="3" style="font-family:\'Fraunces\',serif;word-break:break-all"></textarea>' +
-    '<button class="btn" style="margin-top:14px" onclick="doReceive()">Claim phoques</button>' +
+    '<details style="margin-top:16px"><summary style="cursor:pointer;font-size:13px;color:var(--muted)">Have a backup code? &#8250;</summary><div style="margin-top:10px"><label>Backup code</label>' +
+    '<textarea class="fld" id="r_desc" placeholder="Paste the backup code here..." rows="3" style="font-family:\'Fraunces\',serif;word-break:break-all"></textarea>' +
+    '<button class="btn" style="margin-top:14px" onclick="doReceive()">Redeem code</button></div></details>' +
     '<pre class="out" id="storyOut"></pre>'
   );
   // render QR
@@ -1887,7 +1887,7 @@ async function submitPendingTx(){
         }
         sentReceipts.push({ descriptor: desc, recipientPubkey: pd.recipientPubkey, amount: pd.sendAmount.toString(), txid: txid, forSale: !!pd.forSale, ts: Date.now() });
         saveSentReceipts();
-        extra = '\n\n' + (pd.forSale ? 'Share this listing code with buyers (they paste it into Buy)' : 'Give this code to the recipient (they paste it into Receive)') + ':\n'+desc;
+        extra = '\n\nBackup code saved to Sent receipts.';
       } catch(e){ extra='\n\n(Code generation failed: '+(e.message||e)+')'; }
     }
     window._pendingDesc=null;
