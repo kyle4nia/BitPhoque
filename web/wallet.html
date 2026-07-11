@@ -529,6 +529,7 @@
     </details>
 
     <div class="tools">
+      <button class="link" onclick="openBackup()">Show recovery phrase</button>
       <button class="link" onclick="lockWallet()">Lock wallet</button>
     </div>
   </section>
@@ -1421,6 +1422,64 @@ function openSent(){
     '<p class="story-lede">Backup codes from past sends. If a recipient cannot find their phoques after refreshing, share the relevant code.</p>' +
     body
   );
+}
+
+/* ---- BACKUP / SHOW RECOVERY PHRASE ---- */
+function buildVaultGrid(){
+  return '<div class="vault" style="margin-top:14px"><div class="vault-grid">' +
+    seed.map(function(w,i){ return '<div class="word"><span class="n">'+(i+1)+'</span><span class="w">'+w+'</span></div>'; }).join('') +
+    '</div></div>';
+}
+function copyBackupSeed(){
+  navigator.clipboard.writeText(seed.join(' ')).then(function(){
+    var btn = document.getElementById('bk_copy');
+    if(btn){ var t=btn.textContent; btn.textContent='Copied'; setTimeout(function(){btn.textContent=t;},1400); }
+  });
+}
+function openBackup(){
+  if(!seed || !seed.length){ alert('No wallet loaded.'); return; }
+  var hasSaved = window.WALLET_STORE && window.WALLET_STORE.exists();
+  var warning = '<div style="border:1px solid var(--danger);border-radius:8px;padding:14px;margin-bottom:16px">' +
+    '<div style="font-weight:600;margin-bottom:6px">&#x1f512; Never share these words</div>' +
+    '<div style="font-size:13px;line-height:1.6;color:var(--muted)">' +
+    'Anyone with your recovery phrase can take your phoques. BitPhoque support will <b>never</b> ask for it.</div></div>';
+  if(hasSaved){
+    openStory(
+      '<div class="story-head"><h3>Recovery phrase</h3><button class="x" onclick="closeStory()">&times;</button></div>' +
+      '<p class="story-lede">Enter your passphrase to view your 12-word recovery phrase.</p>' +
+      warning +
+      '<label>Passphrase</label>' +
+      '<input class="fld" id="bk_pp" type="password" autocomplete="current-password" placeholder="Enter your passphrase" onkeydown="if(event.key===\'Enter\')revealBackup()">' +
+      '<div class="msg" id="bk_msg"></div>' +
+      '<button class="btn" style="margin-top:14px" onclick="revealBackup()">Show recovery phrase</button>' +
+      '<div id="bk_vault" style="display:none"></div>'
+    );
+  } else {
+    openStory(
+      '<div class="story-head"><h3>Recovery phrase</h3><button class="x" onclick="closeStory()">&times;</button></div>' +
+      '<p class="story-lede">Your 12-word recovery phrase. Write it down and keep it safe.</p>' +
+      warning +
+      '<div id="bk_vault">' + buildVaultGrid() + '</div>' +
+      '<div style="margin-top:12px;text-align:center"><button class="link" id="bk_copy" onclick="copyBackupSeed()">Copy words</button></div>'
+    );
+  }
+}
+async function revealBackup(){
+  var pp = document.getElementById('bk_pp').value;
+  var msg = document.getElementById('bk_msg');
+  if(!pp){ msg.className='msg bad'; msg.textContent='Enter your passphrase.'; return; }
+  msg.className='msg'; msg.textContent='Verifying...';
+  try {
+    await window.WALLET_STORE.unlock(pp);
+    msg.textContent='';
+    var vault = document.getElementById('bk_vault');
+    vault.style.display='block';
+    vault.innerHTML = buildVaultGrid() +
+      '<div style="margin-top:12px;text-align:center"><button class="link" id="bk_copy" onclick="copyBackupSeed()">Copy words</button></div>';
+  } catch(e){
+    msg.className='msg bad';
+    msg.textContent = (e.message==='BAD_PASSPHRASE') ? 'Wrong passphrase.' : 'Could not verify: '+(e.message||e);
+  }
 }
 
 /* ---- SUPPORT ---- */
