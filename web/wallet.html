@@ -1865,6 +1865,7 @@ async function submitPendingTx(){
       saveParcels();
       renderBalance();
       if (upd.add && upd.add.length) registerParcels(txid, upd.add);
+      if (window._pendingDesc && !window._pendingDesc.forSale) registerParcels(txid, [{owner: window._pendingDesc.recipientPubkey, covenant_amount: window._pendingDesc.sendAmount.toString(), forSale: false, price: '0', outputIndex: window._pendingDesc.outputIndex}]);
     }
     window._pendingParcelUpdate = null;
     let extra='';
