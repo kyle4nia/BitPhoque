@@ -493,6 +493,10 @@
       <a class="btn ghost" style="border:none;font-size:0.85rem;opacity:0.7;text-decoration:none;display:inline-flex;align-items:center" href="index.html">bitphoque.org</a>
     </div>
 
+    <div class="primary-btns" style="margin-top:-8px">
+      <button class="btn ghost" style="border:none;font-size:0.85rem;opacity:0.7" onclick="openSupport()">Support</button>
+    </div>
+
     <div class="node-bar" id="nodeBar">
       <span class="dot checking" id="nodeDot"></span>
       <span id="nodeText">Checking node...</span>
@@ -1418,6 +1422,66 @@ function openSent(){
   );
 }
 
+/* ---- SUPPORT ---- */
+function openSupport(){
+  const pubkey = myKey ? xonly(myKey.pubHex) : "(wallet locked)";
+  openStory(
+    '<div class="story-head"><h3>Support</h3><button class="x" onclick="closeStory()">&times;</button></div>' +
+    '<div style="border:1px solid var(--accent,#e94560);border-radius:8px;padding:14px;margin-bottom:16px">' +
+    '<div style="font-weight:600;margin-bottom:8px">&#x1f512; Stay safe</div>' +
+    '<div style="font-size:13px;line-height:1.6;color:var(--muted)">' +
+    '<b>No one will ever need your 12-word recovery phrase.</b> Never share it &mdash; not with support, not with anyone. ' +
+    'Your public key (receive address) is the only information needed to troubleshoot an issue.<br><br>' +
+    'Your phoques live on the Kaspa blockchain, not in this app. Wallet issues, cache clears, or device changes ' +
+    'never affect your on-chain balance. Your tokens are always safe and recoverable with your seed phrase.' +
+    '</div></div>' +
+    '<div style="font-size:14px;font-weight:600;margin-bottom:10px">Get help in our public channels</div>' +
+    '<div style="font-size:13px;line-height:1.6;color:var(--muted);margin-bottom:14px">' +
+    'Use public channels only &mdash; never DMs or private messages. Scammers impersonate support in DMs.</div>' +
+    '<a href="https://t.me/bitphoque" target="_blank" rel="noopener" class="btn ghost" style="display:block;text-align:center;margin-bottom:8px;text-decoration:none;font-size:0.9rem">Telegram &rarr; t.me/bitphoque</a>' +
+    '<a href="https://discord.gg/GEUyK2gU" target="_blank" rel="noopener" class="btn ghost" style="display:block;text-align:center;margin-bottom:16px;text-decoration:none;font-size:0.9rem">Discord &rarr; discord.gg/GEUyK2gU</a>' +
+    '<details style="margin-top:8px"><summary style="cursor:pointer;font-size:13px;color:var(--muted)">Or send a message directly &#8250;</summary>' +
+    '<div style="margin-top:12px">' +
+    '<div style="font-size:12px;color:var(--muted);margin-bottom:4px">Your public key</div>' +
+    '<div style="background:var(--bg);border-radius:6px;padding:8px;font-family:monospace;font-size:11px;word-break:break-all;margin-bottom:14px">' + pubkey + '</div>' +
+    '<div style="font-size:12px;color:var(--muted);margin-bottom:4px">Describe the issue</div>' +
+    '<textarea id="supportMsg" rows="4" style="width:100%;box-sizing:border-box;border-radius:8px;border:1px solid var(--hair);background:var(--bg);color:var(--ink);padding:10px;font-family:inherit;font-size:14px;resize:vertical" placeholder="What happened? What did you expect?"></textarea>' +
+    '<button class="btn" style="margin-top:12px" onclick="submitSupport()">Send to support</button>' +
+    '<div id="supportResult" style="margin-top:12px"></div>' +
+    '</div></details>'
+  );
+}
+async function submitSupport(){
+  const msg = document.getElementById("supportMsg").value.trim();
+  if(!msg){ alert("Please describe the issue."); return; }
+  const pubkey = myKey ? xonly(myKey.pubHex) : "unknown";
+  const out = document.getElementById("supportResult");
+  out.innerHTML = '<span style="opacity:0.6">Sending...</span>';
+  try {
+    const base = location.hostname === "127.0.0.1" || location.hostname === "192.168.0.118" ? "https://bitphoque.org" : "";
+    const r = await fetch(base + "/api/support", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({pubkey, message: msg})
+    });
+    const j = await r.json();
+    if(r.ok){
+      out.innerHTML = '<div style="border:1px solid var(--accent,#e94560);border-radius:8px;padding:14px;margin-top:4px">' +
+        '<div style="font-weight:600;margin-bottom:6px">&#10003; Message received!</div>' +
+        '<div style="font-size:13px;line-height:1.5;color:var(--muted)">Thanks for reaching out. We&#39;ve got your message and will look into it. ' +
+        'Remember: your phoques are safely on-chain and can always be recovered with your seed phrase, ' +
+        'no matter what happens with this app or device.</div></div>';
+      document.getElementById("supportMsg").value = "";
+    } else if(r.status === 429){
+      out.innerHTML = '<span style="color:var(--accent,#e94560)">You&#39;ve sent several messages recently. Please try again in an hour.</span>';
+    } else {
+      out.innerHTML = '<span style="color:var(--accent,#e94560)">Could not send: ' + (j.error || "unknown error") + '</span>';
+    }
+  } catch(e){
+    out.innerHTML = '<span style="color:var(--accent,#e94560)">Network error. Check your connection and try again.</span>';
+  }
+}
+
 /* ---- RECEIVE ---- */
 function openReceive(){
   const pubkey = myKey ? xonly(myKey.pubHex) : '';
@@ -1893,7 +1957,7 @@ function forgetWallet(){
 const phoqueSound = new Audio('phoque3.wav');
 phoqueSound.volume = 0.4;
 document.addEventListener('click', (e) => {
-  if (e.target.closest('.btn, .choice')) {
+  if (e.target.closest('.submit-btn')) {
     phoqueSound.currentTime = 0;
     phoqueSound.play().catch(() => {});
   }
