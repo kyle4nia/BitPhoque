@@ -1080,6 +1080,7 @@ async function discoverParcels(){
         outpoint: outpoint,
       });
       added++;
+      recordTx(c.txid, 'receive', c.amount.toString(), '');
     }
     if(added > 0){
       saveParcels();
@@ -1370,8 +1371,8 @@ function openTxHistory(){
   if(!items.length){
     body = '<p style="opacity:0.6;margin-top:18px">No transactions yet. They appear here after you send, buy, sell, or merge phoques.</p>';
   } else {
-    var badges = {send:'\u2191 Sent', list:'\u25C6 Listed', buy:'\u2193 Bought', merge:'\u2194 Merged'};
-    var colors = {send:'#4a9', list:'#e94560', buy:'#49e', merge:'#a8a'};
+    var badges = {receive:'\u2193 Received', send:'\u2191 Sent', list:'\u25C6 Listed', buy:'\u2193 Bought', merge:'\u2194 Merged'};
+    var colors = {receive:'#3d6b4a', send:'#4a9', list:'#e94560', buy:'#49e', merge:'#a8a'};
     for(var i = 0; i < items.length; i++){
       var r = items[i];
       var d = new Date(r.ts);
@@ -1525,6 +1526,7 @@ async function doReceive(){
   let p;
   try { p = await receiveParcel(desc); }
   catch(e){ out.textContent = (e.message || String(e)); return; }
+  recordTx(p.outpoint.split(':')[0], 'receive', p.covenant_amount, '');
   out.textContent = 'Claimed!\n\n' + p.covenant_amount + ' phoques confirmed and added to your wallet.\n\nClose this to see your updated balance.';
 }
 
