@@ -19,6 +19,29 @@
     color-scheme: light;
   }
 
+  .mainnet-banner {
+    text-align: center;
+    border: 1.5px solid var(--hair-strong);
+    border-radius: 10px;
+    padding: 14px 16px 12px;
+    margin-bottom: 24px;
+    background: var(--paper-edge);
+  }
+  .banner-label {
+    font-size: 12px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 6px;
+  }
+  .banner-countdown {
+    font-family: 'Fraunces', Georgia, serif;
+    font-size: 32px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--ink);
+  }
+
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
   html { -webkit-text-size-adjust: 100%; }
@@ -243,6 +266,12 @@
 <body>
 
   <main class="wrap">
+
+    <div class="mainnet-banner" id="mainnetBanner">
+      <div class="banner-label">Free testnet deployment &mdash; mainnet activation starts in:</div>
+      <div class="banner-countdown">42,069 <span style="font-size:14px;font-weight:400;color:var(--muted)">seconds</span></div>
+    </div>
+
     <section class="hero">
       <img class="logo" src="bitphoque-nowords.jpeg" alt="BitPhoque -- a hand-drawn harbor seal"
            onerror="this.style.display='none'; document.getElementById('logo-fb').style.display='flex';">
