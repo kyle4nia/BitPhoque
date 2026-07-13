@@ -4,6 +4,15 @@ _Read `operating_baseline.md` alongside this. BitPhoque lives in `C:\bitphoque` 
 
 ---
 
+## SESSION-START CHECKLIST (any agent, any platform)
+
+1. Read operating_baseline.md (HOW), then this doc (WHERE). History doc is lookup only.
+2. Check https://github.com/kaspanet/silverscript for releases and README changes. Record the delta against the last recorded baseline in the opening assessment. Last recorded: 111 commits, zero releases, Experimental, TN12-only (2026-07-13).
+3. Re-derive blocker classification (absolute vs chosen) per the baseline's reasoning-discipline section. Do not inherit last session's classification unexamined.
+4. Deliver the six-part opening assessment before any work.
+
+---
+
 ## WHERE WE ARE (2026-07-12)
 
 Feature-complete spending wallet on TN10. Every layer proven live. Mainnet blocked on SilverScript V1 (experimental, zero releases).
@@ -214,6 +223,6 @@ _Append-only. Newest first. Prior sigs pushed to `bitphoque_history.md`._
 
 ---sig #012 | 2026-07-11 ~EST | desktop | trees: bitphoque | scope: descriptor UX overhaul, registry-based discovery, tx history receives, show recovery phrase, supply accounting, explorer/RPC feature request draft | head: 4e32af4
 
----sig #013 | 2026-07-12 ~EST | desktop | trees: bitphoque | scope: kas-smith forum analysis (KCC20 spec, borrowed receive, open ICC/Capsule/virtual state), forum post shipped, CLI import debugging (TN12/TN10 mismatch identified), operating baseline trimmed, status doc trimmed | head: pending
+---sig #013 | 2026-07-12 ~EST | desktop | trees: bitphoque | scope: kas-smith forum analysis (KCC20 spec, borrowed receive, open ICC/Capsule/virtual state), forum post shipped, CLI import debugging (TN12/TN10 mismatch identified), operating baseline trimmed, status doc trimmed | head: 6d603bf
 OPENING ASSESSMENT: BitPhoque feature-complete on TN10, mainnet blocked on SilverScript V1. Plan: forum analysis, CLI sends from buyer keys.
 DRIFT: CLI import universally failed — discovered the only wired Cargo project is TN12-era (v1.2.1-toc.3), likely deriving wrong P2SH addresses for TN10. Pivoted from "do the sends" to "diagnose why nothing imports." Forum work was productive — shipped a post to kas-smith sharing BitPhoque's production findings, analyzed KCC20 spec alignment, borrowed receive implications, and open ICC/Capsule architecture relevance to the oracle project.

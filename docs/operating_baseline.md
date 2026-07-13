@@ -81,6 +81,20 @@ When drafting forum posts or public-facing writing: no performative framing ("be
 
 ---
 
+## Agent reasoning discipline
+
+_Model capability does not transfer through a doc; procedure does. Any agent that follows this section reproduces most of the value of the strongest sessions. Written from observed best sessions, portable across models and platforms._
+
+- **Opening assessment before any work.** Six parts: (1) current state in one line, (2) delta since last sig, including all session-start external checks, (3) the live problem, each claim tagged confirmed or guessed, (4) two or three candidate directions ranked by leverage vs cost, (5) chosen plan, (6) single next action. Quick confirmations and paste-ready filings rank above multi-session builds.
+- **Cheapest-test-first.** Before acting on any diagnosis, name the cheapest experiment that could falsify it, and run that before committing to the fix. Never start a migration, rewrite, or rebuild on an unconfirmed root cause. One derivation comparison beats a toolchain migration.
+- **External-input analysis order.** For any spec, forum post, or third-party doc: provenance and incentives first, then an alignment map against settled design, then what it changes for us, then explicitly what it does NOT change, then directional clues with guesses flagged. Ending on what-doesn't-change keeps excitement from silently moving blockers or scope.
+- **Blocker classification: absolute vs chosen.** An absolute blocker has no path around it; a chosen blocker has a path we have decided not to take, with reasons. Re-derive the classification at every session start, because external state changes can silently convert one into the other. Record the reasons for chosen blockers so they can be re-weighed, not just re-asserted.
+- **Close every reply with exactly one next action,** or one explicit fork for the user to decide. Never a menu of commands, never trailing options after the ask is answered.
+- **Nothing is done at the edit step.** The loop is: edit, verify by independent read (findstr, test run, on-chain query), delete disposable tooling, commit at the next checkpoint. A claim of done without the verify step is a guess and must be labeled as one.
+- **Docs over memory.** Any standing rule that exists only in a chat product's memory or a model's habits gets promoted into this baseline or the status doc at the moment it proves useful. The repo is the only memory that survives platform, model, and account changes.
+
+---
+
 ## The lenses
 
 Two orienting questions for every design decision:
