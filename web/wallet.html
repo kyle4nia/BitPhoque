@@ -454,7 +454,7 @@
       <div class="save-head">Save this wallet to this browser?</div>
       <p class="save-sub">Set a passphrase and your recovery phrase is encrypted (AES-GCM)
         and kept on this device, so it survives a refresh. The passphrase is never stored --
-        only you can unlock it. Or skip and keep the wallet for this session only.</p>
+        only you can unlock it.</p>
       <label for="ppNew">Passphrase</label>
       <input class="fld" id="ppNew" type="password" autocomplete="new-password" placeholder="choose a strong passphrase" oninput="ppStrength()">
       <div class="hint" id="ppStrengthHint" style="min-height:15px"></div>
@@ -462,9 +462,6 @@
       <input class="fld" id="ppNew2" type="password" autocomplete="new-password" placeholder="type it again">
       <div class="msg" id="saveMsg"></div>
       <button class="btn" onclick="saveWallet()" id="saveBtn">Encrypt &amp; save</button>
-      <div class="tools" style="margin-top:14px">
-        <button class="link" onclick="enterWallet()">Skip -- this session only</button>
-      </div>
     </div>
 
     <div id="enteredBox" style="display:none">
@@ -654,7 +651,7 @@ function prepDone(){
 }
 function finishCreate(){
   document.getElementById('doneTitle').textContent='Wallet ready';
-  document.getElementById('doneLede').textContent="Your wallet is set up and held in this browser. Set a passphrase below to keep it on this device, or skip for a session-only wallet.\n\nYou\u2019ll need a small amount of KAS to cover transaction fees. Once you\u2019re in, tap the \u201CNeed KAS for fees?\u201D link on the home screen to see your address.";
+  document.getElementById('doneLede').textContent="Your wallet is set up and held in this browser. Set a passphrase below to keep it on this device.\n\nYou\u2019ll need a small amount of KAS to cover transaction fees. Once you\u2019re in, tap the \u201CNeed KAS for fees?\u201D link on the home screen to see your address.";
   prepDone();
   setTimeout(()=>show('done'),600);
 }
@@ -681,7 +678,7 @@ function checkRestore(){
   if(!res.ok){ m.className='msg bad'; m.textContent=res.reason; return; }
   seed=arr.map(w=>w.toLowerCase()); m.className='msg ok'; m.textContent='Phrase valid.';
   document.getElementById('doneTitle').textContent='Wallet restored';
-  document.getElementById('doneLede').textContent="Welcome back. Your wallet is loaded in this browser. Set a passphrase below to keep it on this device, or skip for a session-only wallet.";
+  document.getElementById('doneLede').textContent="Welcome back. Your wallet is loaded in this browser. Set a passphrase below to keep it on this device.";
   prepDone();
   setTimeout(()=>show('done'),500);
 }
