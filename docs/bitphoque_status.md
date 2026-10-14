@@ -34,17 +34,15 @@ _OPEN routine step 1: if any path on screen this session is not in this block, S
 
 <<<NOW>>>
 
-**State (2026-10-14):** Direction fully settled this arc. BitPhoque = a SINGLE-COVENANT KCC20 asset built on the argent-lang/kcc20-reference `kcc20.ag`, authored in ARGENT. Fixed supply 42,069, pubkey-owned (owner_scheme 0x00), on-chain sale. Not yet built; TN10 target.
+**State (2026-10-14):** Build phase. BitPhoque = single-covenant KCC20 asset in ARGENT, on argent-lang/kcc20-reference `kcc20.ag`. Fixed supply 42,069, pubkey-owned (0x00), on-chain sale. Argent toolchain PROVEN in-environment: cloned reference to `C:\kcc20-reference`, `cargo test --locked` = 60/60 pass (incl. borrowed-receive VM + all owner schemes). Extension layout SETTLED (see DESIGN). Not yet: BitPhoque Argent project, sale entrypoint code, TN10 deploy.
 
-**Reference (confirmed at source 2026-10-14):** argent-lang/kcc20-reference `contracts/kcc20.ag` — the 6-field KCC20 asset (amount/owner/owner_scheme/borrow_scheme/borrow_guard/extension_commitment), standard `transfer`+`transfer_delegator`, all 5 KCC2 owner schemes, all 4 borrow schemes, conservation, extension preserved. Vector-conformant, 36-test suite, finalized by michaelsutton (KCC author) Oct 7. This supersedes the silverscript example (still old 4-field at v1.0.0) and kcc20-findings.md.
+**Settled design (detail in DESIGN):** state = KCC20 six-field; sale = `int price` sompi (0 idle / >0 listed) committed in `extension_commitment` as BLAKE3(0x01 || LE64(price)), KCC1 §10 virtual element; `set_price` + `claim` alongside a byte-identical standard transfer; genesis pre-mints full supply, no minter.
 
-**Sale architecture (settled, confirmed against the reference code):** the standard transfer requires `extension_commitment` identical across all inputs/outputs and preserved, so sale state cannot ride in it. Shape: `extension_commitment` carries `{forSale, price}` as a KCC1 §10 hash-committed virtual element; idle tokens use a canonical forSale=false commitment (mutually fungible); `list`/`claim`/`cancel` are BitPhoque-specific entrypoints alongside the standard transfer, which stays byte-identical (keeps vector-conformance + indexer decoding). v4's payment-authorized claim ports directly (pay-to-owner, no seller sig). SINGLE covenant — no escrow covenant, no covenant-id ownership. A listed token is its own fungibility class until claimed/cancelled.
+**Mainnet caution (unchanged):** KCC-20 Last Call / Draft-in-file / NOT Final; ABI not converged (kccs #28). Conform + exercise on TN10 now; HOLD irreversible genesis until Final + ABI converged; re-diff if the spec moves.
 
-**Genesis:** pre-mint the full 42,069 as a KCC20State UTXO, owner = genesis pubkey (0x00), borrow disabled, no minter / no PublicMint / no seed. GUESSED: indexers accept a no-minter pre-minted KCC20 family — the reference assumes the PublicMint/TokenSeed descriptor; verify.
+**Toolchain pins (to record in reference.md):** argent + argent-runtime @ github.com/argent-lang/argent rev 9a9f4b10; rusty-kaspa rev a41a333b (VM/consensus — must match TN10 for deploy, environment-version-trap); Rust 1.94.1 floor (local 1.96.0 OK).
 
-**Mainnet caution (unchanged):** KCC-20 is Last Call in the kccs table, Draft in the file, NOT Final; ABI not converged across implementations (kccs #28). Conform and exercise on TN10 now; HOLD the irreversible mainnet genesis until KCC-20 is Final and the ABI converges. Re-run the shape diff if the spec changes before Final.
-
-**Single next action:** stand up the Argent toolchain (pin argent + its silverscript dependency), compile the reference `kcc20.ag` unchanged, and confirm it builds in-environment — before authoring any BitPhoque sale entrypoints.
+**Single next action:** design the `claim` payment accounting — multiple listed tokens claimed in one tx under leader/delegator, re-expressing v4's strictly-increasing payment-index / one-payment-per-seller guard for the covenant family. Paper design before any .ag.
 
 <<<END NOW>>>
 
@@ -69,6 +67,24 @@ _OPEN routine step 1: if any path on screen this session is not in this block, S
 - Toolchain: ADOPT ARGENT (compile .ag -> .sil/bytecode). New commitment; the tree was previously hand-authored .sil. Argent + its silverscript dep get pinned under the environment-version-trap discipline.
 - Adopted KCC20 guards + borrowed-receive become BitPhoque's to audit at the target pin. "It's the standard" != "it's audited."
 - gen5 join REMOVED from scope (2026-10-14). BitPhoque is its own thing; gen5 may later build a separate token with lessons learned. Note: the single-covenant sale needs NO inter-covenant machinery, so nothing here reopens the gen5 coupling.
+
+### Extension layout (SETTLED 2026-10-14 — genesis-irreversible)
+
+- Sale state = a single `int price` in KAS sompi. `price == 0` → idle (not listed); `price > 0` → listed. forSale folded into price (price=0,forSale=true was already disallowed in v4).
+- `extension_commitment` = BLAKE3 commitment (KCC1 §10 virtual element) over the packed value with a 1-byte version tag:
+    Packed(ext) = 0x01 || LE64(price)        (9 bytes: version + 8-byte LE signed int, KCC1 §5.3)
+    extension_commitment = BLAKE3(Packed(ext))
+  idle = BLAKE3(0x01 || LE64(0)) — one fixed constant; all idle tokens share it and stay mutually fungible.
+- Raw price is the opening, supplied as witness to the sale entrypoints; the standard transfer never opens it, only preserves the 32 bytes. Price is hidden on-chain; human-readable price lives in the bitphoque.org registry, trustlessly verifiable as BLAKE3(0x01 || LE64(advertised_P)) == on-chain commitment.
+- Version byte reserves the seam for a future extension field without a format collision (solve-for-this-version; genesis ossifies the format).
+- Price is per-UTXO, not per-unit (as v4). Merging two listed UTXOs via standard transfer keeps one price on the whole — a wallet concern, not a contract hole.
+
+### Sale entrypoints (added alongside the reference transfer; standard transfer stays byte-identical)
+
+- `set_price(new_price, sig)` — owner-authorized. 0→P lists, P→P' reprices, P→0 cancels. Changes the commitment, so it is its own entrypoint.
+- `claim(...)` — payment-authorized, NO seller signature. Requires opened price > 0, pays >= price to the token's `owner` (seller, P2PK of the owner field, per v4), produces a buyer-owned output reset to price=0.
+- Standard `transfer` / `transfer_delegator` unchanged → vector-conformant, indexers decode balances.
+- OPEN (the hard part): `claim` payment accounting when multiple listed tokens are claimed in one tx under the leader/delegator model — v4's strictly-increasing payment-output-index / one-payment-per-seller guard, re-expressed for the family. Not yet designed.
 
 <<<OPEN ITEMS>>>
 
@@ -136,5 +152,10 @@ CONFIRMED (at raw.githubusercontent kccs main + argent-lang/kcc20-reference mast
 GUESSED (flagged): indexers accept a no-minter pre-minted KCC20 family (reference assumes PublicMint/TokenSeed) — unverified. KCC-20 shape stable through Final — it is Last Call/Draft-in-file, ABI not converged (kccs #28); may shift, re-diff before genesis.
 DRIFT: opened the arc expecting a small conform; two corrections landed. (1) Reading v4 showed the sale is covenant-enforced, and the reference transfer locks extension_commitment, so the sale had to become separate entrypoints over a virtual element, not a field in transfer. (2) My first reference read (silverscript example) was stale 4-field and I wrongly concluded no 6-field reference existed; user pushed on staleness — the real 6-field reference is argent-lang/kcc20-reference. Net: hard parts (transfer, borrowed-receive) are proven by a core author; BitPhoque's only novel work is the sale entrypoints.
 prev-head: 5b5071b
+---sig #018 | 2026-10-14 ~EST | desktop | trees: bitphoque | scope: Argent toolchain stood up + proven; extension layout settled (no bitphoque code yet). Cloned argent-lang/kcc20-reference to C:\kcc20-reference, cargo test --locked = 60/60 pass. Settled the sale extension: int price in sompi (0 idle / >0 listed), extension_commitment = BLAKE3(0x01 || LE64(price)) KCC1 §10 virtual element, 1-byte version tag for forward-compat; entrypoints collapse to set_price (owner-auth) + claim (payment-auth, no seller sig) alongside a byte-identical standard transfer. Filed layout + entrypoints into DESIGN; refreshed NOW with toolchain pins.
+CONFIRMED: toolchain builds + asset passes in-environment (cargo test --locked, 60 passed 0 failed, incl conformance_borrowed_receive_vm + leader/delegate owner schemes); Rust 1.96.0 local clears 1.94.1 floor; pins argent 9a9f4b10 / rusty-kaspa a41a333b read from reference Cargo.toml.
+GUESSED (flagged): price-per-UTXO merge is a wallet concern not a contract hole (believed, not tested); claim multi-token accounting sound as sketched (NOT yet designed — the open hard part); no-minter family indexer acceptance still unverified (carried from #017).
+DRIFT: none material. The version byte was the only open layout choice and was taken; the real risk (claim accounting under leader/delegator) was deferred to its own pass, not folded into the layout.
+prev-head: 6f3778e
 
 <<<END LEDGER>>>
