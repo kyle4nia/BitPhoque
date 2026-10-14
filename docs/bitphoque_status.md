@@ -34,15 +34,13 @@ _OPEN routine step 1: if any path on screen this session is not in this block, S
 
 <<<NOW>>>
 
-**State (2026-10-14):** Build phase. BitPhoque = single-covenant KCC20 asset in ARGENT, on argent-lang/kcc20-reference `kcc20.ag`. Fixed supply 42,069, pubkey-owned (0x00), on-chain sale. Argent toolchain PROVEN in-environment: cloned reference to `C:\kcc20-reference`, `cargo test --locked` = 60/60 pass (incl. borrowed-receive VM + all owner schemes). Extension layout SETTLED (see DESIGN). Not yet: BitPhoque Argent project, sale entrypoint code, TN10 deploy.
+**State (2026-10-14):** DESIGN COMPLETE → build phase. BitPhoque = single-covenant KCC20 asset in Argent on argent-lang/kcc20-reference `kcc20.ag`. Fixed supply 42,069, pubkey-owned (0x00), on-chain sale. Toolchain proven in-environment (C:\kcc20-reference, cargo test --locked 60/60). Full design settled (see DESIGN): six-field state; sale = int price sompi (0 idle/>0 listed) in extension_commitment = BLAKE3(0x01 || LE64(price)); set_price + claim, BOTH singleton, alongside a byte-identical standard transfer; genesis pre-mints full supply, no minter. Not yet: BitPhoque Argent project, entrypoint .ag, genesis, TN10 deploy.
 
-**Settled design (detail in DESIGN):** state = KCC20 six-field; sale = `int price` sompi (0 idle / >0 listed) committed in `extension_commitment` as BLAKE3(0x01 || LE64(price)), KCC1 §10 virtual element; `set_price` + `claim` alongside a byte-identical standard transfer; genesis pre-mints full supply, no minter.
+**Mainnet caution (unchanged):** KCC-20 Last Call/Draft-in-file/NOT Final; ABI not converged (kccs #28). Conform + exercise on TN10 now; HOLD genesis until Final + converged; re-diff if spec moves.
 
-**Mainnet caution (unchanged):** KCC-20 Last Call / Draft-in-file / NOT Final; ABI not converged (kccs #28). Conform + exercise on TN10 now; HOLD irreversible genesis until Final + ABI converged; re-diff if the spec moves.
+**Toolchain pins (record in reference.md):** argent + argent-runtime @ argent-lang/argent 9a9f4b10; rusty-kaspa a41a333b (must match TN10 for deploy); Rust 1.94.1 floor (local 1.96.0).
 
-**Toolchain pins (to record in reference.md):** argent + argent-runtime @ github.com/argent-lang/argent rev 9a9f4b10; rusty-kaspa rev a41a333b (VM/consensus — must match TN10 for deploy, environment-version-trap); Rust 1.94.1 floor (local 1.96.0 OK).
-
-**Single next action:** design the `claim` payment accounting — multiple listed tokens claimed in one tx under leader/delegator, re-expressing v4's strictly-increasing payment-index / one-payment-per-seller guard for the covenant family. Paper design before any .ag.
+**Single next action:** scaffold the BitPhoque Argent project — a cargo project pinned to the same argent/rusty-kaspa revs, with contracts/bitphoque.ag starting as the reference kcc20.ag (standard transfer+delegator unchanged), ready for the set_price + claim entries and a rejection-test suite.
 
 <<<END NOW>>>
 
@@ -81,10 +79,12 @@ _OPEN routine step 1: if any path on screen this session is not in this block, S
 
 ### Sale entrypoints (added alongside the reference transfer; standard transfer stays byte-identical)
 
-- `set_price(new_price, sig)` — owner-authorized. 0→P lists, P→P' reprices, P→0 cancels. Changes the commitment, so it is its own entrypoint.
-- `claim(...)` — payment-authorized, NO seller signature. Requires opened price > 0, pays >= price to the token's `owner` (seller, P2PK of the owner field, per v4), produces a buyer-owned output reset to price=0.
+- `set_price(new_price, sig)` — owner-authorized, SINGLETON. 0→P lists, P→P' reprices, P→0 cancels. Owner sig required; owner/amount/borrow preserved; only extension_commitment changes to BLAKE3(0x01 || LE64(P')).
+- `claim(buyer_owner, buyer_owner_scheme, opened_price P, pay_idx)` — payment-authorized, NO seller sig, SINGLETON (OpCovInputCount == 1). Binds the opening (BLAKE3(0x01 || LE64(P)) == commitment), requires P > 0 and owner_scheme 0x00, requires tx.outputs[pay_idx] == P2PK(owner) with value >= P, produces a buyer-owned output forced to idle (commitment = BLAKE3(0x01 || LE64(0))), amount conserved.
 - Standard `transfer` / `transfer_delegator` unchanged → vector-conformant, indexers decode balances.
-- OPEN (the hard part): `claim` payment accounting when multiple listed tokens are claimed in one tx under the leader/delegator model — v4's strictly-increasing payment-output-index / one-payment-per-seller guard, re-expressed for the family. Not yet designed.
+- CLAIM ACCOUNTING — RESOLVED 2026-10-14: claim is SINGLETON (one listed BitPhoque input per tx). Batched multi-listing claim (v4's strictly-increasing payment-index / one-payment-per-seller guard under leader/delegator) is DEFERRED — later isolated optimization, clean seam, not a v1 gate. Singleton removes the cross-input double-count and coverage-gap bug class entirely; the standard transfer still does full 3-in/3-out for idle move/merge/split.
+- Security vectors (singleton claim, reasoned not yet VM-tested): underpay → fails commitment bind; claim-without-pay → payment require; stays-listed → commitment forced idle; non-owner sweep via transfer → seller sig required; bundling a victim listing → singleton OpCovInputCount==1; partial-fill → amount conserved. All rejected. These become rejection tests in the BitPhoque suite.
+- Minor-open: claimed output borrow_scheme — force disabled (0x00) [chosen] vs buyer-chosen. KAS/dust floors are wallet-side.
 
 <<<OPEN ITEMS>>>
 
@@ -157,5 +157,10 @@ CONFIRMED: toolchain builds + asset passes in-environment (cargo test --locked, 
 GUESSED (flagged): price-per-UTXO merge is a wallet concern not a contract hole (believed, not tested); claim multi-token accounting sound as sketched (NOT yet designed — the open hard part); no-minter family indexer acceptance still unverified (carried from #017).
 DRIFT: none material. The version byte was the only open layout choice and was taken; the real risk (claim accounting under leader/delegator) was deferred to its own pass, not folded into the layout.
 prev-head: 6f3778e
+---sig #019 | 2026-10-14 ~EST | desktop | trees: bitphoque | scope: claim design settled (no code); design phase complete. Resolved the last gate: claim is SINGLETON (one listed token/tx), dissolving the batched-claim double-count + coverage-gap bug class under leader/delegator. Batched claim deferred (clean seam). Specified set_price + claim invariants, checked six anti-theft/anti-grief vectors. Filed to DESIGN; NOW moved to build (scaffold Argent project).
+CONFIRMED: singleton claim uses only primitives already read in the reference (require_owner_authorized, ScriptPubKeyP2PK, OpCovInputCount, become-continuation, sig #017); no unproven builtin needed.
+GUESSED (flagged): the six vectors are reasoned, NOT VM-tested — become rejection tests once bitphoque.ag exists. price-per-UTXO merge = wallet concern (untested). no-minter family indexer acceptance unverified (carried from #017).
+DRIFT: none. Claim difficulty was isolated to batching and removed by the singleton constraint; layout untouched, as predicted in #018.
+prev-head: 870430f
 
 <<<END LEDGER>>>
