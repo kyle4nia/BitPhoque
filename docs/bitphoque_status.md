@@ -34,15 +34,17 @@ _OPEN routine step 1: if any path on screen this session is not in this block, S
 
 <<<NOW>>>
 
-**State (2026-10-14):** BitPhoque feature-complete on TN10 at covenant_id `3baed5a3...` (v4, bespoke 4-field shape). Direction set this session: conform to KCC20 as a STANDALONE fixed-supply, pubkey-owned asset — 42,069 phoques, no minter, no controller, no inter-covenant coupling. gen5 join REMOVED from scope. The recorded KCC20 shape (kcc20-findings.md, pin 4b0e1cd) is NON-CONFORMANT — the shape-stability diff FAILED.
+**State (2026-10-14):** Direction fully settled this arc. BitPhoque = a SINGLE-COVENANT KCC20 asset built on the argent-lang/kcc20-reference `kcc20.ag`, authored in ARGENT. Fixed supply 42,069, pubkey-owned (owner_scheme 0x00), on-chain sale. Not yet built; TN10 target.
 
-**Shape delta (confirmed at kccs main, 2026-10-14):** KCC20State is now SIX fields — `amount`(int), `owner`(byte[32]), `owner_scheme`(byte), `borrow_scheme`(byte), `borrow_guard`(byte[32]), `extension_commitment`(byte[32]). `isMinter` and the minter-taint gate are gone. Owner schemes are KCC2: pubkey owners use `owner_scheme` 0x00 (p2pk-schnorr), where the authority is the Schnorr pubkey itself — maps onto the existing per-UTXO checkSig. Borrowed-receive is mandatory (3 enabled schemes). Default transfer is the array form `transfer(KCC20State[],byte[])`, bounded 3-in/3-out. Transfer preserves total amount across the covenant family (conservation-only — exactly what fixed-supply wants).
+**Reference (confirmed at source 2026-10-14):** argent-lang/kcc20-reference `contracts/kcc20.ag` — the 6-field KCC20 asset (amount/owner/owner_scheme/borrow_scheme/borrow_guard/extension_commitment), standard `transfer`+`transfer_delegator`, all 5 KCC2 owner schemes, all 4 borrow schemes, conservation, extension preserved. Vector-conformant, 36-test suite, finalized by michaelsutton (KCC author) Oct 7. This supersedes the silverscript example (still old 4-field at v1.0.0) and kcc20-findings.md.
 
-**Conformance-target status:** kccs table lists KCC1/KCC2/KCC20 as Last Call; the KCC1 and KCC20 FILES still self-label Status: Draft (KCC2 reads Last Call). Asset-side shape not frozen by the files' own headers — re-run the diff if it moves.
+**Sale architecture (settled, confirmed against the reference code):** the standard transfer requires `extension_commitment` identical across all inputs/outputs and preserved, so sale state cannot ride in it. Shape: `extension_commitment` carries `{forSale, price}` as a KCC1 §10 hash-committed virtual element; idle tokens use a canonical forSale=false commitment (mutually fungible); `list`/`claim`/`cancel` are BitPhoque-specific entrypoints alongside the standard transfer, which stays byte-identical (keeps vector-conformance + indexer decoding). v4's payment-authorized claim ports directly (pay-to-owner, no seller sig). SINGLE covenant — no escrow covenant, no covenant-id ownership. A listed token is its own fungibility class until claimed/cancelled.
 
-**Open sub-question (sets the state layout):** BitPhoque's sale model (v3/v4 `forSale`+`price`). Covenant-enforced → rides in `extension_commitment` as a KCC1 §10 virtual element (32-byte commitment in state, opened in witness, verified against it). Registry-based like receive discovery → base KCC20 state suffices, no extended state. The v4 contract settles it; unread this session.
+**Genesis:** pre-mint the full 42,069 as a KCC20State UTXO, owner = genesis pubkey (0x00), borrow disabled, no minter / no PublicMint / no seed. GUESSED: indexers accept a no-minter pre-minted KCC20 family — the reference assumes the PublicMint/TokenSeed descriptor; verify.
 
-**Single next action:** read the v4 contract's sale-model enforcement (covenant-level vs registry) to fix whether `extension_commitment` is used, then scope the 6-field conform.
+**Mainnet caution (unchanged):** KCC-20 is Last Call in the kccs table, Draft in the file, NOT Final; ABI not converged across implementations (kccs #28). Conform and exercise on TN10 now; HOLD the irreversible mainnet genesis until KCC-20 is Final and the ABI converges. Re-run the shape diff if the spec changes before Final.
+
+**Single next action:** stand up the Argent toolchain (pin argent + its silverscript dependency), compile the reference `kcc20.ag` unchanged, and confirm it builds in-environment — before authoring any BitPhoque sale entrypoints.
 
 <<<END NOW>>>
 
@@ -59,20 +61,21 @@ _OPEN routine step 1: if any path on screen this session is not in this block, S
 - **Receive:** registry-based discovery (primary) + offline descriptor codec (fallback, 118B base58check).
 - **KAS handling:** "gas-tank, not vault." Fee floors: 700k list/split, 900k claim, 1.3M merge.
 
-### KCC20 conform direction (SETTLED 2026-10-14 — standalone fixed-supply, not yet built)
+### KCC20 conform direction (SETTLED 2026-10-14 — single-covenant, Argent, on-chain sale)
 
-- BitPhoque becomes a STANDALONE **KCC20 asset covenant**: fixed supply (42,069 phoques), no minter, owners are pubkeys (`owner_scheme` 0x00, p2pk-schnorr). No controller, no issuance, no inter-covenant coupling.
-- State is the KCC20 six-field layout: `amount`(int) / `owner`(byte[32]) / `owner_scheme`(byte) / `borrow_scheme`(byte) / `borrow_guard`(byte[32]) / `extension_commitment`(byte[32]). Confirmed at kccs main 2026-10-14; the recorded 4-field shape in kcc20-findings.md is superseded.
-- Mandatory conformance surface: borrowed-receive (all three enabled schemes) and the default array transfer `transfer(KCC20State[],byte[])`, bounded 3-in/3-out. Supply conservation only — the leader preserves total token amount across the covenant family.
-- Sale model (`forSale`/`price`): if covenant-enforced, carried in `extension_commitment` as a KCC1 virtual element; if registry-based, base state suffices. v4 contract settles it.
-- Adopted KCC20 guards become BitPhoque's guards to audit at the target pin. "It's the standard" ≠ "it's audited."
-- gen5 join REMOVED from scope (2026-10-14): it was an idea that hardened into a design rule. BitPhoque is its own thing. gen5 may later build a separate token with lessons learned from BitPhoque; nothing BitPhoque ships accommodates it.
+- BitPhoque = a STANDALONE single-covenant KCC20 asset, authored in Argent, built on argent-lang/kcc20-reference `contracts/kcc20.ag`. Fixed supply 42,069, pubkey owners (owner_scheme 0x00), no minter.
+- State = KCC20 six-field layout (amount/owner/owner_scheme/borrow_scheme/borrow_guard/extension_commitment). The reference supplies the standard transfer + delegator, all owner schemes, all borrow schemes, conservation, extension preservation — kept byte-identical for vector-conformance.
+- On-chain sale lives in `extension_commitment` as a KCC1 §10 virtual element holding `{forSale, price}`; `list`/`claim`/`cancel` are BitPhoque-specific entrypoints added alongside the standard transfer. v4's payment-authorized claim (pay-to-owner, no seller sig) ports in. No escrow covenant, no covenant-id ownership. Listed token = own fungibility class.
+- Toolchain: ADOPT ARGENT (compile .ag -> .sil/bytecode). New commitment; the tree was previously hand-authored .sil. Argent + its silverscript dep get pinned under the environment-version-trap discipline.
+- Adopted KCC20 guards + borrowed-receive become BitPhoque's to audit at the target pin. "It's the standard" != "it's audited."
+- gen5 join REMOVED from scope (2026-10-14). BitPhoque is its own thing; gen5 may later build a separate token with lessons learned. Note: the single-covenant sale needs NO inter-covenant machinery, so nothing here reopens the gen5 coupling.
 
 <<<OPEN ITEMS>>>
 
 ### Blockers (reclassified 2026-10-14)
 - [x] **TESTNET RE-DEPLOY trigger — RUN 2026-10-14, FAILED.** Diffed recorded shape vs kccs main. Non-conformant: KCC20 now 6-field (amount/owner/owner_scheme/borrow_scheme/borrow_guard/extension_commitment); isMinter + minter-taint gone; covenant-id scheme 0x02→0x04; borrowed-receive mandatory; array transfer default. The single load-bearing GUESS (layout alignment) is retired FALSE. Superseded by the conform item below.
-- [ ] **Conform BitPhoque to KCC20 6-field shape** — standalone fixed-supply, pubkey owners (owner_scheme 0x00). Rebuild state to KCC20State; implement mandatory borrowed-receive (3 schemes) + default array transfer (3-in/3-out); supply conservation only. Blocked on: (a) sale-model decision — extension_commitment virtual element vs registry; (b) target compiler-pin selection.
+- [ ] **Build BitPhoque as single-covenant KCC20 (Argent).** Base = argent-lang/kcc20-reference kcc20.ag, extended with list/claim/cancel over an extension_commitment virtual element carrying {forSale, price}. Sub-steps: (a) stand up + pin the Argent toolchain, compile the reference unchanged; (b) design idle vs listed commitment layout; (c) author list/claim/cancel (port v4 payment-claim); (d) exercise on TN10 against the target pin.
+- [ ] **Argent toolchain setup + pin** — clone/build Argent + its silverscript dependency; record the pin in reference.md (environment-version-trap: binary must match TN10). PIN-ASSERT gets an Argent-pin check once set.
 - [ ] **CLI binary/network mismatch** — TN12-era CLI (`C:\_RETIRED_kaspa-tn12`, v1.2.1-toc.3) derives wrong P2SH. Must rebuild against the target pin and verify by actual import. More urgent now: v1.0.0 compiler derives different addresses again.
 - [ ] `getUtxosByCovenantId` RPC — feature request drafted, not filed on kaspanet/rusty-kaspa. Would eliminate parcel registry as hard dependency.
 
@@ -86,6 +89,8 @@ _OPEN routine step 1: if any path on screen this session is not in this block, S
 
 ### Cleanup / minor
 - [ ] **kcc20-findings.md superseded** — recorded shape (4-field, scheme 0x02, isMinter, KCC20Minter controller, gen5 join) is non-conformant and out of scope. Rewrite to the standalone conform intent, or mark superseded and point to NOW.
+- [ ] **Verify indexer acceptance of a no-minter pre-minted KCC20 family** (kcc20.info / kaslab) — the reference assumes PublicMint/TokenSeed; confirm a direct-genesis fixed-supply token decodes. Composability gate.
+- [ ] **Hold mainnet genesis until KCC-20 is Final + ABI converged** (kccs #28). Re-run the shape diff vs the ratified spec before genesis.
 - [ ] Push: local master 4 commits ahead of origin at 16aa57d. Run the secret-sweep, then push.
 - [ ] **reference.md is STALE** (Jul 31) — predates upstream-watch + pin-assert discipline the baseline now requires; no canonical-paths / pin fields. Sharpen pass needed.
 - [ ] Migrate status/reference/history to full marker-zone + six-doc structure (this rebuild started it for status; reference + deployments.md still owed; no deployments.md exists yet).
@@ -126,5 +131,10 @@ CONFIRMED: KCC20/KCC2/KCC1 field layouts, owner-scheme bytes (covenant-id=0x04, 
 GUESSED (flagged, nothing load-bearing left in scope): covenant-id builtin roster + any output-side cid-capture builtin live in KIP-20 (unread) — out of scope now that minter/ICC is dropped. Sale-model enforcement (covenant vs registry) unread — gates whether extension_commitment is used.
 DRIFT: opened to "prepare for mainnet" expecting the recorded KCC20 shape to be the target — it isn't, the spec moved under the findings doc. Second correction was the user's: I carried the gen5 controller join forward as load-bearing design; it was an idea elevated to a rule and was never part of BitPhoque's fixed-supply economics. Dropping both shrank the critical path to a plain asset conform. PIN-ASSERT skipped (no compiler clone pinned). Git OPEN step run mid-session — no folder bridge this session, HEAD pasted by hand.
 prev-head: 16aa57d
+---sig #017 | 2026-10-14 ~EST | desktop | trees: bitphoque | scope: conform-path design arc (no code). Settled: sale is on-chain (covenant-enforced, confirmed by reading v4); KCC20 6-field re-verified as current; sale architecture = single covenant, {forSale,price} in extension_commitment virtual element + list/claim/cancel entrypoints, standard transfer kept byte-identical; toolchain = ADOPT ARGENT on argent-lang/kcc20-reference; genesis = pre-mint fixed supply, no minter.
+CONFIRMED (at raw.githubusercontent kccs main + argent-lang/kcc20-reference master + GH Pages kcc20-book, this session): KCC1/2/20 layouts; owner_scheme covenant-id=0x04; OpCovInputCount proof; leader/delegator; extension_commitment is required identical-across-family and preserved in the reference transfer code; reference kcc20.ag = 6-field with 5 owner + 4 borrow schemes, michaelsutton finalize Oct 7; silverscript v1.0.0 example is still old 4-field (kccs issue #28); v4 sale is covenant-enforced pay-to-owner.
+GUESSED (flagged): indexers accept a no-minter pre-minted KCC20 family (reference assumes PublicMint/TokenSeed) — unverified. KCC-20 shape stable through Final — it is Last Call/Draft-in-file, ABI not converged (kccs #28); may shift, re-diff before genesis.
+DRIFT: opened the arc expecting a small conform; two corrections landed. (1) Reading v4 showed the sale is covenant-enforced, and the reference transfer locks extension_commitment, so the sale had to become separate entrypoints over a virtual element, not a field in transfer. (2) My first reference read (silverscript example) was stale 4-field and I wrongly concluded no 6-field reference existed; user pushed on staleness — the real 6-field reference is argent-lang/kcc20-reference. Net: hard parts (transfer, borrowed-receive) are proven by a core author; BitPhoque's only novel work is the sale entrypoints.
+prev-head: 5b5071b
 
 <<<END LEDGER>>>
