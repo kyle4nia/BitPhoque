@@ -11,10 +11,14 @@ _Read `operating_baseline.md` (HOW) alongside this (WHERE). Stable reference —
 - Rust harnesses canonical: `C:\bitphoque\rust-examples\`
 - Status doc: `C:\bitphoque\docs\bitphoque_status.md` (this file)
 - Baseline: `C:\bitphoque\docs\operating_baseline.md`
-- Reference: `C:\bitphoque\docs\bitphoque_reference.md` (STALE — Jul 31, predates upstream-watch + pin-assert discipline; see open items)
-- KCC20 findings: `C:\bitphoque\docs\kcc20-findings.md`
-- SilverScript compiler clone: NOT YET on target pin — see NOW
-- Retired TN12 tree: `C:\_RETIRED_kaspa-tn12` (delete after CLI migration)
+- Reference: `C:\bitphoque\docs\bitphoque_reference.md` (pins block added 2026-10-14; `.sil` architecture sections bannered superseded — see DESIGN)
+- KCC20 findings: `C:\bitphoque\docs\kcc20-findings.md` (SUPERSEDED banner 2026-10-14 — recorded 4-field/minter/gen5-join shape out of scope; see NOW/DESIGN)
+- Argent toolchain (reference clone): `C:\kcc20-reference` (argent-lang/kcc20-reference @ c8a0871; `cargo test --locked` 60/60 — re-proven on pyt 2026-10-14)
+- BitPhoque Argent project: `C:\bitphoque-argent` (NOT YET scaffolded — the single next action)
+- Migration record: `C:\bitphoque\docs\bitphoque_migration_to_pyt.md`
+- Retired TN12 tree: `C:\_RETIRED_kaspa-tn12` — NOT migrated to pyt (never came over; the "delete after CLI migration" item is auto-resolved here)
+
+**MACHINE:** development moved from KarrrlsBigDaddy to **pyt** on 2026-10-14 (both Windows, same `C:\` paths). big daddy retains gen5. Every path in this block is pyt-local.
 
 _OPEN routine step 1: if any path on screen this session is not in this block, STOP and reconcile._
 
@@ -34,13 +38,13 @@ _OPEN routine step 1: if any path on screen this session is not in this block, S
 
 <<<NOW>>>
 
-**State (2026-10-14):** DESIGN COMPLETE → build phase. BitPhoque = single-covenant KCC20 asset in Argent on argent-lang/kcc20-reference `kcc20.ag`. Fixed supply 42,069, pubkey-owned (0x00), on-chain sale. Toolchain proven in-environment (C:\kcc20-reference, cargo test --locked 60/60). Full design settled (see DESIGN): six-field state; sale = int price sompi (0 idle/>0 listed) in extension_commitment = BLAKE3(0x01 || LE64(price)); set_price + claim, BOTH singleton, alongside a byte-identical standard transfer; genesis pre-mints full supply, no minter. Not yet: BitPhoque Argent project, entrypoint .ag, genesis, TN10 deploy.
+**State (2026-10-14, on pyt):** DESIGN COMPLETE → build phase. Development migrated to pyt this session; toolchain re-proven and repo verified intact (sig #021). BitPhoque = standalone single-covenant KCC20 asset in Argent on argent-lang/kcc20-reference `kcc20.ag`. Fixed supply 42,069, pubkey-owned (0x00), on-chain sale. Toolchain re-proven on pyt (C:\kcc20-reference, cargo test --locked 60/60). Full design settled (see DESIGN): six-field state; sale = int price sompi (0 idle/>0 listed) in extension_commitment = BLAKE3(0x01 || LE64(price)); set_price + claim, BOTH singleton, alongside a byte-identical standard transfer; genesis pre-mints full supply, no minter. Not yet: BitPhoque Argent project, entrypoint .ag, genesis, TN10 deploy.
 
-**Mainnet caution (unchanged):** KCC-20 Last Call/Draft-in-file/NOT Final; ABI not converged (kccs #28). Conform + exercise on TN10 now; HOLD genesis until Final + converged; re-diff if spec moves.
+**Mainnet caution (unchanged):** KCC-20 Last Call/Draft-in-file/NOT Final; ABI not converged (kccs #28). Conform + exercise on TN10 now; HOLD genesis until Final + converged; re-diff if spec moves. Composability gate narrowed (sig #021): the reference is SPEC-tagged (leader transfer `79c71c23` / delegator `fd3ef14a`), NOT kcc20-live (`c3d9f92f`) — standard transfer/delegator likely decode on live tooling; the leader/borrowed-receive path won't until #28 converges. One open check: which leader tag do kcc20.info / kaslab decode (`79c71c23` vs `c3d9f92f`).
 
-**Toolchain pins (record in reference.md):** argent + argent-runtime @ argent-lang/argent 9a9f4b10; rusty-kaspa a41a333b (must match TN10 for deploy); Rust 1.94.1 floor (local 1.96.0).
+**Toolchain pins (now recorded in reference.md):** argent + argent-runtime @ argent-lang/argent 9a9f4b10; rusty-kaspa a41a333b (must match TN10 for deploy); Rust 1.94.1 floor (pyt local 1.99.0). Reference repo = argent-lang/kcc20-reference @ c8a0871 (2-commit repo; the state tested 60/60).
 
-**Single next action:** scaffold the BitPhoque Argent project — a cargo project pinned to the same argent/rusty-kaspa revs, with contracts/bitphoque.ag starting as the reference kcc20.ag (standard transfer+delegator unchanged), ready for the set_price + claim entries and a rejection-test suite.
+**Single next action (next session):** scaffold `C:\bitphoque-argent` as a renamed verbatim copy of the reference (package → bitphoque-argent, pins unchanged), prove `cargo test --locked` = 60/60, rename kcc20.ag → bitphoque.ag (confirm still green), THEN add set_price + claim + the rejection suite. **Starting-point RESOLVED (sig #021): VENDOR the .ag — forced**, because argent-lang/kcc20-reference is `publish=false` / bin-only (no `[lib]`) and covenant entrypoints can't be added to a covenant externally. (The old "verbatim-vendor vs crate-dependency undecided" is closed.)
 
 <<<END NOW>>>
 
@@ -76,6 +80,7 @@ _OPEN routine step 1: if any path on screen this session is not in this block, S
 - Raw price is the opening, supplied as witness to the sale entrypoints; the standard transfer never opens it, only preserves the 32 bytes. Price is hidden on-chain; human-readable price lives in the bitphoque.org registry, trustlessly verifiable as BLAKE3(0x01 || LE64(advertised_P)) == on-chain commitment.
 - Version byte reserves the seam for a future extension field without a format collision (solve-for-this-version; genesis ossifies the format).
 - Price is per-UTXO, not per-unit (as v4). Merging two listed UTXOs via standard transfer keeps one price on the whole — a wallet concern, not a contract hole.
+- **Merge is per-commitment-class (CORRECTED sig #021, read in the reference transfer).** The standard transfer forces ONE shared extension_commitment across all inputs AND outputs (`require(delegates[i].extension_commitment == extension_commitment)` on inputs, same check on outputs). So idle tokens (all share BLAKE3(0x01||LE64(0))) merge freely; two listed tokens merge only at the SAME price; idle+listed and different-price listed merges are REJECTED by the transfer, not collapsed. Each distinct price is its own merge-fungibility class — a wallet constraint to build to, not a hole. Supersedes the "keeps one price on the whole" phrasing in the bullet above; becomes a Phase-2 rejection test.
 
 ### Sale entrypoints (added alongside the reference transfer; standard transfer stays byte-identical)
 
@@ -104,17 +109,18 @@ _OPEN routine step 1: if any path on screen this session is not in this block, S
 - [ ] Evaluate launch-proof convention (covenant-id-preimage proof, full contracts + initial state, source-auditable) — Sutton flagged as emerging norm; confirm whether it entered the standard.
 
 ### Cleanup / minor
-- [ ] **kcc20-findings.md superseded** — recorded shape (4-field, scheme 0x02, isMinter, KCC20Minter controller, gen5 join) is non-conformant and out of scope. Rewrite to the standalone conform intent, or mark superseded and point to NOW.
+- [x] **kcc20-findings.md superseded — DONE 2026-10-14 (sig #021).** SUPERSEDED banner added at the top of the file pointing to NOW/DESIGN; the recorded 4-field / scheme-0x02 / isMinter / KCC20Minter-controller / gen5-join shape is flagged out of scope. Body kept as historical record.
 - [ ] **Verify indexer acceptance of a no-minter pre-minted KCC20 family** (kcc20.info / kaslab) — the reference assumes PublicMint/TokenSeed; confirm a direct-genesis fixed-supply token decodes. Composability gate.
 - [ ] **Hold mainnet genesis until KCC-20 is Final + ABI converged** (kccs #28). Re-run the shape diff vs the ratified spec before genesis.
-- [ ] Push: local master 4 commits ahead of origin at 16aa57d. Run the secret-sweep, then push.
-- [ ] **reference.md is STALE** (Jul 31) — predates upstream-watch + pin-assert discipline the baseline now requires; no canonical-paths / pin fields. Sharpen pass needed.
+- [ ] Push: local master ahead of origin (HEAD now da3798e). Run the secret-sweep (`.key` files are gitignored but confirm nothing sensitive is staged), then push. NOTE: the pyt migration already provides an off-machine copy (repo now on big daddy + pyt), so the "get work off the single machine" risk is reduced; the secret-sweep + push remains for a remote backup.
+- [~] **reference.md partial sharpen — 2026-10-14 (sig #021).** Added: pins block + staleness banner flagging the `.sil` architecture sections (STRATEGIC CONTEXT / THE CONTRACTS / CONSENSUS ABI) as superseded by DESIGN. Node/VPS/keys/deployment facts kept (still valid, but node/CLI are big-daddy-local — re-establish on pyt). STILL OWED: full six-doc restructure + rewrite of the stale architecture sections to the Argent/KCC20 design.
 - [ ] Migrate status/reference/history to full marker-zone + six-doc structure (this rebuild started it for status; reference + deployments.md still owed; no deployments.md exists yet).
 - [ ] cPanel: evaluate whether still needed (outlawpolitics.org redirect).
-- [ ] D: build-clone bin sweep (recopy 14 harnesses → clone, rebuild).
-- [ ] Delete `C:\_RETIRED_kaspa-tn12` (after CLI migration).
+- [~] D: build-clone bin sweep (recopy 14 harnesses → clone, rebuild). — big-daddy-only; no `D:` build-clone on pyt. Moot here; rebuild fresh on pyt if/when the harnesses are needed.
+- [x] Delete `C:\_RETIRED_kaspa-tn12` — resolved on pyt (never migrated; absent here). Still present on big daddy if you want it gone there.
 - [ ] Buy transactions don't record seller as counterparty in tx history.
 - [ ] index.html 'get started' section — small copy updates (receive/send done; rest reference old flows).
+- [x] **reference.md pin block — DONE 2026-10-14 (sig #021).** Pins block added to reference.md: argent + argent-runtime @ argent-lang/argent 9a9f4b10, rusty-kaspa a41a333b, Rust 1.94.1 floor, reference repo @ c8a0871, re-proven 60/60 on pyt. PIN-ASSERT-for-Argent note included.
 
 ### Parked
 - Auction — separate future build (stateful/temporal). See `bitphoque_swap_covenant_design.md`.
@@ -162,5 +168,15 @@ CONFIRMED: singleton claim uses only primitives already read in the reference (r
 GUESSED (flagged): the six vectors are reasoned, NOT VM-tested — become rejection tests once bitphoque.ag exists. price-per-UTXO merge = wallet concern (untested). no-minter family indexer acceptance unverified (carried from #017).
 DRIFT: none. Claim difficulty was isolated to batching and removed by the singleton constraint; layout untouched, as predicted in #018.
 prev-head: 870430f
+---sig #020 | 2026-10-14 ~EST | desktop | trees: bitphoque | scope: session close at the design/build boundary (no code). Design phase complete through #019. Decided: BitPhoque Argent project = NEW repo at C:\bitphoque-argent (standalone, keeps the docs repo docs-only). Starting-point (vendor kcc20.ag verbatim vs depend-as-crate) left undecided — settle at scaffold. Flagged reference.md pin debt into OPEN ITEMS.
+CONFIRMED: nothing new built or run this session; state matches #019 (toolchain proven 60/60, design settled). HEAD opened da3798e, tree clean, master 8 ahead of origin.
+GUESSED: none load-bearing added.
+DRIFT: intended to scaffold; user closed at the design boundary instead — correct seam, nothing half-built. One mechanical catch this session: a DESIGN edit anchored across a non-contiguous bullet span (the Standard-transfer bullet sat between the two targets); re-issued as two single-bullet edits. Lesson for marker-zone edits: anchor one bullet at a time, never assume adjacency.
+prev-head: da3798e
+---sig #021 | 2026-10-14 ~EST | desktop (pyt) | trees: bitphoque | scope: MIGRATION KarrrlsBigDaddy → pyt + docs clean-close; earlier upstream findings folded. Moved BitPhoque to a dedicated machine (pyt) to end gen5/bitphoque resource contention. Stood up toolchain on pyt (git 2.55, rustup/cargo 1.99.0, VS Build Tools MSVC), re-cloned argent-lang/kcc20-reference → C:\kcc20-reference, cargo test --locked = 60/60 re-proven. Moved C:\bitphoque via tar+USB (SMB auth failed; SSD flaked), verified intact over the device bridge. Folded the earlier upstream re-derivation: reference is SPEC-tagged (leader transfer 79c71c23 / delegator fd3ef14a), NOT kcc20-live (c3d9f92f); vendor decision forced (publish=false/bin-only); merge is per-commitment-class. Updated NOW + DESIGN; added reference.md pins block + staleness banner; bannered kcc20-findings.md superseded; reconciled open items.
+CONFIRMED: cargo test --locked 60/60 on pyt (MSVC host). Repo verified over bridge — full tree, docs byte-exact (status.md 23202B), .key files present (owner/v2_owner/buyer1-3), .git complete (objects/logs/refs); committed HEAD = da3798e (sig #019). Reference read at argent-lang/kcc20-reference c8a0871: 6-field KCC20State [int,byte32,byte,byte,byte32,byte32] 112B; transfer tag 79c71c23 / delegator fd3ef14a; transfer enforces shared extension_commitment + output amount>=0 + conservation; pins argent 9a9f4b10 / rusty-kaspa a41a333b in Cargo.toml.
+GUESSED (flagged): kcc20.info/kaslab indexer template (79c71c23 vs c3d9f92f) still unverified — the one remaining link in the composability gate. .key files present on pyt but decrypt/import NOT yet verified — do before wiping big daddy. The six claim rejection vectors still reasoned, not VM-tested (become tests at scaffold).
+DRIFT: SMB copy blocked (error 1326 then 86 — big daddy PIN/MS-account auth); fell back to tar+USB after the SSD flaked (connection in/out). Retracted an in-session error — "reference moved off pin 9a9f4b10" conflated argent-lang/argent (toolchain pin, lives in the reference Cargo.toml) with argent-lang/kcc20-reference (the repo, 2-commit @ c8a0871); no re-pin owed. sig #020 was stranded uncommitted (status.md working tree carried #020 while HEAD stayed at #019/da3798e); this commit captures #020 + #021 together. No shell on pyt via the bridge — the git commit itself is run by the user.
+prev-head: da3798e
 
 <<<END LEDGER>>>

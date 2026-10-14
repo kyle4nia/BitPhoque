@@ -4,6 +4,22 @@ _Stable reference. Lookup only — not read every session. Current state, blocke
 
 ---
 
+## ⚠ STALENESS BANNER (2026-10-14, sig #021)
+
+The **architecture** sections below — STRATEGIC CONTEXT, THE CONTRACTS, and the CONSENSUS RULES / ABI Reference — describe the **pre-Argent SilverScript `.sil` design** (4-field state with isMinter, separate forSale/price, the v3/v4 `.sil` contracts, covenant_id `3baed5a3…`). That design is **SUPERSEDED** by the Argent / KCC20 conform in `bitphoque_status.md` DESIGN: standalone single-covenant KCC20 asset, 6-field state, no minter, on-chain sale via extension_commitment + set_price/claim. **Read status DESIGN for the current contract.**
+
+Still valid below: the TN10/VPS node facts, test entities, `.key` inventory, deployment/hosting, and file tree — EXCEPT the local-node and CLI facts are **big-daddy-local** and must be re-established on pyt (see the CLI-rebuild open item).
+
+## TOOLCHAIN PINS (Argent — 2026-10-14, sig #021)
+
+- argent + argent-runtime @ `github.com/argent-lang/argent` rev `9a9f4b107116d0b259fae629f200fa3b663e7e9d` (short `9a9f4b10`)
+- rusty-kaspa (kaspa-consensus-core + kaspa-txscript) @ `github.com/kaspanet/rusty-kaspa` rev `a41a333b08848f41bf737b72592e463a6011b8ac` (short `a41a333b`)
+- Rust: **1.94.1 floor** (pinned in the reference's `rust-toolchain.toml`); pyt local 1.99.0 clears it
+- Reference repo: `github.com/argent-lang/kcc20-reference` @ `c8a0871` (2-commit repo; `cargo test --locked` 60/60 — proven on KarrrlsBigDaddy, re-proven on pyt 2026-10-14, MSVC host)
+- **PIN-ASSERT (Argent):** before any build that will touch TN10, assert the scaffold's `Cargo.toml` still carries argent `9a9f4b10` + rusty-kaspa `a41a333b` — the deploy binary must match the TN10 node. A moved pin ⇒ re-prove 60/60 before trusting it.
+
+---
+
 ## WHAT THIS IS
 
 BitPhoque is a covenant-based, native-Layer-1 fungible token on Kaspa TN10 — built on SilverScript covenants (`binding=cov` N-to-M), deliberately NOT the indexer-based KRC-20 path. Fixed supply (42,069 phoques), no trusted coordinator, self-erecting. Proving ground for the oracle protocol's covenant patterns.

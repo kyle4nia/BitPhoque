@@ -1,5 +1,13 @@
 # BitPhoque + KCC20 - Findings and Redesign Intent
 
+> **⚠ SUPERSEDED — 2026-10-14 (sig #021). Historical record; do not design from this doc.**
+> The current design is in `bitphoque_status.md` NOW + DESIGN. What changed since this was filed:
+> - KCC20 moved **4-field → 6-field** (amount / owner / owner_scheme / borrow_scheme / borrow_guard / extension_commitment); `isMinter` + minter-taint are gone.
+> - covenant-id owner scheme **0x02 → 0x04**; borrowed-receive now mandatory; array transfer default.
+> - The **minter / KCC20Minter controller** model and the **gen5 controller join** are **out of scope** — BitPhoque is now a standalone, fixed-supply, **no-minter** pubkey-owned asset (gen5 join removed sig #016).
+> - Toolchain is **Argent** on `argent-lang/kcc20-reference` (not hand-authored `.sil` at silverscript pin 4b0e1cd).
+> The "adopt when the spec settles" posture also resolved: the decision is to **conform + exercise on TN10 now, HOLD mainnet genesis** until KCC-20 is Final + ABI-converged (kccs #28).
+
 _Filed 2026-09-02 from a review of the KCC20 convention (Kaspa's covenant-native fungible-token standard) at silverscript pin 4b0e1cd. Source read: docs\kcc20-book (overview + contract + minter chapters), silverscript-lang\tests\examples\kcc20.sil, kcc20-minter.sil. This doc is the BitPhoque-side record; the gen5-side note lives in the gen5 tree._
 
 ## The decision
